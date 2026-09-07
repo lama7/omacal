@@ -4,71 +4,59 @@
 var MS_PER_DAY = 86400000
 var WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
 
-function coerceWeekStart(value) {
-    if (value === undefined || value === null) return null
-    if (typeof value === "number")
-        return isFinite(value) ? ((Math.round(value) % 7) + 7) % 7 : null
-
-    var text = String(value).replace(/^\s+|\s+$/g, "").toLowerCase()
-    if (text === "") return null
-
-    for (var i = 0; i < WEEKDAY_NAMES.length; i++)
-        if (WEEKDAY_NAMES[i] === text || WEEKDAY_NAMES[i].substr(0, 3) === text) return i
-
-    var parsed = parseInt(text, 10)
-    return isFinite(parsed) ? ((parsed % 7) + 7) % 7 : null
-}
-
-function normalizedWeekStart(value, fallback) {
-    var configured = coerceWeekStart(value)
-    if (configured !== null) return configured
-    var fallbackStart = coerceWeekStart(fallback)
-    return fallbackStart === null ? 1 : fallbackStart
-}
-
-function weekStartSettingName(index) {
-    return WEEKDAY_NAMES[normalizedWeekStart(index, 1)]
-}
-
-function toggledWeekStart(index) {
-    return normalizedWeekStart(index, 1) === 1 ? 0 : 1
-}
-
-function weekdayOrder(weekStart) {
-    var start = normalizedWeekStart(weekStart, 1)
-    var out = []
-    for (var i = 0; i < 7; i++) out.push((start + i) % 7)
-    return out
-}
-
-function dateKey(year, month, day) {
-    return year + "-" + pad2(Number(month) + 1) + "-" + pad2(day)
-}
-
-function keyForDate(date) {
-    return dateKey(date.getFullYear(), date.getMonth(), date.getDate())
-}
-
-function pad2(value) {
-    var n = Number(value)
+function pad2(v) {
+    var n = Number(v)
     return (n < 10 ? "0" : "") + n
 }
 
-// ISO-8601 week number
+function keyForDate(date) {
+    if (date === null || date === undefined) return ""
+    var y = date.getFullYear()
+    var m = date.getMonth() + 1
+    var d = date.getDate()
+    return y + "-" + pad2(m) + "-" + pad2(d)
+}
+
+function normalizedWeekStart(raw, fallback) {
+    if (raw === "monday" || raw === "Monday" || raw === 1) return 1
+    if (raw === "sunday" || raw === "Sunday" || raw === 0) return 0
+    if (raw === null || raw === undefined) return fallback % 7
+    return Number(raw) % 7 || 0
+}
+
+function weekStartSettingName(day) {
+    if (day === 1) return "monday"
+    if (day === 0) return "sunday"
+    return false
+}
+
+function toggledWeekStart(current) {
+    if (current === 1) return 0
+    return 1
+}
+
+function weekdayOrder(ws) {
+    var out = []
+    for (var i = 0; i < 7; i++) out.push((ws + i) % 7)
+    return out
+}
+
 function isoWeek(year, month, day) {
-    var date = new Date(Date.UTC(year, month, day))
-    var weekday = date.getUTCDay() || 7
-    date.setUTCDate(date.getUTCDate() + 4 - weekday)
-    var yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1))
-    return Math.ceil(((date.getTime() - yearStart.getTime()) / MS_PER_DAY + 1) / 7)
+    var d = new Date(year, month, day)
+    var dayNum = (d.getDay() + 6) % 7
+    var jan4 = new Date(year, 0, 4)
+    var jan4Day = (jan4.getDay() + 6) % 7
+    var ordinal = Math.floor((d - jan4) / MS_PER_DAY) + 1
+    return Math.ceil((ordinal - jan4Day + 10) / 7)
 }
 
 function stepMonth(year, month, delta) {
-    var target = new Date(year, Number(month) + Number(delta), 1)
-    return { year: target.getFullYear(), month: target.getMonth() }
+    var next = new Date(year, month + 1, 1)
+    next.setMonth(next.getMonth() + delta)
+    return { year: next.getFullYear(), month: next.getMonth() }
 }
 
-// ---- Clock label formats (used by BarWidget for right-click cycling)
+// ---- Clock label formats (used by BarWidget for right-click cycling) ----
 var CLOCK_FORMATS = [
     "dddd HH:mm",
     "dddd h:mm AP",
@@ -110,4 +98,21 @@ function nextClockFormat(ring, current) {
 
 function isoWeekLiteral(year, month, day) {
     return pad2(isoWeek(year, month, day))
+}
+
+if (typeof module !== "undefined") {
+    module.exports = {
+        dateKey: keyForDate,
+        keyForDate: keyForDate,
+        normalizedWeekStart: normalizedWeekStart,
+        weekStartSettingName: weekStartSettingName,
+        toggledWeekStart: toggledWeekStart,
+        weekdayOrder: weekdayOrder,
+        isoWeek: isoWeek,
+        stepMonth: stepMonth,
+        clockFormats: clockFormats,
+        clockFormatRing: clockFormatRing,
+        nextClockFormat: nextClockFormat,
+        isoWeekLiteral: isoWeekLiteral
+    }
 }
