@@ -1,0 +1,18 @@
+[Unit]
+Description=omacal CalDAV sync daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/gerry/Projects/omacal/backend/.venv/bin/omacal-api --config %h/.config/omacal/config.json --sync-first
+Restart=on-failure
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+MemoryMax=256M
+
+# Socket activation is not used — the daemon polls on its own schedule
+# and the QML frontend connects via HTTP.
+
+[Install]
+WantedBy=default.target

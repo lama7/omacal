@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+*.egg-info/
+*.egg
+
+# Config (user-specific, contains credentials)
+*.json
+
+# SQLite DB
+*.db
+
+# OS
+.DS_Store
+Thumbs.db

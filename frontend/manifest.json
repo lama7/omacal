@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "gerry.clock",
+  "name": "omacal Calendar",
+  "version": "0.1.0",
+  "author": "Gerry",
+  "description": "CalDAV-backed calendar popup (replaces the Omarchy clock calendar)",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "omacal Calendar",
+    "description": "Date/time label with CalDAV calendar popup",
+    "category": "Time",
+    "allowMultiple": false
+  }
+}
