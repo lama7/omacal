@@ -47,8 +47,6 @@ Panel {
         return String(labelLocale.dayName(weekday, Locale.ShortFormat)).toUpperCase()
     }
 
-
-
     property var viewYear: 0
     property var viewMonth: 0
     property var rangeStartJs: null
@@ -321,7 +319,12 @@ Panel {
     function open() {
         root.controller.show()
         if (root.bar && "centerHoverRevealSuppressed" in root.bar) root.bar.centerHoverRevealSuppressed = true
-        if (rangeDaysArr.length === 0 && viewMode === "month") {
+        // Always reset to month view when popup opens
+        viewMode = "month"
+        weekStartDate = null
+        weekDays = []
+        weekViewData = []
+        if (rangeDaysArr.length === 0) {
             initView()
             initRange()
             loadCalendars()
@@ -422,7 +425,7 @@ Panel {
                                 if (Array.isArray(root.weekDays) && root.weekDays.length > 0) {
                                     var end = new Date(root.weekStartDate)
                                     end.setDate(end.getDate() + 6)
-                                    return Qt.formatDate(root.weekStartDate, "dd MMM") + " - " + Qt.formatDate(end, "dd MMM yyyy")
+                                    return Qt.formatDate(root.weekStartDate, "dd MMM") + " \u2013 " + Qt.formatDate(end, "dd MMM yyyy")
                                 }
                                 return Qt.formatDate(new Date(root.viewYear, root.viewMonth, 1), "MMMM yyyy").toUpperCase()
                             })()
@@ -584,7 +587,7 @@ Panel {
 
                                     Rectangle {
                                         width: 44
-                                        height: 40
+                                        height: 56
                                         radius: 6
                                         color: modelData.day.isToday ? Color.accent : Qt.darker(root.contentForeground, 2.8)
                                     }
@@ -599,7 +602,7 @@ Panel {
                                         font.pixelSize: Style.font.body
                                         font.bold: true
                                         anchors.top: parent.top
-                                        anchors.topMargin: 4
+                                        anchors.topMargin: 6
                                     }
 
                                     Item {
@@ -609,9 +612,9 @@ Panel {
                                             id: eventsRepeater
                                             model: modelData.events
                                             Text {
-                                                text: root.eventTimeStr(modelData) + " - " + modelData.summary
+                                                text: root.eventTimeStr(modelData) + " \u2014 " + modelData.summary
                                                 textFormat: Text.PlainText
-                                                width: 44
+                                                width: childrenRect.width
                                                 horizontalAlignment: Text.AlignLeft
                                                 font.family: root.contentFontFamily
                                                 font.pixelSize: Style.font.bodySmall
@@ -620,7 +623,7 @@ Panel {
                                                 elide: Text.ElideRight
                                                 maximumLineCount: 3
                                                 leftPadding: 3
-                                                rightPadding: 2
+                                                rightPadding: 3
                                                 topPadding: 1
                                                 bottomPadding: 1
                                             }
