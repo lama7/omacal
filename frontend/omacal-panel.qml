@@ -134,10 +134,9 @@ Panel {
         loadRangeEvents(true)
     }
 
-    function gotoWeek(year, month, weekIndex) {
+    function gotoWeek(startDate) {
         viewMode = "week"
-        weekStartDate = new Date(year, month, 1)
-        weekStartDate.setDate(weekStartDate.getDate() + weekIndex * 7)
+        weekStartDate = new Date(startDate)
         weekDays = computeWeekDays(weekStartDate)
         weekEvents = groupEventsByDay(events)
         weekViewData = computeWeekViewData()
@@ -319,7 +318,6 @@ Panel {
     function open() {
         root.controller.show()
         if (root.bar && "centerHoverRevealSuppressed" in root.bar) root.bar.centerHoverRevealSuppressed = true
-        // Always reset to month view when popup opens
         viewMode = "month"
         weekStartDate = null
         weekDays = []
@@ -370,7 +368,7 @@ Panel {
             onMoveRequested: function(dx, dy) {
                 if (dy !== 0) root.shiftMonth(dy * 12)
             }
-            onActivateRequested: root.goToToday()
+            onActivateRequested: root.close()
             onCloseRequested: root.close()
             onTabRequested: function(direction) { root.switchPanel(direction) }
             onTextKey: function(t) {
@@ -378,7 +376,8 @@ Panel {
                 else if (t === "]") root.shiftMonth(1)
                 else if (t === "t" || t === "T") root.goToToday()
                 else if (t === "w" || t === "W") root.toggleWeekStart()
-                else if (t === "Escape") root.backToMonth()
+                else if (t === "Escape") root.close()
+                else if (t === "\b" || t === "\x7F") root.backToMonth()
             }
         }
 
@@ -554,7 +553,7 @@ Panel {
                                         var days = modelData.days
                                         if (days && days.length > 0) {
                                             var first = days[0]
-                                            root.gotoWeek(first.year, first.month, modelData.idx)
+                                            root.gotoWeek(new Date(first.year, first.month, first.date))
                                         }
                                     }
                                 }
@@ -582,51 +581,48 @@ Panel {
                                 model: root.weekViewData
 
                                 Column {
+                                    id: dayColumn
                                     width: 47
-                                    spacing: 2
-
-                                    Rectangle {
-                                        width: 44
-                                        height: 56
-                                        radius: 6
-                                        color: modelData.day.isToday ? Color.accent : Qt.darker(root.contentForeground, 2.8)
-                                    }
-
-                                    Text {
-                                        text: modelData.day.dayLabel
-                                        textFormat: Text.PlainText
-                                        horizontalAlignment: Text.AlignHCenter
-                                        width: 44
-                                        color: "#FFFFFF"
-                                        font.family: root.contentFontFamily
-                                        font.pixelSize: Style.font.body
-                                        font.bold: true
-                                        anchors.top: parent.top
-                                        anchors.topMargin: 6
-                                    }
+                                    spacing: Style.space(1)
 
                                     Item {
                                         width: 44
-                                        height: eventsRepeater.implicitHeight
-                                        Repeater {
-                                            id: eventsRepeater
-                                            model: modelData.events
-                                            Text {
-                                                text: root.eventTimeStr(modelData) + " \u2014 " + modelData.summary
-                                                textFormat: Text.PlainText
-                                                width: childrenRect.width
-                                                horizontalAlignment: Text.AlignLeft
-                                                font.family: root.contentFontFamily
-                                                font.pixelSize: Style.font.bodySmall
-                                                wrapMode: Text.Wrap
-                                                color: root.contentForeground
-                                                elide: Text.ElideRight
-                                                maximumLineCount: 3
-                                                leftPadding: 3
-                                                rightPadding: 3
-                                                topPadding: 1
-                                                bottomPadding: 1
-                                            }
+                                        height: 32
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            radius: 6
+                                            color: modelData.day.isToday ? Color.accent : Qt.darker(root.contentForeground, 2.8)
+                                        }
+                                        Text {
+                                            anchors.fill: parent
+                                            text: modelData.day.dayLabel
+                                            textFormat: Text.PlainText
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                            color: "#FFFFFF"
+                                            font.family: root.contentFontFamily
+                                            font.pixelSize: Style.font.body
+                                            font.bold: true
+                                        }
+                                    }
+
+                                    Repeater {
+                                        id: eventsColumn
+                                        model: modelData.events
+                                        Text {
+                                            width: 44
+                                            height: implicitHeight
+                                            text: root.eventTimeStr(modelData) + " \u2014 " + modelData.summary
+                                            textFormat: Text.PlainText
+                                            wrapMode: Text.WordWrap
+                                            horizontalAlignment: Text.AlignLeft
+                                            font.family: root.contentFontFamily
+                                            font.pixelSize: Style.font.bodySmall
+                                            color: root.contentForeground
+                                            leftPadding: 2
+                                            rightPadding: 0
+                                            topPadding: 0
+                                            bottomPadding: 0
                                         }
                                     }
                                 }
