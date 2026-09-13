@@ -4,15 +4,15 @@ CalDAV-backed calendar popup for the Omarchy desktop. Replaces the clock popup w
 
 ## Architecture
 
-- **Backend**: Python package (CalDAV sync + REST API) at `backend/`
-  - `omacal-api` serves `/api/health`, `/api/calendars`, `/api/events` on port 9876
+- **Backend**: Python package (`omacal-api` server + `omacal` sync CLI) at `backend/`
+  - `omacal-api` serves `/api/health`, `/api/calendars`, `/api/events`, `/api/events/today`, `/api/config`, `POST /api/sync` on port 9876
   - `omacal sync` pulls events from configured CalDAV calendars into SQLite cache
+  - Periodic sync runs automatically every `poll_interval` seconds (from config.json)
   - Config at `~/.config/omacal/config.json`, DB at `~/.local/share/omacal/calendar.db`
-- **Frontend**: Quickshell QML panel at `frontend/`
+- **Frontend**: Quickshell QML files at `frontend/`
+  - `BarWidget.qml` — clock bar widget with hover tooltip showing calendar name + today's events
+  - `omacal-panel.qml` — calendar grid panel (month/week views with event display)
   - Installed to `~/.config/omarchy/plugins/gerry.clock/`
-  - 7-column month grid with event dots colored per calendar
-  - Month navigation, keyboard shortcuts (T=today, [-]=prev, ]=next)
-- **Systemd**: user service unit in `systemd/omacal.service`
 
 ## Project layout
 

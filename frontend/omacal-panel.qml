@@ -14,7 +14,7 @@ Panel {
     property var anchorItem: null
     property var hostWidget: null
     readonly property var barIdentity: hostWidget || root
-    readonly property bool opened: root.controller && root.controller.open
+    property bool opened: false // NOT readonly — must flip before controller toggles
 
     readonly property color contentForeground: root.bar ? root.bar.foreground : Color.foreground
     readonly property string contentFontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -316,8 +316,10 @@ Panel {
     }
 
     function open() {
+        refresh()
+        root.opened = true
         root.controller.show()
-        if (root.bar && "centerHoverRevealSuppressed" in root.bar) root.bar.centerHoverRevealSuppressed = true
+        if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function") root.bar.setCenterHoverRevealSuppressed(true)
         viewMode = "month"
         weekStartDate = null
         weekDays = []
@@ -330,7 +332,8 @@ Panel {
     }
 
     function close() {
-        if (root.bar && "centerHoverRevealSuppressed" in root.bar) root.bar.centerHoverRevealSuppressed = false
+        root.opened = false
+        if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function") root.bar.setCenterHoverRevealSuppressed(false)
         root.controller.hide()
     }
 
@@ -376,7 +379,6 @@ Panel {
                 else if (t === "]") root.shiftMonth(1)
                 else if (t === "t" || t === "T") root.goToToday()
                 else if (t === "w" || t === "W") root.toggleWeekStart()
-                else if (t === "Escape") root.close()
                 else if (t === "\b" || t === "\x7F") root.backToMonth()
             }
         }
