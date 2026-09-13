@@ -30,6 +30,11 @@ class OmacalHandler(BaseHTTPRequestHandler):
     """Single-connection HTTP handler backed by a shared SQLite connection."""
 
     db_conn = None  # set by the server before serving
+    cfg_calendars = []  # set by the server before serving
+
+    def _cfg_calendars(self) -> list[dict]:
+        """Return calendars from config.json"""
+        return self.cfg_calendars
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -43,6 +48,11 @@ class OmacalHandler(BaseHTTPRequestHandler):
         if path == "/api/calendars":
             calendars = db_get_calendars(self.db_conn)
             self._json(200, calendars)
+            return
+
+        if path == "/api/config":
+            cfg_names = [c.get("display_name") for c in self._cfg_calendars() if c.get("enabled") and c.get("display_name")]
+            self._json(200, {"calendar_names": cfg_names})
             return
 
         if path == "/api/events/today":
@@ -87,8 +97,10 @@ class OmacalHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/sync":
             try:
                 body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-                # Optionally accept a JSON body with specific calendar ids to sync
-                self._json(202, {"status": "syncing", "message": "sync initiated"})
+                # Actually run the sync
+                from omacal.sync import sync_all
+                result = sync_all()
+                self._json(200, result)
             except Exception as e:
                 self._json(500, {"error": str(e)})
             return
@@ -132,6 +144,20 @@ class OmacalServer:
         """Start serving. If background=True, returns the server object without blocking."""
         conn = self._get_conn()
         OmacalHandler.db_conn = conn
+        OmacalHandler.cfg_calendars = self.cfg.get("calendars", [])
+
+        # Schedule periodic sync in a background thread
+        import threading
+        poll_interval = self.cfg.get("poll_interval", 300)
+        def periodic_sync():
+            try:
+                from omacal.sync import sync_all
+                sync_all()
+                logger.info("Periodic sync complete")
+            except Exception as e:
+                logger.error("Periodic sync failed: %s", e)
+            threading.Timer(poll_interval, periodic_sync).start()
+        threading.Timer(poll_interval, periodic_sync).start()
 
         server = HTTPServer(("127.0.0.1", self.port), OmacalHandler)
         logger.info("omacal API listening on http://127.0.0.1:%d", self.port)
