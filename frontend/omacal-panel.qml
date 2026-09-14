@@ -53,10 +53,9 @@ Panel {
     property string rangeStartLabelStr: ""
     property var rangeDaysArr: []
     property string viewMode: "month"
-    property var weekStartDate: null
-    property var weekDays: []
-    property var weekEvents: {}
-    property var weekViewData: []
+    property var dayDate: null
+    property var dayEvents: []
+    property var pendingDayDate: null
 
     function initView() {
         viewYear = today.getFullYear()
@@ -130,63 +129,51 @@ Panel {
         viewMonth = today.getMonth()
         viewMode = "month"
         rangeDaysArr = []
-        weekStartDate = null
-        weekDays = []
+        dayDate = null
+        dayEvents = []
+        pendingDayDate = null
         loadRangeEvents(true)
     }
 
-    function gotoWeek(startDate) {
-        viewMode = "week"
-        weekStartDate = new Date(startDate)
-        weekDays = computeWeekDays(weekStartDate)
-        weekEvents = groupEventsByDay(events)
-        weekViewData = computeWeekViewData()
-        loadRangeEvents(true)
+    function gotoDay(date) {
+        viewMode = "day"
+        dayDate = new Date(date)
+        dayEvents = []
+        var y = dayDate.getFullYear()
+        var m = dayDate.getMonth()
+        if (y !== viewYear || m !== viewMonth) {
+            viewYear = y
+            viewMonth = m
+            pendingDayDate = dayDate
+            loadRangeEvents(true)
+        } else {
+            var key = Model.keyForDate(dayDate)
+            dayEvents = monthEvents[key] || []
+        }
     }
 
     function backToMonth() {
         viewMode = "month"
-        weekStartDate = null
-        weekDays = []
-        weekViewData = []
+        dayDate = null
+        dayEvents = []
+        pendingDayDate = null
         initRange()
         rangeDaysArr = []
         loadRangeEvents(true)
     }
 
-    function computeWeekDays(startDate) {
-        var days = []
-        for (var i = 0; i < 7; i++) {
-            var d = new Date(startDate)
-            d.setDate(d.getDate() + i)
-            var key = d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
-            days.push({
-                dayLabel: String(d.getDate()),
-                weekdayLabel: String(labelLocale.dayName(d.getDay(), Locale.ShortFormat)).toUpperCase(),
-                isToday: key === todayKey,
-                year: d.getFullYear(),
-                month: d.getMonth(),
-                date: d.getDate(),
-                key: key
-            })
+    function shiftDay(delta) {
+        if (!dayDate) return
+        var d = new Date(dayDate)
+        d.setDate(d.getDate() + delta)
+        if (d.getMonth() !== viewMonth || d.getFullYear() !== viewYear) {
+            dayDate = d
+            pendingDayDate = d
+            dayEvents = []
+            shiftMonth(delta > 0 ? 1 : -1)
+        } else {
+            gotoDay(d)
         }
-        return days
-    }
-
-    function computeWeekViewData() {
-        var result = []
-        for (var i = 0; i < weekDays.length; i++) {
-            var day = weekDays[i]
-            result.push({
-                day: day,
-                events: weekDayEventList(day)
-            })
-        }
-        return result
-    }
-
-    function weekDayEventList(day) {
-        return weekEvents[day.key] || []
     }
 
     function eventTimeStr(ev) {
@@ -242,10 +229,9 @@ Panel {
                         if (viewMode === "month") {
                             rangeDaysArr = computeRangeDays()
                             computeWeekRows()
-                        } else if (viewMode === "week" && weekStartDate) {
-                            weekDays = computeWeekDays(weekStartDate)
-                            weekEvents = groupEventsByDay(events)
-                            weekViewData = computeWeekViewData()
+                        } else if (viewMode === "day" && pendingDayDate) {
+                            gotoDay(pendingDayDate)
+                            pendingDayDate = null
                         }
                         if (refreshLabels) initRange()
                     } else {
@@ -284,9 +270,9 @@ Panel {
         initRange()
         rangeDaysArr = []
         viewMode = "month"
-        weekStartDate = null
-        weekDays = []
-        weekViewData = []
+        dayDate = null
+        dayEvents = []
+        pendingDayDate = null
         loadCalendars()
     }
 
@@ -327,9 +313,8 @@ Panel {
         root.controller.show()
         if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function") root.bar.setCenterHoverRevealSuppressed(true)
         viewMode = "month"
-        weekStartDate = null
-        weekDays = []
-        weekViewData = []
+        dayDate = null
+        pendingDayDate = null
         if (rangeDaysArr.length === 0) {
             initView()
             initRange()
@@ -375,8 +360,12 @@ Panel {
             id: keyCatcher
             anchors.fill: parent
             onMoveRequested: function(dx, dy) {
-                if (dx !== 0) root.shiftMonth(dx)
-                if (dy !== 0) root.shiftMonth(dy * 12)
+                if (root.viewMode === "day") {
+                    if (dx !== 0) root.shiftDay(dx)
+                } else {
+                    if (dx !== 0) root.shiftMonth(dx)
+                    if (dy !== 0) root.shiftMonth(dy * 12)
+                }
             }
             onActivateRequested: root.close()
             onCloseRequested: root.close()
@@ -420,11 +409,11 @@ Panel {
                             id: leftAction
                             anchors.left: parent.left
                             anchors.verticalCenter: parent.verticalCenter
-                            iconText: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? "\uE0CE" : "󰅁"
-                            tooltipText: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? "Back to month" : "Previous month"
+                            iconText: (root.viewMode === "day" && root.dayDate) ? "\uE0CE" : "󰅁"
+                            tooltipText: (root.viewMode === "day" && root.dayDate) ? "Back to month" : "Previous month"
                             foreground: root.contentForeground
                             fontFamily: root.contentFontFamily
-                            onClicked: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? root.backToMonth() : root.shiftMonth(-1)
+                            onClicked: (root.viewMode === "day" && root.dayDate) ? root.backToMonth() : root.shiftMonth(-1)
                         }
 
                         Text {
@@ -442,10 +431,8 @@ Panel {
                             font.letterSpacing: 0.5
                             color: Qt.darker(root.contentForeground, 1.3)
                             text: (function() {
-                                if (Array.isArray(root.weekDays) && root.weekDays.length > 0) {
-                                    var end = new Date(root.weekStartDate)
-                                    end.setDate(end.getDate() + 6)
-                                    return Qt.formatDate(root.weekStartDate, "dd MMM") + " \u2013 " + Qt.formatDate(end, "dd MMM yyyy")
+                                if (root.viewMode === "day" && root.dayDate) {
+                                    return Qt.formatDate(root.dayDate, "dddd, d MMM yyyy")
                                 }
                                 return Qt.formatDate(new Date(root.viewYear, root.viewMonth, 1), "MMMM yyyy").toUpperCase()
                             })()
@@ -455,11 +442,11 @@ Panel {
                             id: rightAction
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                            iconText: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? "\uE0CE" : "󰅂"
-                            tooltipText: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? "Back to month" : "Next month"
+                            iconText: (root.viewMode === "day" && root.dayDate) ? "\uE0CE" : "󰅂"
+                            tooltipText: (root.viewMode === "day" && root.dayDate) ? "Back to month" : "Next month"
                             foreground: root.contentForeground
                             fontFamily: root.contentFontFamily
-                            onClicked: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? root.backToMonth() : root.shiftMonth(1)
+                            onClicked: (root.viewMode === "day" && root.dayDate) ? root.backToMonth() : root.shiftMonth(1)
                         }
                     }
                 }
@@ -564,18 +551,11 @@ Panel {
                                                     }
                                                 }
                                             }
-                                        }
-                                    }
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        var days = modelData.days
-                                        if (days && days.length > 0) {
-                                            var first = days[0]
-                                            root.gotoWeek(new Date(first.year, first.month, first.date))
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: root.gotoDay(new Date(modelData.year, modelData.month, modelData.date))
+                                            }
                                         }
                                     }
                                 }
@@ -585,69 +565,73 @@ Panel {
                 }
 
                 Item {
-                    id: weekView
-                    visible: Array.isArray(root.weekViewData) && root.weekViewData.length > 0
+                    id: dayView
+                    visible: root.viewMode === "day" && root.dayDate
                     width: contentColumn.width
-                    height: weekContent.implicitHeight
+                    height: dayContent.implicitHeight
 
                     Column {
-                        id: weekContent
+                        id: dayContent
                         width: contentColumn.width
-                        spacing: Style.space(2)
+                        spacing: Style.space(4)
 
-                        Row {
+                        Rectangle {
+                            width: contentColumn.width
+                            height: 1
+                            color: Qt.darker(root.contentForeground, 2.0)
+                            opacity: 0.4
+                        }
+
+                        Column {
+                            id: dayEventsList
                             width: contentColumn.width
                             spacing: Style.space(2)
+
                             Repeater {
-                                id: weekDayRepeater
-                                model: root.weekViewData
+                                model: root.dayEvents
+                                Item {
+                                    width: dayEventsList.width
+                                    height: eventText.implicitHeight
 
-                                Column {
-                                    id: dayColumn
-                                    width: Math.floor((contentColumn.width - Style.space(2) * 6) / 7)
-                                    spacing: Style.space(1)
-
-                                    Item {
-                                        width: weekGrid.dayCellWidth
-                                        height: 32
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            radius: 6
-                                            color: modelData.day.isToday ? Color.accent : Qt.darker(root.contentForeground, 2.8)
-                                        }
-                                        Text {
-                                            anchors.fill: parent
-                                            text: modelData.day.dayLabel
-                                            textFormat: Text.PlainText
-                                            horizontalAlignment: Text.AlignHCenter
-                                            verticalAlignment: Text.AlignVCenter
-                                            color: "#FFFFFF"
-                                            font.family: root.contentFontFamily
-                                            font.pixelSize: Style.font.body
-                                            font.bold: true
-                                        }
+                                    Rectangle {
+                                        anchors.left: parent.left
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: 6
+                                        height: 6
+                                        radius: 3
+                                        color: (function() {
+                                            var cal = root.calendars.find(function(c) { return c.id === modelData.calendar_id })
+                                            return cal ? (cal.color || "#888888") : "#888888"
+                                        })()
                                     }
 
-                                    Repeater {
-                                        id: eventsColumn
-                                        model: modelData.events
-                                        Text {
-                                            width: weekGrid.dayCellWidth
-                                            height: implicitHeight
-                                            text: root.eventTimeStr(modelData) + " \u2014 " + modelData.summary
-                                            textFormat: Text.PlainText
-                                            wrapMode: Text.WordWrap
-                                            horizontalAlignment: Text.AlignLeft
-                                            font.family: root.contentFontFamily
-                                            font.pixelSize: Style.font.bodySmall
-                                            color: root.contentForeground
-                                            leftPadding: 2
-                                            rightPadding: 0
-                                            topPadding: 0
-                                            bottomPadding: 0
-                                        }
+                                    Text {
+                                        id: eventText
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 10
+                                        anchors.right: parent.right
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: root.eventTimeStr(modelData) + " \u2014 " + modelData.summary
+                                        textFormat: Text.PlainText
+                                        wrapMode: Text.WordWrap
+                                        horizontalAlignment: Text.AlignLeft
+                                        font.family: root.contentFontFamily
+                                        font.pixelSize: Style.font.bodySmall
+                                        color: root.contentForeground
                                     }
                                 }
+                            }
+
+                            Text {
+                                visible: root.dayEvents.length === 0 && !root.loadingEvents
+                                width: dayEventsList.width
+                                height: implicitHeight
+                                text: "No events for this day"
+                                textFormat: Text.PlainText
+                                font.family: root.contentFontFamily
+                                font.pixelSize: Style.font.bodySmall
+                                color: Qt.darker(root.contentForeground, 1.5)
+                                font.italic: true
                             }
                         }
                     }
