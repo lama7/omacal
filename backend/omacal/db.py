@@ -143,6 +143,30 @@ def clear_calendar_events(conn: sqlite3.Connection, calendar_id: int) -> None:
     conn.commit()
 
 
+def add_event(
+    conn: sqlite3.Connection,
+    calendar_id: int,
+    uid: str,
+    summary: str,
+    start: str,
+    end: str | None = None,
+    all_day: int = 0,
+) -> dict[str, Any]:
+    """Insert a single event into the local cache. Returns the inserted row as a dict."""
+    cur = conn.execute(
+        """INSERT INTO events
+           (calendar_id, uid, summary, description, location, start, end,
+            all_day, recurrence_id, status, transparency)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        RETURNING id, calendar_id, uid, summary, description, location,
+                  start, end, all_day, recurrence_id, status, transparency""",
+        (calendar_id, uid, summary, None, None, start, end, all_day, None, "CONFIRMED", None),
+    )
+    row = cur.fetchone()
+    conn.commit()
+    return dict(row)
+
+
 def get_events(
     conn: sqlite3.Connection,
     start: datetime,

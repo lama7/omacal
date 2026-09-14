@@ -57,6 +57,14 @@ Panel {
     property var dayEvents: []
     property var pendingDayDate: null
 
+    // Add-event form state
+    property bool showAddForm: false
+    property string newEventSummary: ""
+    property int newEventStartHour: 9
+    property int newEventStartMinute: 0
+    property int newEventEndHour: 10
+    property int newEventEndMinute: 0
+
     function initView() {
         viewYear = today.getFullYear()
         viewMonth = today.getMonth()
@@ -137,6 +145,7 @@ Panel {
 
     function gotoDay(date) {
         viewMode = "day"
+        showAddForm = false
         dayDate = new Date(date)
         dayEvents = []
         var y = dayDate.getFullYear()
@@ -154,6 +163,7 @@ Panel {
 
     function backToMonth() {
         viewMode = "month"
+        showAddForm = false
         dayDate = null
         dayEvents = []
         pendingDayDate = null
@@ -164,6 +174,7 @@ Panel {
 
     function shiftDay(delta) {
         if (!dayDate) return
+        showAddForm = false
         var d = new Date(dayDate)
         d.setDate(d.getDate() + delta)
         if (d.getMonth() !== viewMonth || d.getFullYear() !== viewYear) {
@@ -174,6 +185,57 @@ Panel {
         } else {
             gotoDay(d)
         }
+    }
+
+    function openAddForm() {
+        showAddForm = true
+        newEventSummary = ""
+        newEventTitleField.text = ""
+        newEventStartHour = 9
+        newEventStartMinute = 0
+        newEventEndHour = 10
+        newEventEndMinute = 0
+    }
+
+    function dismissAddForm() {
+        showAddForm = false
+        newEventSummary = ""
+        newEventTitleField.text = ""
+        newEventStartHour = 9
+        newEventStartMinute = 0
+        newEventEndHour = 10
+        newEventEndMinute = 0
+    }
+
+    function submitAddEvent() {
+        if (!dayDate || !newEventSummary.trim()) return
+        var d = new Date(dayDate)
+        var start = new Date(d.getFullYear(), d.getMonth(), d.getDate(),
+                             newEventStartHour, newEventStartMinute)
+        var end = new Date(d.getFullYear(), d.getMonth(), d.getDate(),
+                           newEventEndHour, newEventEndMinute)
+        if (end <= start) end = new Date(end.getTime() + 3600000)
+        var calId = calendars.length > 0 ? calendars[0].id : 0
+        var xhr = new XMLHttpRequest()
+        xhr.open("POST", apiBase + "/api/events", true)
+        xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                if (xhr.status === 200) {
+                    dismissAddForm()
+                    loadRangeEvents(true)
+                } else {
+                    error = "Failed to create event"
+                }
+            }
+        }
+        xhr.send(JSON.stringify({
+            summary: newEventSummary,
+            start: start.toISOString(),
+            end: end.toISOString(),
+            all_day: false,
+            calendar_id: calId
+        }))
     }
 
     function eventTimeStr(ev) {
@@ -232,6 +294,9 @@ Panel {
                         } else if (viewMode === "day" && pendingDayDate) {
                             gotoDay(pendingDayDate)
                             pendingDayDate = null
+                        } else if (viewMode === "day" && dayDate) {
+                            var dayKey = Model.keyForDate(dayDate)
+                            dayEvents = monthEvents[dayKey] || []
                         }
                         if (refreshLabels) initRange()
                     } else {
@@ -458,7 +523,7 @@ Panel {
                             tooltipText: "Add Event"
                             foreground: root.contentForeground
                             fontFamily: root.contentFontFamily
-                            onClicked: root.viewMode === "day" ? null : root.shiftMonth(1)
+                            onClicked: root.viewMode === "day" ? root.openAddForm() : root.shiftMonth(1)
                         }
                          PanelActionButton {
                             id: rightAction
@@ -613,8 +678,125 @@ Panel {
                         }
 
                         Column {
-                            id: dayEventsList
+                            id: addEventForm
+                            visible: root.showAddForm
                             width: contentColumn.width
+                            height: visible ? implicitHeight : 0
+                            spacing: Style.space(8)
+
+                            TextField {
+                                id: newEventTitleField
+                                width: dayContent.width
+                                placeholderText: "Event title"
+                                foreground: root.contentForeground
+                                fontFamily: root.contentFontFamily
+                                onTextChanged: root.newEventSummary = text
+                            }
+
+                            Row {
+                                width: dayContent.width
+
+                                Text {
+                                    text: "Start"
+                                    width: Style.space(48)
+                                    color: Qt.darker(root.contentForeground, 1.5)
+                                    font.family: root.contentFontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+
+                                NumberField {
+                                    fieldWidth: Style.space(36)
+                                    from: 0
+                                    to: 23
+                                    value: root.newEventStartHour
+                                    onModified: root.newEventStartHour = value
+                                }
+
+                                Text {
+                                    text: ":"
+                                    width: Style.space(16)
+                                    color: root.contentForeground
+                                    font.family: root.contentFontFamily
+                                    font.pixelSize: Style.font.body
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+
+                                NumberField {
+                                    fieldWidth: Style.space(36)
+                                    from: 0
+                                    to: 59
+                                    stepSize: 5
+                                    value: root.newEventStartMinute
+                                    onModified: root.newEventStartMinute = value
+                                }
+                            }
+
+                            Row {
+                                width: dayContent.width
+
+                                Text {
+                                    text: "End"
+                                    width: Style.space(48)
+                                    color: Qt.darker(root.contentForeground, 1.5)
+                                    font.family: root.contentFontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+
+                                NumberField {
+                                    fieldWidth: Style.space(36)
+                                    from: 0
+                                    to: 23
+                                    value: root.newEventEndHour
+                                    onModified: root.newEventEndHour = value
+                                }
+
+                                Text {
+                                    text: ":"
+                                    width: Style.space(16)
+                                    color: root.contentForeground
+                                    font.family: root.contentFontFamily
+                                    font.pixelSize: Style.font.body
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+
+                                NumberField {
+                                    fieldWidth: Style.space(36)
+                                    from: 0
+                                    to: 59
+                                    stepSize: 5
+                                    value: root.newEventEndMinute
+                                    onModified: root.newEventEndMinute = value
+                                }
+                            }
+
+                            Row {
+                                width: dayContent.width
+                                height: Style.font.bodySmall + Style.spacing.controlPaddingY * 2
+                                spacing: Style.space(4)
+
+                                Button {
+                                    text: "Cancel"
+                                    width: (dayContent.width - Style.space(4)) / 2
+                                    onClicked: root.dismissAddForm()
+                                }
+
+                                Button {
+                                    text: "Save"
+                                    width: (dayContent.width - Style.space(4)) / 2
+                                    onClicked: root.submitAddEvent()
+                                }
+                            }
+                        }
+
+                        Column {
+                            id: dayEventsList
+                            visible: !root.showAddForm
+                            width: contentColumn.width
+                            height: visible ? implicitHeight : 0
                             spacing: Style.space(2)
 
                             Repeater {

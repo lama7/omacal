@@ -3,11 +3,12 @@
 Serves events over HTTP on localhost. The QML panel fetches from here.
 
 Endpoints:
-    GET  /api/health           → {"status": "ok"}
-    GET  /api/calendars        → list of calendar metadata
+    GET  /api/health            → {"status": "ok"}
+    GET  /api/calendars         → list of calendar metadata
     GET  /api/events?start=..&end=.. → events in range
-    GET  /api/events/today     → today's events
-    POST /api/sync             → trigger a sync run
+    GET  /api/events/today      → today's events
+    POST /api/sync              → trigger a sync run
+    POST /api/events             → create a new event
 """
 
 from __future__ import annotations
@@ -100,6 +101,32 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 # Actually run the sync
                 from omacal.sync import sync_all
                 result = sync_all()
+                self._json(200, result)
+            except Exception as e:
+                self._json(500, {"error": str(e)})
+            return
+        if parsed.path == "/api/events":
+            try:
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                data = json.loads(body)
+                summary = data.get("summary", "")
+                calendar_id = int(data.get("calendar_id"))
+                start_str = data["start"]
+                end_str = data.get("end")
+                all_day = data.get("all_day", False)
+
+                start_dt = datetime.fromisoformat(start_str)
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+
+                end_dt = None
+                if end_str:
+                    end_dt = datetime.fromisoformat(end_str)
+                    if end_dt.tzinfo is None:
+                        end_dt = end_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+
+                from omacal.sync import create_event
+                result = create_event(self.db_conn, calendar_id, summary, start_dt, end_dt, all_day)
                 self._json(200, result)
             except Exception as e:
                 self._json(500, {"error": str(e)})

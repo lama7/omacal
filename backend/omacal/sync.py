@@ -242,6 +242,65 @@ def sync_source(
     return total_events
 
 
+def create_event(
+    conn: Any,
+    calendar_id: int,
+    summary: str,
+    start: datetime,
+    end: datetime | None = None,
+    all_day: bool = False,
+) -> dict[str, Any]:
+    """Create an event on the CalDAV server and cache it locally.
+
+    Pushes the event first; only writes to the local SQLite cache if the
+    server accepts it.  Returns the inserted row as a dict (same shape as
+    get_events rows) on success.
+    """
+    from uuid import uuid4
+
+    from omacal.db import add_event
+
+    # Look up calendar URL and credentials from the local cache
+    cur = conn.execute(
+        "SELECT url, username, password FROM calendars WHERE id = ?",
+        (calendar_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise ValueError(f"Calendar id={calendar_id} not found in local cache")
+
+    uid = str(uuid4())
+
+    # Default end = start + 1 hour (non-all-day) or start + 1 day (all-day)
+    if end is None:
+        end = start + (timedelta(days=1) if all_day else timedelta(hours=1))
+
+    # Push to CalDAV server
+    client = caldav.DAVClient(
+        url=row["url"],
+        username=row["username"],
+        password=row["password"],
+    )
+    cal_obj = client.calendar(url=row["url"])
+    cal_obj.add_event(
+        dtstart=start,
+        dtend=end,
+        summary=summary,
+        uid=uid,
+    )
+
+    # Cache in local DB
+    return add_event(
+        conn,
+        calendar_id,
+        uid,
+        summary,
+        start.isoformat(),
+        end.isoformat() if end else None,
+        1 if all_day else 0,
+    )
+
+
 def sync_all(config_path: Path | None = None) -> dict[str, Any]:
     """Sync all configured calendars. Returns summary."""
     cfg = load_config(config_path)
