@@ -51,7 +51,7 @@ function isoWeek(year, month, day) {
 }
 
 function stepMonth(year, month, delta) {
-    var next = new Date(year, month + 1, 1)
+    var next = new Date(year, month, 1)
     next.setMonth(next.getMonth() + delta)
     return { year: next.getFullYear(), month: next.getMonth() }
 }

@@ -116,6 +116,7 @@ Panel {
         weekRows = rows
     }
 
+    property double lastShiftMonthTime: 0
     function shiftMonth(delta) {
         var next = Model.stepMonth(viewYear, viewMonth, delta)
         viewYear = next.year
@@ -306,7 +307,12 @@ Panel {
     }
 
     function toggleWeekStart() {
+        var oldStart = root.weekStart
         root.setWeekStart(Model.toggledWeekStart(root.weekStart))
+        if (root.weekStart !== oldStart) {
+            rangeDaysArr = []
+            loadRangeEvents(true)
+        }
     }
 
     function switchPanel(direction) {
@@ -369,14 +375,15 @@ Panel {
             id: keyCatcher
             anchors.fill: parent
             onMoveRequested: function(dx, dy) {
+                if (dx !== 0) root.shiftMonth(dx)
                 if (dy !== 0) root.shiftMonth(dy * 12)
             }
             onActivateRequested: root.close()
             onCloseRequested: root.close()
             onTabRequested: function(direction) { root.switchPanel(direction) }
             onTextKey: function(t) {
-                if (t === "[") root.shiftMonth(-1)
-                else if (t === "]") root.shiftMonth(1)
+                if (t === "[" || t === "{") root.shiftMonth(-1)
+                else if (t === "]" || t === "}") root.shiftMonth(1)
                 else if (t === "t" || t === "T") root.goToToday()
                 else if (t === "w" || t === "W") root.toggleWeekStart()
                 else if (t === "\b" || t === "\x7F") root.backToMonth()
@@ -394,25 +401,37 @@ Panel {
 
             Column {
                 id: contentColumn
-                width: 360
+                width: scroll.width
                 anchors.centerIn: parent
                 spacing: Style.space(4)
 
                 Item {
-                    width: 360
+                    width: contentColumn.width
                     height: headerRow.implicitHeight + Style.space(8)
 
                     Item {
                         id: headerRow
-                        width: 360
+                        width: contentColumn.width
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.verticalCenter: parent.verticalCenter
                         height: 40
 
+                        PanelActionButton {
+                            id: leftAction
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 40
+                            iconText: "\uE0C1"
+                            tooltipText: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? "Back to month" : "Previous month"
+                            foreground: root.contentForeground
+                            fontFamily: root.contentFontFamily
+                            onClicked: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? root.backToMonth() : root.shiftMonth(-1)
+                        }
+
                         Text {
                             id: headerLabel
                             textFormat: Text.PlainText
-                            anchors.left: parent.left
+                            anchors.left: leftAction.right
                             anchors.right: rightAction.left
                             anchors.leftMargin: Style.space(8)
                             anchors.rightMargin: Style.space(8)
@@ -447,14 +466,14 @@ Panel {
                 }
 
                 Row {
-                    width: 360
+                    width: contentColumn.width
                     spacing: Style.space(2)
                     height: Style.space(18)
                     Repeater {
                         model: root.weekdays
                         Text {
                             text: root.weekdayLabel(modelData)
-                            width: 46
+                            width: Math.floor((contentColumn.width - Style.space(2) * 6) / 7)
                             textFormat: Text.PlainText
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
@@ -469,12 +488,12 @@ Panel {
 
                 Item {
                     visible: root.viewMode === "month"
-                    width: 360
+                    width: contentColumn.width
                     height: monthContent.implicitHeight
 
                     Column {
                         id: monthContent
-                        width: 360
+                        width: contentColumn.width
                         spacing: Style.space(2)
 
                         Repeater {
@@ -482,21 +501,23 @@ Panel {
                             model: root.weekRows
 
                             Item {
-                                width: 360
+                                width: contentColumn.width
                                 height: weekGrid.implicitHeight + 2
 
                                 Grid {
                                     id: weekGrid
                                     columns: 7
-                                    width: 360
+                                    width: contentColumn.width
                                     rowSpacing: 2
                                     columnSpacing: 2
+
+                                    property real dayCellWidth: Math.floor((width - columnSpacing * (columns - 1)) / columns)
 
                                     Repeater {
                                         model: modelData.days
 
                                         Item {
-                                            width: 46
+                                            width: weekGrid.dayCellWidth
                                             height: 50
                                             property bool isLeadingOrTrailing: !modelData.isCurrentMonth
 
@@ -567,16 +588,16 @@ Panel {
                 Item {
                     id: weekView
                     visible: Array.isArray(root.weekViewData) && root.weekViewData.length > 0
-                    width: 360
+                    width: contentColumn.width
                     height: weekContent.implicitHeight
 
                     Column {
                         id: weekContent
-                        width: 360
+                        width: contentColumn.width
                         spacing: Style.space(2)
 
                         Row {
-                            width: 360
+                            width: contentColumn.width
                             spacing: Style.space(2)
                             Repeater {
                                 id: weekDayRepeater
@@ -584,11 +605,11 @@ Panel {
 
                                 Column {
                                     id: dayColumn
-                                    width: 47
+                                    width: Math.floor((contentColumn.width - Style.space(2) * 6) / 7)
                                     spacing: Style.space(1)
 
                                     Item {
-                                        width: 44
+                                        width: weekGrid.dayCellWidth
                                         height: 32
                                         Rectangle {
                                             anchors.fill: parent
@@ -612,7 +633,7 @@ Panel {
                                         id: eventsColumn
                                         model: modelData.events
                                         Text {
-                                            width: 44
+                                            width: weekGrid.dayCellWidth
                                             height: implicitHeight
                                             text: root.eventTimeStr(modelData) + " \u2014 " + modelData.summary
                                             textFormat: Text.PlainText
@@ -634,13 +655,13 @@ Panel {
                 }
 
                 Item {
-                    width: 360
+                    width: contentColumn.width
                     anchors.horizontalCenter: parent.horizontalCenter
                     height: statusText.implicitHeight + Style.space(4)
                     Text {
                         id: statusText
                         textFormat: Text.PlainText
-                        width: 360
+                        width: contentColumn.width
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: (function() {
                             if (root.loadingCalendars || root.loadingEvents) return "Loading\u2026"
