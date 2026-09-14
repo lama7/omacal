@@ -411,7 +411,7 @@ Panel {
 
                     Item {
                         id: headerRow
-                        width: monthGrid.width
+                        width: contentColumn.width
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.verticalCenter: parent.verticalCenter
                         height: Style.space(22)
@@ -419,7 +419,6 @@ Panel {
                         PanelActionButton {
                             id: leftAction
                             anchors.left: parent.left
-                            anchors.leftMargin: -Style.space(8)
                             anchors.verticalCenter: parent.verticalCenter
                             iconText: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? "\uE0CE" : "󰅁"
                             tooltipText: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? "Back to month" : "Previous month"
@@ -433,8 +432,8 @@ Panel {
                             textFormat: Text.PlainText
                             anchors.left: leftAction.right
                             anchors.right: rightAction.left
-                            anchors.leftMargin: Style.space(8)
-                            anchors.rightMargin: Style.space(8)
+                            anchors.leftMargin: Style.space(6)
+                            anchors.rightMargin: Style.space(6)
                             anchors.verticalCenter: parent.verticalCenter
                             horizontalAlignment: Text.AlignHCenter
                             font.family: root.contentFontFamily
@@ -455,7 +454,6 @@ Panel {
                         PanelActionButton {
                             id: rightAction
                             anchors.right: parent.right
-                            anchors.rightMargin: -Style.space(8)
                             anchors.verticalCenter: parent.verticalCenter
                             iconText: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? "\uE0CE" : "󰅂"
                             tooltipText: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? "Back to month" : "Next month"
