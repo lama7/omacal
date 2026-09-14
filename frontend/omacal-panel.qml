@@ -430,8 +430,8 @@ Panel {
                         Text {
                             id: headerLabel
                             textFormat: Text.PlainText
-                            anchors.left: root.viewMode === "day" ? left2Action : leftAction
-                            anchors.right: root.viewMode === "day" ? right2Action : rightAction
+                            anchors.left: root.viewMode === "day" ? left2Action.right : leftAction.right
+                            anchors.right: root.viewMode === "day" ? right2Action.left : rightAction.left
                             anchors.leftMargin: Style.space(6)
                             anchors.rightMargin: Style.space(6)
                             anchors.verticalCenter: parent.verticalCenter
