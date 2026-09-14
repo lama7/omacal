@@ -687,7 +687,8 @@ Panel {
                             id: addEventForm
                             visible: root.showAddForm
                             width: contentColumn.width
-                            height: visible ? implicitHeight : 0
+                            implicitHeight: visible ? childrenRect.height : 0
+                            height: implicitHeight
                             spacing: Style.space(8)
 
                             TextField {
@@ -801,7 +802,8 @@ Panel {
                             id: dayEventsList
                             visible: !root.showAddForm
                             width: contentColumn.width
-                            height: visible ? implicitHeight : 0
+                            implicitHeight: visible ? childrenRect.height : 0
+                            height: implicitHeight
                             spacing: Style.space(2)
 
                             Repeater {
