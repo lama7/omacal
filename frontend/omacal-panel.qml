@@ -215,7 +215,8 @@ Panel {
         var end = new Date(d.getFullYear(), d.getMonth(), d.getDate(),
                            newEventEndHour, newEventEndMinute)
         if (end <= start) end = new Date(end.getTime() + 3600000)
-        var calId = calendars.length > 0 ? calendars[0].id : 0
+        var dadCal = calendars.find(function(c) { return c.display_name === "Dad's Calendar" })
+        var calId = dadCal ? dadCal.id : (calendars.length > 0 ? calendars[0].id : 0)
         var xhr = new XMLHttpRequest()
         xhr.open("POST", apiBase + "/api/events", true)
         xhr.setRequestHeader("Content-Type", "application/json")
