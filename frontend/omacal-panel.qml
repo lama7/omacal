@@ -402,26 +402,26 @@ Panel {
             Column {
                 id: contentColumn
                 width: scroll.width
-                anchors.centerIn: parent
+                anchors.top: parent.top
                 spacing: Style.space(4)
 
                 Item {
                     width: contentColumn.width
-                    height: headerRow.implicitHeight + Style.space(8)
+                    height: Style.space(30)
 
                     Item {
                         id: headerRow
-                        width: contentColumn.width
+                        width: monthGrid.width
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.verticalCenter: parent.verticalCenter
-                        height: 40
+                        height: Style.space(22)
 
                         PanelActionButton {
                             id: leftAction
                             anchors.left: parent.left
+                            anchors.leftMargin: -Style.space(8)
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 40
-                            iconText: "\uE0C1"
+                            iconText: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? "\uE0CE" : "󰅁"
                             tooltipText: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? "Back to month" : "Previous month"
                             foreground: root.contentForeground
                             fontFamily: root.contentFontFamily
@@ -436,6 +436,7 @@ Panel {
                             anchors.leftMargin: Style.space(8)
                             anchors.rightMargin: Style.space(8)
                             anchors.verticalCenter: parent.verticalCenter
+                            horizontalAlignment: Text.AlignHCenter
                             font.family: root.contentFontFamily
                             font.pixelSize: Style.font.body
                             font.bold: true
@@ -454,9 +455,9 @@ Panel {
                         PanelActionButton {
                             id: rightAction
                             anchors.right: parent.right
+                            anchors.rightMargin: -Style.space(8)
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 40
-                            iconText: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? "\uE0CE" : "\uE0C0"
+                            iconText: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? "\uE0CE" : "󰅂"
                             tooltipText: (Array.isArray(root.weekDays) && root.weekDays.length > 0) ? "Back to month" : "Next month"
                             foreground: root.contentForeground
                             fontFamily: root.contentFontFamily
@@ -657,7 +658,7 @@ Panel {
                 Item {
                     width: contentColumn.width
                     anchors.horizontalCenter: parent.horizontalCenter
-                    height: statusText.implicitHeight + Style.space(4)
+                    height: statusText.visible ? statusText.implicitHeight + Style.space(4) : 0
                     Text {
                         id: statusText
                         textFormat: Text.PlainText
