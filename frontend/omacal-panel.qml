@@ -669,7 +669,7 @@ Panel {
                     id: dayView
                     visible: root.viewMode === "day" && root.dayDate
                     width: contentColumn.width
-                    height: dayContent.implicitHeight
+                    height: 1 + Style.space(4) + (root.showAddForm ? addEventForm.implicitHeight : dayEventsList.implicitHeight)
 
                     Column {
                         id: dayContent
@@ -687,8 +687,7 @@ Panel {
                             id: addEventForm
                             visible: root.showAddForm
                             width: contentColumn.width
-                            implicitHeight: visible ? childrenRect.height : 0
-                            height: implicitHeight
+                            height: visible ? implicitHeight : 0
                             spacing: Style.space(8)
 
                             TextField {
@@ -802,8 +801,7 @@ Panel {
                             id: dayEventsList
                             visible: !root.showAddForm
                             width: contentColumn.width
-                            implicitHeight: visible ? childrenRect.height : 0
-                            height: implicitHeight
+                            height: visible ? implicitHeight : 0
                             spacing: Style.space(2)
 
                             Repeater {
