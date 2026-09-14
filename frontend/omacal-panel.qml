@@ -430,8 +430,8 @@ Panel {
                         Text {
                             id: headerLabel
                             textFormat: Text.PlainText
-                            anchors.left: leftAction.right
-                            anchors.right: rightAction.left
+                            anchors.left: root.viewMode === "day" ? left2Action : leftAction
+                            anchors.right: root.viewMode === "day" ? right2Action : rightAction
                             anchors.leftMargin: Style.space(6)
                             anchors.rightMargin: Style.space(6)
                             anchors.verticalCenter: parent.verticalCenter
@@ -455,10 +455,10 @@ Panel {
                             anchors.right: rightAction.left
                             anchors.verticalCenter: parent.verticalCenter
                             iconText: "\u002b"
-                            tooltipText: (root.viewMode === "day" && root.dayDate) ? "Next Day" : "Next Month"
+                            tooltipText: "Add Event"
                             foreground: root.contentForeground
                             fontFamily: root.contentFontFamily
-                            onClicked: (root.viewMode === "day" && root.dayDate) ? root.shiftDay(1) : root.shiftMonth(1)
+                            onClicked: root.viewMode === "day" ? null : root.shiftMonth(1)
                         }
                          PanelActionButton {
                             id: rightAction
