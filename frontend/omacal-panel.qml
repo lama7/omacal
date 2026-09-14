@@ -695,7 +695,6 @@ Panel {
                                 width: dayContent.width
                                 placeholderText: "Event title"
                                 foreground: root.contentForeground
-                                fontFamily: root.contentFontFamily
                                 onTextChanged: root.newEventSummary = text
                             }
 
