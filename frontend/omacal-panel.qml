@@ -425,6 +425,7 @@ Panel {
             id: keyCatcher
             anchors.fill: parent
             onMoveRequested: function(dx, dy) {
+                if (root.showAddForm) return
                 if (root.viewMode === "day") {
                     if (dx !== 0) root.shiftDay(dx)
                 } else {
@@ -432,10 +433,14 @@ Panel {
                     if (dy !== 0) root.shiftMonth(dy * 12)
                 }
             }
-            onActivateRequested: root.close()
-            onCloseRequested: root.close()
+            onActivateRequested: root.showAddForm ? root.submitAddEvent() : root.close()
+            onCloseRequested: root.showAddForm ? root.dismissAddForm() : root.close()
             onTabRequested: function(direction) { root.switchPanel(direction) }
             onTextKey: function(t) {
+                if (root.showAddForm) {
+                    if (t === "\b" || t === "\x7F") root.dismissAddForm()
+                    return
+                }
                 if (t === "[" || t === "{") root.shiftMonth(-1)
                 else if (t === "]" || t === "}") root.shiftMonth(1)
                 else if (t === "t" || t === "T") root.goToToday()
