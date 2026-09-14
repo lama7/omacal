@@ -452,6 +452,7 @@ Panel {
                 }
 
                 Row {
+                    visible: root.viewMode !== "day"
                     width: contentColumn.width
                     spacing: Style.space(2)
                     height: Style.space(18)
@@ -481,6 +482,13 @@ Panel {
                         id: monthContent
                         width: contentColumn.width
                         spacing: Style.space(2)
+
+                        Rectangle {
+                            width: contentColumn.width
+                            height: 1
+                            color: Qt.darker(root.contentForeground, 2.0)
+                            opacity: 0.4
+                        }
 
                         Repeater {
                             id: weekRowRepeater
