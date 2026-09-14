@@ -409,8 +409,19 @@ Panel {
                             id: leftAction
                             anchors.left: parent.left
                             anchors.verticalCenter: parent.verticalCenter
-                            iconText: (root.viewMode === "day" && root.dayDate) ? "\uE0CE" : "󰅁"
-                            tooltipText: (root.viewMode === "day" && root.dayDate) ? "Back to month" : "Previous month"
+                            iconText: "\u2190"
+                            tooltipText: (root.viewMode === "day" && root.dayDate) ? "Previous Day" : "Previous Month"
+                            foreground: root.contentForeground
+                            fontFamily: root.contentFontFamily
+                            onClicked: (root.viewMode === "day" && root.dayDate) ? root.shiftDay(-1) : root.shiftMonth(-1)
+                        }
+
+                        PanelActionButton {
+                            id: left2Action
+                            visible: root.viewMode === "day"
+                            anchors.left: leftAction.right
+                            iconText: "\u2191"
+                            tooltipText: "Back to Month"
                             foreground: root.contentForeground
                             fontFamily: root.contentFontFamily
                             onClicked: (root.viewMode === "day" && root.dayDate) ? root.backToMonth() : root.shiftMonth(-1)
@@ -439,14 +450,25 @@ Panel {
                         }
 
                         PanelActionButton {
+                            id: right2Action
+                            visible: root.viewMode === "day"
+                            anchors.right: rightAction.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            iconText: "\u002b"
+                            tooltipText: (root.viewMode === "day" && root.dayDate) ? "Next Day" : "Next Month"
+                            foreground: root.contentForeground
+                            fontFamily: root.contentFontFamily
+                            onClicked: (root.viewMode === "day" && root.dayDate) ? root.shiftDay(1) : root.shiftMonth(1)
+                        }
+                         PanelActionButton {
                             id: rightAction
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                            iconText: (root.viewMode === "day" && root.dayDate) ? "\uE0CE" : "󰅂"
-                            tooltipText: (root.viewMode === "day" && root.dayDate) ? "Back to month" : "Next month"
+                            iconText: "\u2192"
+                            tooltipText: (root.viewMode === "day" && root.dayDate) ? "Next Day" : "Next Month"
                             foreground: root.contentForeground
                             fontFamily: root.contentFontFamily
-                            onClicked: (root.viewMode === "day" && root.dayDate) ? root.backToMonth() : root.shiftMonth(1)
+                            onClicked: (root.viewMode === "day" && root.dayDate) ? root.shiftDay(1) : root.shiftMonth(1)
                         }
                     }
                 }
