@@ -81,9 +81,16 @@ def add_calendar(
     principal_url: str | None = None,
 ) -> int:
     cur = conn.execute(
-        """INSERT OR REPLACE INTO calendars
+        """INSERT INTO calendars
            (uid, display_name, url, username, password, color, principal_url, last_sync, enabled)
            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 1)
+        ON CONFLICT(uid) DO UPDATE SET
+           display_name = excluded.display_name,
+           url = excluded.url,
+           username = excluded.username,
+           password = excluded.password,
+           color = excluded.color,
+           principal_url = excluded.principal_url
         RETURNING id""",
         (uid, display_name, url, username, password, color, principal_url),
     )
