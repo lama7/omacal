@@ -708,10 +708,11 @@ Panel {
                                     font.family: root.contentFontFamily
                                     font.pixelSize: Style.font.bodySmall
                                     verticalAlignment: Text.AlignVCenter
+                                    anchors.verticalCenter: parent.verticalCenter
                                 }
 
                                 NumberField {
-                                    fieldWidth: Style.space(36)
+                                    fieldWidth: Style.space(50)
                                     from: 0
                                     to: 23
                                     value: root.newEventStartHour
@@ -726,10 +727,11 @@ Panel {
                                     font.pixelSize: Style.font.body
                                     horizontalAlignment: Text.AlignHCenter
                                     verticalAlignment: Text.AlignVCenter
+                                    anchors.verticalCenter: parent.verticalCenter
                                 }
 
                                 NumberField {
-                                    fieldWidth: Style.space(36)
+                                    fieldWidth: Style.space(50)
                                     from: 0
                                     to: 59
                                     stepSize: 5
@@ -748,10 +750,11 @@ Panel {
                                     font.family: root.contentFontFamily
                                     font.pixelSize: Style.font.bodySmall
                                     verticalAlignment: Text.AlignVCenter
+                                    anchors.verticalCenter: parent.verticalCenter
                                 }
 
                                 NumberField {
-                                    fieldWidth: Style.space(36)
+                                    fieldWidth: Style.space(50)
                                     from: 0
                                     to: 23
                                     value: root.newEventEndHour
@@ -766,10 +769,11 @@ Panel {
                                     font.pixelSize: Style.font.body
                                     horizontalAlignment: Text.AlignHCenter
                                     verticalAlignment: Text.AlignVCenter
+                                    anchors.verticalCenter: parent.verticalCenter
                                 }
 
                                 NumberField {
-                                    fieldWidth: Style.space(36)
+                                    fieldWidth: Style.space(50)
                                     from: 0
                                     to: 59
                                     stepSize: 5
