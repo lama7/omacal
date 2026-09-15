@@ -478,6 +478,7 @@ Panel {
 
                         PanelActionButton {
                             id: leftAction
+                            visible: !root.showAddForm
                             enabled: !root.showAddForm
                             anchors.left: parent.left
                             anchors.verticalCenter: parent.verticalCenter
@@ -491,7 +492,7 @@ Panel {
                         PanelActionButton {
                             id: left2Action
                             enabled: !root.showAddForm
-                            visible: root.viewMode === "day"
+                            visible: root.viewMode === "day" && !root.showAddForm
                             anchors.left: leftAction.right
                             iconText: "\u2191"
                             tooltipText: "Back to Month"
@@ -525,7 +526,7 @@ Panel {
                         PanelActionButton {
                             id: right2Action
                             enabled: !root.showAddForm
-                            visible: root.viewMode === "day"
+                            visible: root.viewMode === "day" && !root.showAddForm
                             anchors.right: rightAction.left
                             anchors.verticalCenter: parent.verticalCenter
                             iconText: "\u002b"
@@ -536,6 +537,7 @@ Panel {
                         }
                          PanelActionButton {
                             id: rightAction
+                            visible: !root.showAddForm
                             enabled: !root.showAddForm
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
