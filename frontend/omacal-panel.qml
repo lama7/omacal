@@ -751,6 +751,7 @@ Panel {
                                     foreground: root.contentForeground
                                     fontFamily: root.contentFontFamily
                                     onChanged: root.newEventCalendarId = parseInt(value, 10)
+                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
                                 }
                             }
 
@@ -777,6 +778,7 @@ Panel {
                                     foreground: root.contentForeground
                                     fontFamily: root.contentFontFamily
                                     onChanged: root.newEventStartHour = parseInt(value, 10)
+                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
                                 }
 
                                 Text {
@@ -800,6 +802,7 @@ Panel {
                                     foreground: root.contentForeground
                                     fontFamily: root.contentFontFamily
                                     onChanged: root.newEventStartMinute = parseInt(value, 10)
+                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
                                 }
                             }
 
@@ -826,6 +829,7 @@ Panel {
                                     foreground: root.contentForeground
                                     fontFamily: root.contentFontFamily
                                     onChanged: root.newEventEndHour = parseInt(value, 10)
+                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
                                 }
 
                                 Text {
@@ -849,6 +853,7 @@ Panel {
                                     foreground: root.contentForeground
                                     fontFamily: root.contentFontFamily
                                     onChanged: root.newEventEndMinute = parseInt(value, 10)
+                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
                                 }
                             }
 
