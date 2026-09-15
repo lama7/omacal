@@ -720,7 +720,7 @@ Panel {
                                 }
 
                                 Text {
-                                    text: ":"
+                                  text: ":"
                                     width: Style.space(16)
                                     color: root.contentForeground
                                     font.family: root.contentFontFamily
@@ -784,7 +784,6 @@ Panel {
 
                             Row {
                                 width: dayContent.width
-                                height: Style.font.bodySmall + Style.spacing.controlPaddingY * 2
                                 spacing: Style.space(4)
 
                                 Button {
