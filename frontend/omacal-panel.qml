@@ -64,6 +64,7 @@ Panel {
     property int newEventStartMinute: 0
     property int newEventEndHour: 10
     property int newEventEndMinute: 0
+    property int newEventCalendarId: 0
 
     readonly property var hourOptions: (function() {
         var a = []; for (var h = 0; h < 24; h++) a.push({value: String(h), label: h < 10 ? " " + h : String(h)}); return a
@@ -202,8 +203,12 @@ Panel {
         newEventStartMinute = 0
         newEventEndHour = 10
         newEventEndMinute = 0
+        // Default calendar: prefer "Dad's Calendar", then first available
+        var dadCal = calendars.find(function(c) { return c.display_name === "Dad's Calendar" })
+        newEventCalendarId = dadCal ? dadCal.id : (calendars.length > 0 ? calendars[0].id : 0)
         // Sync dropdown initial values — Dropdowns use direct assignment
         // (selectCurrent does root.value = v), so bindings can't be used.
+        calendarDropdown.value = String(newEventCalendarId)
         startHourDropdown.value = String(newEventStartHour)
         startMinuteDropdown.value = String(newEventStartMinute)
         endHourDropdown.value = String(newEventEndHour)
@@ -228,8 +233,7 @@ Panel {
         var end = new Date(d.getFullYear(), d.getMonth(), d.getDate(),
                            newEventEndHour, newEventEndMinute)
         if (end <= start) end = new Date(end.getTime() + 3600000)
-        var dadCal = calendars.find(function(c) { return c.display_name === "Dad's Calendar" })
-        var calId = dadCal ? dadCal.id : (calendars.length > 0 ? calendars[0].id : 0)
+        var calId = newEventCalendarId
         var xhr = new XMLHttpRequest()
         xhr.open("POST", apiBase + "/api/events", true)
         xhr.setRequestHeader("Content-Type", "application/json")
@@ -715,6 +719,34 @@ Panel {
                                 placeholderText: "Event title"
                                 foreground: root.contentForeground
                                 onTextChanged: root.newEventSummary = text
+                            }
+
+                            Row {
+                                width: dayContent.width
+                                height: Style.spacing.controlHeight
+                                spacing: Style.space(2)
+                                Text {
+                                    text: "Calendar"
+                                    width: Style.space(56)
+                                    color: Qt.darker(root.contentForeground, 1.5)
+                                    font.family: root.contentFontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                    verticalAlignment: Text.AlignVCenter
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Dropdown {
+                                    id: calendarDropdown
+                                    width: Style.space(240)
+                                    height: Style.spacing.controlHeight
+                                    showLabel: false
+                                    value: ""
+                                    options: root.calendars.map(function(c) {
+                                        return { value: String(c.id), label: c.display_name }
+                                    })
+                                    foreground: root.contentForeground
+                                    fontFamily: root.contentFontFamily
+                                    onChanged: root.newEventCalendarId = parseInt(value, 10)
+                                }
                             }
 
                             Row {
