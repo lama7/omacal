@@ -478,6 +478,7 @@ Panel {
 
                         PanelActionButton {
                             id: leftAction
+                            enabled: !root.showAddForm
                             anchors.left: parent.left
                             anchors.verticalCenter: parent.verticalCenter
                             iconText: "\u2190"
@@ -489,6 +490,7 @@ Panel {
 
                         PanelActionButton {
                             id: left2Action
+                            enabled: !root.showAddForm
                             visible: root.viewMode === "day"
                             anchors.left: leftAction.right
                             iconText: "\u2191"
@@ -522,6 +524,7 @@ Panel {
 
                         PanelActionButton {
                             id: right2Action
+                            enabled: !root.showAddForm
                             visible: root.viewMode === "day"
                             anchors.right: rightAction.left
                             anchors.verticalCenter: parent.verticalCenter
@@ -533,6 +536,7 @@ Panel {
                         }
                          PanelActionButton {
                             id: rightAction
+                            enabled: !root.showAddForm
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
                             iconText: "\u2192"
