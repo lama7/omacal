@@ -700,7 +700,7 @@ Panel {
 
                             Row {
                                 width: dayContent.width
-
+                                height: Style.spacing.controlHeight
                                 Text {
                                     text: "Start"
                                     width: Style.space(48)
@@ -742,7 +742,7 @@ Panel {
 
                             Row {
                                 width: dayContent.width
-
+                                height: Style.spacing.controlHeight
                                 Text {
                                     text: "End"
                                     width: Style.space(48)
@@ -784,6 +784,7 @@ Panel {
 
                             Row {
                                 width: dayContent.width
+                                height: Math.max(Style.spacing.controlHeight, Style.font.body + Style.spacing.controlPaddingY * 2) + 2
                                 spacing: Style.space(4)
 
                                 Button {
