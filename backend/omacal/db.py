@@ -101,7 +101,7 @@ def add_calendar(
 
 def list_calendars(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     cur = conn.execute(
-        "SELECT id, uid, display_name, color, url, username, principal_url, last_sync, enabled FROM calendars ORDER BY display_name"
+        "SELECT id, uid, display_name, color, url, username, password, principal_url, last_sync, enabled FROM calendars ORDER BY display_name"
     )
     return [dict(r) for r in cur.fetchall()]
 

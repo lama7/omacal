@@ -154,6 +154,7 @@ Panel {
     function gotoDay(date) {
         viewMode = "day"
         showAddForm = false
+        error = ""
         dayDate = new Date(date)
         dayEvents = []
         var y = dayDate.getFullYear()
@@ -172,6 +173,7 @@ Panel {
     function backToMonth() {
         viewMode = "month"
         showAddForm = false
+        error = ""
         dayDate = null
         dayEvents = []
         pendingDayDate = null
@@ -197,15 +199,17 @@ Panel {
 
     function openAddForm() {
         showAddForm = true
+        error = ""
         newEventSummary = ""
         newEventTitleField.text = ""
         newEventStartHour = 9
         newEventStartMinute = 0
         newEventEndHour = 10
         newEventEndMinute = 0
-        // Default calendar: prefer "Dad's Calendar", then first available
-        var dadCal = calendars.find(function(c) { return c.display_name === "Dad's Calendar" })
-        newEventCalendarId = dadCal ? dadCal.id : (calendars.length > 0 ? calendars[0].id : 0)
+        // Default calendar: prefer "Dad's Calendar", then first writable
+        var writable = calendars.filter(function(c) { return c.writable })
+        var dadCal = writable.find(function(c) { return c.display_name === "Dad's Calendar" })
+        newEventCalendarId = dadCal ? dadCal.id : (writable.length > 0 ? writable[0].id : 0)
         // Sync dropdown initial values — Dropdowns use direct assignment
         // (selectCurrent does root.value = v), so bindings can't be used.
         calendarDropdown.value = String(newEventCalendarId)
@@ -217,6 +221,7 @@ Panel {
 
     function dismissAddForm() {
         showAddForm = false
+        error = ""
         newEventSummary = ""
         newEventTitleField.text = ""
         newEventStartHour = 9
@@ -740,7 +745,7 @@ Panel {
                                     height: Style.spacing.controlHeight
                                     showLabel: false
                                     value: ""
-                                    options: root.calendars.map(function(c) {
+                                    options: root.calendars.filter(function(c) { return c.writable }).map(function(c) {
                                         return { value: String(c.id), label: c.display_name }
                                     })
                                     foreground: root.contentForeground

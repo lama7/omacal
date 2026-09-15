@@ -48,6 +48,10 @@ class OmacalHandler(BaseHTTPRequestHandler):
 
         if path == "/api/calendars":
             calendars = db_get_calendars(self.db_conn)
+            for c in calendars:
+                c["writable"] = bool(c.get("username") and c.get("password"))
+                c.pop("password", None)
+                c.pop("username", None)
             self._json(200, calendars)
             return
 
