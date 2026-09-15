@@ -132,6 +132,37 @@ def _parse_ical_events(cal_data: bytes, calendar_id: int, cutoff: datetime) -> l
     return events
 
 
+def _check_writable(client: Any, cal_url: str) -> bool:
+    """Check if the current user has write privileges on a CalDAV calendar.
+
+    Uses PROPFIND to fetch current-user-privilege-set (RFC 3744).
+    Returns True if the user has 'write', 'write-content', or 'all' privilege.
+    Returns True if the check fails (conservative: don't filter on error).
+    """
+    import xml.etree.ElementTree as ET
+    body = (
+        '<?xml version="1.0" encoding="utf-8" ?>\n'
+        '<d:propfind xmlns:d="DAV:">\n'
+        '  <d:prop><d:current-user-privilege-set/></d:prop>\n'
+        '</d:propfind>'
+    )
+    try:
+        resp = client.propfind(cal_url, body, depth=0)
+        if resp.results and resp.results[0].status == 200:
+            props = resp.results[0].properties
+            priv_elem = props.get("{DAV:}current-user-privilege-set")
+            if priv_elem is not None:
+                for elem in priv_elem.iter():
+                    tag = elem.tag
+                    localname = tag.split("}")[-1] if "}" in tag else tag
+                    if localname in ("write", "write-content", "all"):
+                        return True
+                return False  # Privilege set present but no write privileges
+    except Exception as e:
+        logger.debug("Could not check ACL for %s: %s (assuming writable)", cal_url, e)
+    return True  # Conservative: assume writable if we can't determine
+
+
 def _discover_calendars(
     url: str,
     username: str | None,
@@ -166,6 +197,7 @@ def _discover_calendars(
                 "url": cal_url,
                 "color": props.get("{http://apple.com/ns/ical/}calendar-color"),
                 "principal_url": (str(principal.url) if principal.url else None),
+                "writable": _check_writable(client, cal_url),
             })
         except Exception as e:
             logger.warning("Skipping calendar %s: %s", cal_url, e)
@@ -209,10 +241,13 @@ def sync_source(
         cal_uid = cal_info["uid"]
         display = cal_info["display_name"]
         prop_color = cal_info.get("color")
+        is_writable = cal_info.get("writable", True)
 
         cal_id = add_calendar(
             conn, cal_uid, display, cal_info["url"],
-            username, password, prop_color, cal_info.get("principal_url"),
+            username if is_writable else None,
+            password if is_writable else None,
+            prop_color, cal_info.get("principal_url"),
         )
         clear_calendar_events(conn, cal_id)
 
