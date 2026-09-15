@@ -65,6 +65,13 @@ Panel {
     property int newEventEndHour: 10
     property int newEventEndMinute: 0
 
+    readonly property var hourOptions: (function() {
+        var a = []; for (var h = 0; h < 24; h++) a.push({value: String(h), label: h < 10 ? " " + h : String(h)}); return a
+    })()
+    readonly property var minuteOptions: (function() {
+        var a = []; for (var m = 0; m < 60; m += 5) a.push({value: String(m), label: m < 10 ? " " + m : String(m)}); return a
+    })()
+
     function initView() {
         viewYear = today.getFullYear()
         viewMonth = today.getMonth()
@@ -195,6 +202,12 @@ Panel {
         newEventStartMinute = 0
         newEventEndHour = 10
         newEventEndMinute = 0
+        // Sync dropdown initial values — Dropdowns use direct assignment
+        // (selectCurrent does root.value = v), so bindings can't be used.
+        startHourDropdown.value = String(newEventStartHour)
+        startMinuteDropdown.value = String(newEventStartMinute)
+        endHourDropdown.value = String(newEventEndHour)
+        endMinuteDropdown.value = String(newEventEndMinute)
     }
 
     function dismissAddForm() {
@@ -717,12 +730,16 @@ Panel {
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
-                                NumberField {
-                                    fieldWidth: Style.space(50)
-                                    from: 0
-                                    to: 23
-                                    value: root.newEventStartHour
-                                    onModified: root.newEventStartHour = value
+                                Dropdown {
+                                    id: startHourDropdown
+                                    width: Style.space(50)
+                                    height: Style.spacing.controlHeight
+                                    showLabel: false
+                                    value: ""
+                                    options: root.hourOptions
+                                    foreground: root.contentForeground
+                                    fontFamily: root.contentFontFamily
+                                    onChanged: root.newEventStartHour = parseInt(value, 10)
                                 }
 
                                 Text {
@@ -736,13 +753,16 @@ Panel {
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
-                                NumberField {
-                                    fieldWidth: Style.space(50)
-                                    from: 0
-                                    to: 59
-                                    stepSize: 5
-                                    value: root.newEventStartMinute
-                                    onModified: root.newEventStartMinute = value
+                                Dropdown {
+                                    id: startMinuteDropdown
+                                    width: Style.space(50)
+                                    height: Style.spacing.controlHeight
+                                    showLabel: false
+                                    value: ""
+                                    options: root.minuteOptions
+                                    foreground: root.contentForeground
+                                    fontFamily: root.contentFontFamily
+                                    onChanged: root.newEventStartMinute = parseInt(value, 10)
                                 }
                             }
 
@@ -759,16 +779,20 @@ Panel {
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
-                                NumberField {
-                                    fieldWidth: Style.space(50)
-                                    from: 0
-                                    to: 23
-                                    value: root.newEventEndHour
-                                    onModified: root.newEventEndHour = value
+                                Dropdown {
+                                    id: endHourDropdown
+                                    width: Style.space(50)
+                                    height: Style.spacing.controlHeight
+                                    showLabel: false
+                                    value: ""
+                                    options: root.hourOptions
+                                    foreground: root.contentForeground
+                                    fontFamily: root.contentFontFamily
+                                    onChanged: root.newEventEndHour = parseInt(value, 10)
                                 }
 
                                 Text {
-                                    text: ":"
+                                  text: ":"
                                     width: Style.space(16)
                                     color: root.contentForeground
                                     font.family: root.contentFontFamily
@@ -778,13 +802,16 @@ Panel {
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
-                                NumberField {
-                                    fieldWidth: Style.space(50)
-                                    from: 0
-                                    to: 59
-                                    stepSize: 5
-                                    value: root.newEventEndMinute
-                                    onModified: root.newEventEndMinute = value
+                                Dropdown {
+                                    id: endMinuteDropdown
+                                    width: Style.space(50)
+                                    height: Style.spacing.controlHeight
+                                    showLabel: false
+                                    value: ""
+                                    options: root.minuteOptions
+                                    foreground: root.contentForeground
+                                    fontFamily: root.contentFontFamily
+                                    onChanged: root.newEventEndMinute = parseInt(value, 10)
                                 }
                             }
 
