@@ -65,6 +65,10 @@ Panel {
     property int newEventEndHour: 10
     property int newEventEndMinute: 0
     property int newEventCalendarId: 0
+    property string newEventStartDate: ""
+    property string newEventEndDate: ""
+    property bool startDateValid: true
+    property bool endDateValid: true
 
     readonly property var hourOptions: (function() {
         var a = []; for (var h = 0; h < 24; h++) a.push({value: String(h), label: h < 10 ? " " + h : String(h)}); return a
@@ -217,6 +221,11 @@ Panel {
         startMinuteDropdown.value = String(newEventStartMinute)
         endHourDropdown.value = String(newEventEndHour)
         endMinuteDropdown.value = String(newEventEndMinute)
+        var dd = new Date(dayDate)
+        newEventStartDate = formatDateInput(dd)
+        newEventEndDate = formatDateInput(dd)
+        startDateField.text = newEventStartDate
+        endDateField.text = newEventEndDate
     }
 
     function dismissAddForm() {
@@ -224,6 +233,10 @@ Panel {
         error = ""
         newEventSummary = ""
         newEventTitleField.text = ""
+        newEventStartDate = ""
+        newEventEndDate = ""
+        startDateField.text = ""
+        endDateField.text = ""
         newEventStartHour = 9
         newEventStartMinute = 0
         newEventEndHour = 10
@@ -232,10 +245,15 @@ Panel {
 
     function submitAddEvent() {
         if (!dayDate || !newEventSummary.trim()) return
-        var d = new Date(dayDate)
-        var start = new Date(d.getFullYear(), d.getMonth(), d.getDate(),
+        var startDate = parseDateInput(newEventStartDate)
+        var endDate = parseDateInput(newEventEndDate)
+        if (!startDate || !endDate) {
+            error = "Invalid date"
+            return
+        }
+        var start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(),
                              newEventStartHour, newEventStartMinute)
-        var end = new Date(d.getFullYear(), d.getMonth(), d.getDate(),
+        var end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(),
                            newEventEndHour, newEventEndMinute)
         if (end <= start) end = new Date(end.getTime() + 3600000)
         var calId = newEventCalendarId
@@ -346,6 +364,22 @@ Panel {
     }
 
     function pad2(v) { var n = Number(v); return (n < 10 ? "0" : "") + n }
+
+    function parseDateInput(text) {
+        var match = String(text || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+        if (!match) return null
+        var m = parseInt(match[1], 10) - 1
+        var d = parseInt(match[2], 10)
+        var y = parseInt(match[3], 10)
+        var date = new Date(y, m, d)
+        if (date.getFullYear() !== y || date.getMonth() !== m || date.getDate() !== d) return null
+        return date
+    }
+
+    function formatDateInput(d) {
+        if (!d) return ""
+        return pad2(d.getMonth() + 1) + "/" + pad2(d.getDate()) + "/" + d.getFullYear()
+    }
 
     function eventsForDay(year, month, day) {
         var key = year + "-" + pad2(month + 1) + "-" + pad2(day)
@@ -758,6 +792,7 @@ Panel {
                             Row {
                                 width: dayContent.width
                                 height: Style.spacing.controlHeight
+                                spacing: Style.space(4)
                                 Text {
                                     text: "Start"
                                     width: Style.space(48)
@@ -766,6 +801,22 @@ Panel {
                                     font.pixelSize: Style.font.bodySmall
                                     verticalAlignment: Text.AlignVCenter
                                     anchors.verticalCenter: parent.verticalCenter
+                                }
+                                TextField {
+                                    id: startDateField
+                                    width: Style.space(90)
+                                    height: Style.spacing.controlHeight
+                                    placeholderText: "MM/dd/yyyy"
+                                    inputMask: "00/00/0000"
+                                    foreground: startDateValid ? root.contentForeground : Color.urgent
+                                    fontFamily: root.contentFontFamily
+                                    onTextChanged: {
+                                        root.newEventStartDate = text
+                                        root.startDateValid = root.parseDateInput(text) !== null
+                                    }
+                                    onEditingFinished: {
+                                        keyCatcher.forceActiveFocus()
+                                    }
                                 }
 
                                 Dropdown {
@@ -809,6 +860,7 @@ Panel {
                             Row {
                                 width: dayContent.width
                                 height: Style.spacing.controlHeight
+                                spacing: Style.space(4)
                                 Text {
                                     text: "End"
                                     width: Style.space(48)
@@ -817,6 +869,22 @@ Panel {
                                     font.pixelSize: Style.font.bodySmall
                                     verticalAlignment: Text.AlignVCenter
                                     anchors.verticalCenter: parent.verticalCenter
+                                }
+                                TextField {
+                                    id: endDateField
+                                    width: Style.space(90)
+                                    height: Style.spacing.controlHeight
+                                    placeholderText: "MM/dd/yyyy"
+                                    inputMask: "00/00/0000"
+                                    foreground: endDateValid ? root.contentForeground : Color.urgent
+                                    fontFamily: root.contentFontFamily
+                                    onTextChanged: {
+                                        root.newEventEndDate = text
+                                        root.endDateValid = root.parseDateInput(text) !== null
+                                    }
+                                    onEditingFinished: {
+                                        keyCatcher.forceActiveFocus()
+                                    }
                                 }
 
                                 Dropdown {
