@@ -282,6 +282,14 @@ Panel {
     function eventTimeStr(ev) {
         if (Number(ev.all_day)) return "All day"
         var start = new Date(ev.start)
+        if (ev.end) {
+            var end = new Date(ev.end)
+            var startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate())
+            var endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate())
+            if (startDay.getTime() !== endDay.getTime()) {
+                return Qt.formatDateTime(start, "MMM d, HH:mm") + " \u2013 " + Qt.formatDateTime(end, "MMM d, HH:mm")
+            }
+        }
         return Qt.formatTime(start, "HH:mm")
     }
 
