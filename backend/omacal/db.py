@@ -225,6 +225,7 @@ def update_event(
     end: str | None = None,
     all_day: int = 0,
     location: str | None = None,
+    calendar_id: int | None = None,
 ) -> dict[str, Any]:
     """Update an event in the local cache. Returns the updated row as a dict."""
     cur = conn.execute(
@@ -233,11 +234,13 @@ def update_event(
                location = ?,
                start = ?,
                end = ?,
-               all_day = ?
+               all_day = ?"""
+        + (", calendar_id = ?" if calendar_id is not None else "")
+        + """
            WHERE uid = ?
         RETURNING id, calendar_id, uid, summary, description, location,
                   start, end, all_day, recurrence_id, status, transparency""",
-        (summary, location, start, end, all_day, uid),
+        (summary, location, start, end, all_day) + ((calendar_id,) if calendar_id is not None else ()) + (uid,),
     )
     row = cur.fetchone()
     cur.close()

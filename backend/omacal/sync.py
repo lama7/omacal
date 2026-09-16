@@ -399,7 +399,39 @@ def update_event(
         password=row["password"],
     )
     cal_obj = client.calendar(url=row["url"])
-    event = cal_obj.get_event_by_uid(uid)
+    try:
+        event = cal_obj.get_event_by_uid(uid)
+    except caldav.error.NotFoundError:
+        # Event not on the target calendar — search all calendars on this server
+        principal = client.principal()
+        event = None
+        for cal in principal.calendars():
+            try:
+                event = cal.get_event_by_uid(uid)
+                break
+            except caldav.error.NotFoundError:
+                continue
+        if event is None:
+            raise ValueError(f"Event uid={uid} not found on any calendar")
+        # Found on a different calendar — move it: delete from old, create on new
+        event.delete()
+        cal_obj.add_event(
+            uid=uid,
+            dtstart=start,
+            dtend=end,
+            summary=summary,
+            location=location,
+        )
+        return db_update_event(
+            conn,
+            uid,
+            summary,
+            start.isoformat(),
+            end.isoformat() if end else None,
+            1 if all_day else 0,
+            location,
+            calendar_id=calendar_id,
+        )
     comp = event.icalendar_component
     comp["summary"] = summary
     from icalendar import vDatetime, vDate
@@ -426,6 +458,7 @@ def update_event(
         end.isoformat() if end else None,
         1 if all_day else 0,
         location,
+        calendar_id=calendar_id,
     )
 
 
