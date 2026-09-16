@@ -73,6 +73,7 @@ Panel {
 
     // Edit/delete state
     property string editingUid: ""
+    property int editingCalendarId: 0
     property var pendingDeleteEvent: null
     property bool showDeleteConfirm: false
 
@@ -529,9 +530,20 @@ Panel {
     }
 
     function close() {
+        showDeleteConfirm = false
+        pendingDeleteEvent = null
+        editingUid = ""
         root.opened = false
         if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function") root.bar.setCenterHoverRevealSuppressed(false)
         root.controller.hide()
+    }
+
+    onOpenedChanged: {
+        if (!root.opened) {
+            showDeleteConfirm = false
+            pendingDeleteEvent = null
+            editingUid = ""
+        }
     }
 
     function toggle() {
@@ -1127,15 +1139,22 @@ Panel {
                     }
 
                     Rectangle {
-                        anchors.fill: parent
+                        parent: root
+                        anchors.fill: root
                         color: "#000000"
                         opacity: 0.6
                         visible: root.showDeleteConfirm
-                        z: 10
-                        MouseArea { anchors.fill: parent }
+                        z: 100
+                        focus: root.showDeleteConfirm
+                        Keys.onEscapePressed: {
+                            root.showDeleteConfirm = false
+                            root.pendingDeleteEvent = null
+                        }
+                        MouseArea { anchors.fill: parent; onClicked: { root.showDeleteConfirm = false; root.pendingDeleteEvent = null } }
                     }
                     Rectangle {
-                        anchors.centerIn: parent
+                        parent: root
+                        anchors.centerIn: root
                         width: dayContent.width - Style.space(16)
                         height: Style.space(80)
                         radius: Style.space(4)
@@ -1143,7 +1162,7 @@ Panel {
                         border.color: Qt.darker(root.contentForeground, 2.0)
                         border.width: 1
                         visible: root.showDeleteConfirm
-                        z: 11
+                        z: 101
 
                         Text {
                             anchors.top: parent.top
