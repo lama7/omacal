@@ -422,15 +422,25 @@ def update_event(
             summary=summary,
             location=location,
         )
-        return db_update_event(
+        from omacal.db import delete_event as db_delete_event, add_event as db_add_event
+        # Delete old DB row (by old calendar_id), then insert fresh
+        cur2 = conn.execute(
+            "SELECT calendar_id FROM events WHERE uid = ? ORDER BY start DESC LIMIT 1",
+            (uid,),
+        )
+        old_row = cur2.fetchone()
+        cur2.close()
+        old_cal = old_row["calendar_id"] if old_row else calendar_id
+        db_delete_event(conn, old_cal, uid)
+        return db_add_event(
             conn,
+            calendar_id,
             uid,
             summary,
             start.isoformat(),
             end.isoformat() if end else None,
             1 if all_day else 0,
             location,
-            calendar_id=calendar_id,
         )
     comp = event.icalendar_component
     comp["summary"] = summary
@@ -450,15 +460,20 @@ def update_event(
     event.data = comp.to_ical().decode()
     event.save()
 
-    return db_update_event(
+    from omacal.db import add_event as db_add_event
+    # Delete stale rows (sync may have inserted duplicates) then insert fresh.
+    # INSERT OR REPLACE in add_event handles sync race for same (calendar_id, uid).
+    conn.execute("DELETE FROM events WHERE uid = ?", (uid,))
+    conn.commit()
+    return db_add_event(
         conn,
+        calendar_id,
         uid,
         summary,
         start.isoformat(),
         end.isoformat() if end else None,
         1 if all_day else 0,
         location,
-        calendar_id=calendar_id,
     )
 
 

@@ -188,6 +188,8 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 result = update_event(self.db_conn, calendar_id, uid, summary, start_dt, end_dt, all_day, location)
                 self._json(200, result)
             except Exception as e:
+                import traceback
+                logger.error("PUT failed: %s\n%s", e, traceback.format_exc())
                 self._json(500, {"error": str(e)})
             return
         self._json(404, {"error": "not found"})
