@@ -138,6 +138,60 @@ class OmacalHandler(BaseHTTPRequestHandler):
             return
         self._json(404, {"error": "not found"})
 
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/events":
+            query = parse_qs(parsed.query)
+            uid = query.get("uid", [None])[0]
+            calendar_id_raw = query.get("calendar_id", [None])[0]
+            if not uid or not calendar_id_raw:
+                self._json(400, {"error": "uid and calendar_id query parameters required"})
+                return
+            try:
+                calendar_id = int(calendar_id_raw)
+                from omacal.sync import delete_event
+                result = delete_event(self.db_conn, calendar_id, uid)
+                self._json(200, result)
+            except Exception as e:
+                self._json(500, {"error": str(e)})
+            return
+        self._json(404, {"error": "not found"})
+
+    def do_PUT(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/events":
+            query = parse_qs(parsed.query)
+            uid = query.get("uid", [None])[0]
+            if not uid:
+                self._json(400, {"error": "uid query parameter required"})
+                return
+            try:
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                data = json.loads(body)
+                summary = data.get("summary", "")
+                calendar_id = int(data.get("calendar_id"))
+                start_str = data["start"]
+                end_str = data.get("end")
+                all_day = data.get("all_day", False)
+                location = data.get("location", "")
+
+                start_dt = datetime.fromisoformat(start_str)
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+                end_dt = None
+                if end_str:
+                    end_dt = datetime.fromisoformat(end_str)
+                    if end_dt.tzinfo is None:
+                        end_dt = end_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+
+                from omacal.sync import update_event
+                result = update_event(self.db_conn, calendar_id, uid, summary, start_dt, end_dt, all_day, location)
+                self._json(200, result)
+            except Exception as e:
+                self._json(500, {"error": str(e)})
+            return
+        self._json(404, {"error": "not found"})
+
     def _json(self, code: int, data: object) -> None:
         payload = json.dumps(data, default=str).encode("utf-8")
         self.send_response(code)

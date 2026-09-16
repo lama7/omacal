@@ -71,6 +71,11 @@ Panel {
     property bool startDateValid: true
     property bool endDateValid: true
 
+    // Edit/delete state
+    property string editingUid: ""
+    property var pendingDeleteEvent: null
+    property bool showDeleteConfirm: false
+
     readonly property var hourOptions: (function() {
         var a = []; for (var h = 0; h < 24; h++) a.push({value: String(h), label: h < 10 ? " " + h : String(h)}); return a
     })()
@@ -204,6 +209,7 @@ Panel {
 
     function openAddForm() {
         showAddForm = true
+        editingUid = ""
         error = ""
         newEventSummary = ""
         newEventTitleField.text = ""
@@ -233,6 +239,7 @@ Panel {
 
     function dismissAddForm() {
         showAddForm = false
+        editingUid = ""
         error = ""
         newEventSummary = ""
         newEventTitleField.text = ""
@@ -263,15 +270,24 @@ Panel {
         if (end <= start) end = new Date(end.getTime() + 3600000)
         var calId = newEventCalendarId
         var xhr = new XMLHttpRequest()
-        xhr.open("POST", apiBase + "/api/events", true)
+        var method, url
+        if (editingUid) {
+            method = "PUT"
+            url = apiBase + "/api/events?uid=" + encodeURIComponent(editingUid)
+        } else {
+            method = "POST"
+            url = apiBase + "/api/events"
+        }
+        xhr.open(method, url, true)
         xhr.setRequestHeader("Content-Type", "application/json")
         xhr.onreadystatechange = function() {
             if (xhr.readyState === XMLHttpRequest.DONE) {
                 if (xhr.status === 200) {
+                    editingUid = ""
                     dismissAddForm()
                     loadRangeEvents(true)
                 } else {
-                    error = "Failed to create event"
+                    error = "Failed to save event"
                 }
             }
         }
@@ -283,6 +299,47 @@ Panel {
             calendar_id: calId,
             location: newEventLocation
         }))
+    }
+
+    function editEvent(ev) {
+        editingUid = ev.uid
+        editingCalendarId = ev.calendar_id
+        showAddForm = true
+        error = ""
+        newEventSummary = ev.summary || ""
+        newEventTitleField.text = ev.summary || ""
+        newEventLocation = ev.location || ""
+        newEventLocationField.text = ev.location || ""
+        var start = new Date(ev.start)
+        var end = ev.end ? new Date(ev.end) : new Date(start.getTime() + 3600000)
+        newEventStartDate = formatDateInput(start)
+        newEventEndDate = formatDateInput(end)
+        startDateField.text = newEventStartDate
+        endDateField.text = newEventEndDate
+        newEventStartHour = start.getHours()
+        newEventStartMinute = start.getMinutes()
+        newEventEndHour = end.getHours()
+        newEventEndMinute = end.getMinutes()
+        newEventCalendarId = ev.calendar_id
+        calendarDropdown.value = String(ev.calendar_id)
+        startHourDropdown.value = String(newEventStartHour)
+        startMinuteDropdown.value = String(newEventStartMinute)
+        endHourDropdown.value = String(newEventEndHour)
+        endMinuteDropdown.value = String(newEventEndMinute)
+    }
+
+    function deleteEvent() {
+        if (!pendingDeleteEvent) return
+        var xhr = new XMLHttpRequest()
+        xhr.open("DELETE", apiBase + "/api/events?uid=" + encodeURIComponent(pendingDeleteEvent.uid) + "&calendar_id=" + pendingDeleteEvent.calendar_id, true)
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                showDeleteConfirm = false
+                pendingDeleteEvent = null
+                loadRangeEvents(true)
+            }
+        }
+        xhr.send()
     }
 
     function eventTimeStr(ev) {
@@ -1012,6 +1069,20 @@ Panel {
                                     width: dayEventsList.width
                                     height: eventText.implicitHeight
 
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            if (mouse.button === Qt.LeftButton) {
+                                                root.editEvent(modelData)
+                                            } else if (mouse.button === Qt.RightButton) {
+                                                root.pendingDeleteEvent = modelData
+                                                root.showDeleteConfirm = true
+                                            }
+                                        }
+                                    }
+
                                     Rectangle {
                                         anchors.left: parent.left
                                         anchors.verticalCenter: parent.verticalCenter
@@ -1054,12 +1125,68 @@ Panel {
                             }
                         }
                     }
+
+                    Rectangle {
+                        anchors.fill: parent
+                        color: "#000000"
+                        opacity: 0.6
+                        visible: root.showDeleteConfirm
+                        z: 10
+                        MouseArea { anchors.fill: parent }
+                    }
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: dayContent.width - Style.space(16)
+                        height: Style.space(80)
+                        radius: Style.space(4)
+                        color: Qt.darker(Color.foreground, 2.8)
+                        border.color: Qt.darker(root.contentForeground, 2.0)
+                        border.width: 1
+                        visible: root.showDeleteConfirm
+                        z: 11
+
+                        Text {
+                            anchors.top: parent.top
+                            anchors.topMargin: Style.space(8)
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: parent.width - Style.space(16)
+                            text: "Delete \"" + (root.pendingDeleteEvent ? root.pendingDeleteEvent.summary : "") + "\"?"
+                            color: root.contentForeground
+                            font.family: root.contentFontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            wrapMode: Text.Wrap
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+
+                        Row {
+                            anchors.bottom: parent.bottom
+                            anchors.bottomMargin: Style.space(8)
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            height: Style.spacing.controlHeight
+                            spacing: Style.space(8)
+
+                            Button {
+                                text: "Delete"
+                                width: Style.space(70)
+                                onClicked: root.deleteEvent()
+                            }
+                            Button {
+                                text: "Cancel"
+                                width: Style.space(70)
+                                onClicked: {
+                                    root.showDeleteConfirm = false
+                                    root.pendingDeleteEvent = null
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Item {
                     width: contentColumn.width
                     anchors.horizontalCenter: parent.horizontalCenter
                     height: statusText.visible ? statusText.implicitHeight + Style.space(4) : 0
+
                     Text {
                         id: statusText
                         textFormat: Text.PlainText

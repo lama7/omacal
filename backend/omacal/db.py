@@ -209,3 +209,36 @@ def get_today_events(conn: sqlite3.Connection, calendar_ids: list[int] | None = 
     start = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
     end = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc)
     return get_events(conn, start, end, calendar_ids)
+
+
+def delete_event(conn: sqlite3.Connection, calendar_id: int, uid: str) -> None:
+    """Delete an event from the local cache by calendar_id and uid."""
+    conn.execute("DELETE FROM events WHERE calendar_id = ? AND uid = ?", (calendar_id, uid))
+    conn.commit()
+
+
+def update_event(
+    conn: sqlite3.Connection,
+    uid: str,
+    summary: str,
+    start: str,
+    end: str | None = None,
+    all_day: int = 0,
+    location: str | None = None,
+) -> dict[str, Any]:
+    """Update an event in the local cache. Returns the updated row as a dict."""
+    cur = conn.execute(
+        """UPDATE events
+           SET summary = ?,
+               location = ?,
+               start = ?,
+               end = ?,
+               all_day = ?
+           WHERE uid = ?
+        RETURNING id, calendar_id, uid, summary, description, location,
+                  start, end, all_day, recurrence_id, status, transparency""",
+        (summary, location, start, end, all_day, uid),
+    )
+    row = cur.fetchone()
+    conn.commit()
+    return dict(row) if row else {}

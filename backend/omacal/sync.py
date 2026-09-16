@@ -339,6 +339,96 @@ def create_event(
     )
 
 
+def delete_event(
+    conn: Any,
+    calendar_id: int,
+    uid: str,
+) -> dict[str, Any]:
+    """Delete an event from the CalDAV server and local cache."""
+    from omacal.db import delete_event as db_delete_event
+
+    cur = conn.execute(
+        "SELECT url, username, password FROM calendars WHERE id = ?",
+        (calendar_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise ValueError(f"Calendar id={calendar_id} not found in local cache")
+
+    client = caldav.DAVClient(
+        url=row["url"],
+        username=row["username"],
+        password=row["password"],
+    )
+    cal_obj = client.calendar(url=row["url"])
+    try:
+        event = cal_obj.get_event_by_uid(uid)
+        event.delete()
+    except Exception as e:
+        logger.error("Failed to delete event uid=%s on CalDAV: %s", uid, e)
+        raise
+
+    db_delete_event(conn, calendar_id, uid)
+    return {"status": "deleted", "uid": uid}
+
+
+def update_event(
+    conn: Any,
+    calendar_id: int,
+    uid: str,
+    summary: str,
+    start: datetime,
+    end: datetime | None = None,
+    all_day: bool = False,
+    location: str | None = None,
+) -> dict[str, Any]:
+    """Update an existing event on the CalDAV server and local cache."""
+    from omacal.db import update_event as db_update_event
+
+    cur = conn.execute(
+        "SELECT url, username, password FROM calendars WHERE id = ?",
+        (calendar_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise ValueError(f"Calendar id={calendar_id} not found in local cache")
+
+    client = caldav.DAVClient(
+        url=row["url"],
+        username=row["username"],
+        password=row["password"],
+    )
+    cal_obj = client.calendar(url=row["url"])
+    event = cal_obj.get_event_by_uid(uid)
+    comp = event.icalendar_component
+    comp["summary"] = summary
+    from icalendar import vDatetime, vDate
+    if all_day:
+        comp["dtstart"] = vDate(start.date()) if isinstance(start, datetime) else vDate(start)
+        if end:
+            comp["dtend"] = vDate(end.date()) if isinstance(end, datetime) else vDate(end)
+    else:
+        comp["dtstart"] = vDatetime(start)
+        if end:
+            comp["dtend"] = vDatetime(end)
+    if location:
+        comp["location"] = location
+    else:
+        comp.pop("location", None)
+    event.data = comp.to_ical().decode()
+    event.save()
+
+    return db_update_event(
+        conn,
+        uid,
+        summary,
+        start.isoformat(),
+        end.isoformat() if end else None,
+        1 if all_day else 0,
+        location,
+    )
+
+
 def sync_all(config_path: Path | None = None) -> dict[str, Any]:
     """Sync all configured calendars. Returns summary."""
     cfg = load_config(config_path)
