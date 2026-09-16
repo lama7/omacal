@@ -118,6 +118,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 start_str = data["start"]
                 end_str = data.get("end")
                 all_day = data.get("all_day", False)
+                location = data.get("location", "")
 
                 start_dt = datetime.fromisoformat(start_str)
                 if start_dt.tzinfo is None:
@@ -130,7 +131,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
                         end_dt = end_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
 
                 from omacal.sync import create_event
-                result = create_event(self.db_conn, calendar_id, summary, start_dt, end_dt, all_day)
+                result = create_event(self.db_conn, calendar_id, summary, start_dt, end_dt, all_day, location)
                 self._json(200, result)
             except Exception as e:
                 self._json(500, {"error": str(e)})

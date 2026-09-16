@@ -89,6 +89,84 @@ All in `PanelKeyCatcher` inside `omacal-panel.qml`:
 Note: `root.opened` is NOT readonly — it must flip to `true` before
 `controller.show()` is called, otherwise the panel won't receive input.
 
+## Event Creation (Backend)
+
+### POST /api/events fields
+
+The API accepts `summary` (str), `calendar_id` (int), `start` (ISO datetime),
+`end` (optional ISO datetime), `all_day` (optional bool), and `location`
+(optional str). If `end` is omitted, the backend defaults to start + 1 hour
+(timed) or start + 1 day (all-day).
+
+### CalDAV add_event accepts arbitrary VEVENT properties
+
+`caldav.Calendar.add_event(**kwargs)` → `create_ical(**props)` → `Component.add(prop, value)`.
+Any valid iCalendar VEVENT property can be passed as a kwarg: `location`,
+`description`, `categories`, `status`, `transparency`, `priority`, `url`,
+`sequence`, `class_` (Python keyword workaround for `CLASSIFICATION`).
+Properties with hyphens (`last-modified`, `recurrence-id`) cannot be passed as
+Python kwargs — use `**`{'recurrence-id': value}`` or the `ical_fragment`
+string approach instead.
+
+### Threading a new field end-to-end (API → sync → DB)
+
+1. `api.py`: `data.get("field", default)` in the POST handler, pass to `create_event`
+2. `sync.py`: add parameter to `create_event()`, forward to both `caldav.add_event()` and `db.add_event()`
+3. `db.py`: add parameter to `add_event()`, insert at the correct column position in the VALUES tuple
+
+### Recurrence-ID
+
+Used to identify a single instance of a recurring event for modifications
+(move or cancel one occurrence). The override event must share the same `UID`
+as the parent series and set `RECURRENCE-ID` to the original start datetime of
+the instance being modified. Only needed when modifying recurring events — not
+required when creating new standalone events.
+
+## Add-Event Form Layout (QML)
+
+The add-event form (`addEventForm` Column) contains: Title (full-width TextField),
+Location (full-width TextField), Calendar (label + right-justified Dropdown), and
+two date/time rows (label + date TextField + [gap] + hour `:` minute Dropdowns).
+
+### Right-justification via Item + anchors
+
+`Row` lays out children sequentially — the rightmost child's position depends on
+all preceding child widths, making right-justification impossible. Replace the
+Row with `Item { width: dayContent.width; height: controlHeight }` and use
+explicit anchors (`anchors.right: parent.right` on the right-aligned item).
+
+### Anchor chain for time controls
+
+Visual order `[hour][:][minute]` left-to-right with the minute dropdown at the
+right edge requires a right-to-left anchor chain:
+1. Minute Dropdown: `anchors.right: parent.right`
+2. Colon Text: `anchors.right: minuteDropdown.left`
+3. Hour Dropdown: `anchors.right: colon.left`
+A common mistake produces `[colon][hour][minute]` instead — check that the
+colon is anchored to the minute dropdown's left, and the hour is anchored to
+the colon's left.
+
+### Dynamic width to halve a layout gap
+
+When left item is left-anchored and right group is right-anchored, gap =
+`parent.width - left_fixed - right_fixed`. To make the left item absorb half
+the gap: `width: base + (parent.width - total_fixed) / 2` where `total_fixed`
+= label + left margin + right group total (including internal margins).
+
+### Sliding a field right
+
+Increase `anchors.leftMargin` (offset from anchor target), not `anchors.left`.
+The anchor target stays `startLabel.right`; the margin pushes the field rightward
+without changing what it's anchored to.
+
+### Pitfall: duplicate anchor declarations
+
+QML uses last-assignment-wins for the same property. If an element ends up with
+two `anchors.right` lines (left behind by a partial patch), the last one
+silently wins and may create a circular dependency (hour↔colon anchored to each
+other). After any anchor edit, grep the element for duplicate `anchors.right` or
+`anchors.rightMargin` lines.
+
 ## Related Skills
 
 - `omacal-backend` — Python backend, API endpoints, CalDAV sync, DB schema

@@ -67,6 +67,7 @@ Panel {
     property int newEventCalendarId: 0
     property string newEventStartDate: ""
     property string newEventEndDate: ""
+    property string newEventLocation: ""
     property bool startDateValid: true
     property bool endDateValid: true
 
@@ -206,6 +207,8 @@ Panel {
         error = ""
         newEventSummary = ""
         newEventTitleField.text = ""
+        newEventLocation = ""
+        newEventLocationField.text = ""
         newEventStartHour = 9
         newEventStartMinute = 0
         newEventEndHour = 10
@@ -233,6 +236,8 @@ Panel {
         error = ""
         newEventSummary = ""
         newEventTitleField.text = ""
+        newEventLocation = ""
+        newEventLocationField.text = ""
         newEventStartDate = ""
         newEventEndDate = ""
         startDateField.text = ""
@@ -275,7 +280,8 @@ Panel {
             start: start.toISOString(),
             end: end.toISOString(),
             all_day: false,
-            calendar_id: calId
+            calendar_id: calId,
+            location: newEventLocation
         }))
     }
 
@@ -779,6 +785,14 @@ Panel {
                                 placeholderText: "Event title"
                                 foreground: root.contentForeground
                                 onTextChanged: root.newEventSummary = text
+                            }
+
+                            TextField {
+                                id: newEventLocationField
+                                width: dayContent.width
+                                placeholderText: "Location"
+                                foreground: root.contentForeground
+                                onTextChanged: root.newEventLocation = text
                             }
 
                             Item {

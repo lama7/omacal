@@ -284,6 +284,7 @@ def create_event(
     start: datetime,
     end: datetime | None = None,
     all_day: bool = False,
+    location: str | None = None,
 ) -> dict[str, Any]:
     """Create an event on the CalDAV server and cache it locally.
 
@@ -322,6 +323,7 @@ def create_event(
         dtend=end,
         summary=summary,
         uid=uid,
+        location=location,
     )
 
     # Cache in local DB
@@ -333,6 +335,7 @@ def create_event(
         start.isoformat(),
         end.isoformat() if end else None,
         1 if all_day else 0,
+        location,
     )
 
 
