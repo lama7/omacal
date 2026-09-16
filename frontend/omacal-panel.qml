@@ -74,7 +74,7 @@ Panel {
         var a = []; for (var h = 0; h < 24; h++) a.push({value: String(h), label: h < 10 ? " " + h : String(h)}); return a
     })()
     readonly property var minuteOptions: (function() {
-        var a = []; for (var m = 0; m < 60; m += 5) a.push({value: String(m), label: m < 10 ? " " + m : String(m)}); return a
+        var a = []; for (var m = 0; m < 60; m += 5) a.push({value: String(m), label: m < 10 ? "0" + m : String(m)}); return a
     })()
 
     function initView() {
@@ -795,7 +795,7 @@ Panel {
                                 spacing: Style.space(4)
                                 Text {
                                     text: "Start"
-                                    width: Style.space(48)
+                                    width: Style.space(56)
                                     color: Qt.darker(root.contentForeground, 1.5)
                                     font.family: root.contentFontFamily
                                     font.pixelSize: Style.font.bodySmall
@@ -804,7 +804,7 @@ Panel {
                                 }
                                 TextField {
                                     id: startDateField
-                                    width: Style.space(90)
+                                    width: Style.space(105)
                                     height: Style.spacing.controlHeight
                                     placeholderText: "MM/dd/yyyy"
                                     inputMask: "00/00/0000"
@@ -833,7 +833,7 @@ Panel {
 
                                 Text {
                                   text: ":"
-                                    width: Style.space(16)
+                                    width: Style.space(10)
                                     color: root.contentForeground
                                     font.family: root.contentFontFamily
                                     font.pixelSize: Style.font.body
@@ -862,7 +862,7 @@ Panel {
                                 spacing: Style.space(4)
                                 Text {
                                     text: "End"
-                                    width: Style.space(48)
+                                    width: Style.space(56)
                                     color: Qt.darker(root.contentForeground, 1.5)
                                     font.family: root.contentFontFamily
                                     font.pixelSize: Style.font.bodySmall
@@ -871,7 +871,7 @@ Panel {
                                 }
                                 TextField {
                                     id: endDateField
-                                    width: Style.space(90)
+                                    width: Style.space(105)
                                     height: Style.spacing.controlHeight
                                     placeholderText: "MM/dd/yyyy"
                                     inputMask: "00/00/0000"
@@ -900,7 +900,7 @@ Panel {
 
                                 Text {
                                   text: ":"
-                                    width: Style.space(16)
+                                    width: Style.space(10)
                                     color: root.contentForeground
                                     font.family: root.contentFontFamily
                                     font.pixelSize: Style.font.body
