@@ -809,7 +809,6 @@ Panel {
                                     placeholderText: "MM/dd/yyyy"
                                     inputMask: "00/00/0000"
                                     foreground: startDateValid ? root.contentForeground : Color.urgent
-                                    fontFamily: root.contentFontFamily
                                     onTextChanged: {
                                         root.newEventStartDate = text
                                         root.startDateValid = root.parseDateInput(text) !== null
@@ -877,7 +876,6 @@ Panel {
                                     placeholderText: "MM/dd/yyyy"
                                     inputMask: "00/00/0000"
                                     foreground: endDateValid ? root.contentForeground : Color.urgent
-                                    fontFamily: root.contentFontFamily
                                     onTextChanged: {
                                         root.newEventEndDate = text
                                         root.endDateValid = root.parseDateInput(text) !== null
