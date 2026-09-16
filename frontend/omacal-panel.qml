@@ -781,10 +781,9 @@ Panel {
                                 onTextChanged: root.newEventSummary = text
                             }
 
-                            Row {
+                            Item {
                                 width: dayContent.width
                                 height: Style.spacing.controlHeight
-                                spacing: Style.space(2)
                                 Text {
                                     text: "Calendar"
                                     width: Style.space(56)
@@ -792,6 +791,7 @@ Panel {
                                     font.family: root.contentFontFamily
                                     font.pixelSize: Style.font.bodySmall
                                     verticalAlignment: Text.AlignVCenter
+                                    anchors.left: parent.left
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 Dropdown {
@@ -807,26 +807,30 @@ Panel {
                                     fontFamily: root.contentFontFamily
                                     onChanged: root.newEventCalendarId = parseInt(value, 10)
                                     onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
                                 }
                             }
 
-                            Row {
+                            Item {
                                 width: dayContent.width
                                 height: Style.spacing.controlHeight
-                                spacing: Style.space(4)
                                 Text {
+                                    id: startLabel
                                     text: "Start"
                                     width: Style.space(56)
                                     color: Qt.darker(root.contentForeground, 1.5)
                                     font.family: root.contentFontFamily
                                     font.pixelSize: Style.font.bodySmall
                                     verticalAlignment: Text.AlignVCenter
+                                    anchors.left: parent.left
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 TextField {
                                     id: startDateField
-                                    width: Style.space(105)
+                                    width: Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
                                     height: Style.spacing.controlHeight
+                                    horizontalAlignment: Text.AlignHCenter
                                     placeholderText: "MM/dd/yyyy"
                                     inputMask: "00/00/0000"
                                     foreground: startDateValid ? root.contentForeground : Color.urgent
@@ -837,32 +841,10 @@ Panel {
                                     onEditingFinished: {
                                         keyCatcher.forceActiveFocus()
                                     }
-                                }
-
-                                Dropdown {
-                                    id: startHourDropdown
-                                    width: Style.space(50)
-                                    height: Style.spacing.controlHeight
-                                    showLabel: false
-                                    value: ""
-                                    options: root.hourOptions
-                                    foreground: root.contentForeground
-                                    fontFamily: root.contentFontFamily
-                                    onChanged: root.newEventStartHour = parseInt(value, 10)
-                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
-                                }
-
-                                Text {
-                                  text: ":"
-                                    width: Style.space(10)
-                                    color: root.contentForeground
-                                    font.family: root.contentFontFamily
-                                    font.pixelSize: Style.font.body
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
+                                    anchors.left: startLabel.right
+                                    anchors.leftMargin: Style.space(34)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
-
                                 Dropdown {
                                     id: startMinuteDropdown
                                     width: Style.space(50)
@@ -874,26 +856,58 @@ Panel {
                                     fontFamily: root.contentFontFamily
                                     onChanged: root.newEventStartMinute = parseInt(value, 10)
                                     onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Dropdown {
+                                    id: startHourDropdown
+                                    width: Style.space(50)
+                                    height: Style.spacing.controlHeight
+                                    showLabel: false
+                                    value: ""
+                                    options: root.hourOptions
+                                    foreground: root.contentForeground
+                                    fontFamily: root.contentFontFamily
+                                    onChanged: root.newEventStartHour = parseInt(value, 10)
+                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
+                                    anchors.right: startColon.left
+                                    anchors.rightMargin: Style.space(2)
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Text {
+                                    id: startColon
+                                    anchors.right: startMinuteDropdown.left
+                                    anchors.rightMargin: Style.space(2)
+                                    text: ":"
+                                    width: Style.space(6)
+                                    color: root.contentForeground
+                                    font.family: root.contentFontFamily
+                                    font.pixelSize: Style.font.body
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                    anchors.verticalCenter: parent.verticalCenter
                                 }
                             }
 
-                            Row {
+                            Item {
                                 width: dayContent.width
                                 height: Style.spacing.controlHeight
-                                spacing: Style.space(4)
                                 Text {
+                                    id: endLabel
                                     text: "End"
                                     width: Style.space(56)
                                     color: Qt.darker(root.contentForeground, 1.5)
                                     font.family: root.contentFontFamily
                                     font.pixelSize: Style.font.bodySmall
                                     verticalAlignment: Text.AlignVCenter
+                                    anchors.left: parent.left
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 TextField {
                                     id: endDateField
-                                    width: Style.space(105)
+                                    width: Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
                                     height: Style.spacing.controlHeight
+                                    horizontalAlignment: Text.AlignHCenter
                                     placeholderText: "MM/dd/yyyy"
                                     inputMask: "00/00/0000"
                                     foreground: endDateValid ? root.contentForeground : Color.urgent
@@ -904,32 +918,10 @@ Panel {
                                     onEditingFinished: {
                                         keyCatcher.forceActiveFocus()
                                     }
-                                }
-
-                                Dropdown {
-                                    id: endHourDropdown
-                                    width: Style.space(50)
-                                    height: Style.spacing.controlHeight
-                                    showLabel: false
-                                    value: ""
-                                    options: root.hourOptions
-                                    foreground: root.contentForeground
-                                    fontFamily: root.contentFontFamily
-                                    onChanged: root.newEventEndHour = parseInt(value, 10)
-                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
-                                }
-
-                                Text {
-                                  text: ":"
-                                    width: Style.space(10)
-                                    color: root.contentForeground
-                                    font.family: root.contentFontFamily
-                                    font.pixelSize: Style.font.body
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
+                                    anchors.left: endLabel.right
+                                    anchors.leftMargin: Style.space(34)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
-
                                 Dropdown {
                                     id: endMinuteDropdown
                                     width: Style.space(50)
@@ -941,6 +933,36 @@ Panel {
                                     fontFamily: root.contentFontFamily
                                     onChanged: root.newEventEndMinute = parseInt(value, 10)
                                     onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Dropdown {
+                                    id: endHourDropdown
+                                    width: Style.space(50)
+                                    height: Style.spacing.controlHeight
+                                    showLabel: false
+                                    value: ""
+                                    options: root.hourOptions
+                                    foreground: root.contentForeground
+                                    fontFamily: root.contentFontFamily
+                                    onChanged: root.newEventEndHour = parseInt(value, 10)
+                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
+                                    anchors.right: endColon.left
+                                    anchors.rightMargin: Style.space(2)
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Text {
+                                    id: endColon
+                                    anchors.right: endMinuteDropdown.left
+                                    anchors.rightMargin: Style.space(2)
+                                    text: ":"
+                                    width: Style.space(6)
+                                    color: root.contentForeground
+                                    font.family: root.contentFontFamily
+                                    font.pixelSize: Style.font.body
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                    anchors.verticalCenter: parent.verticalCenter
                                 }
                             }
 
