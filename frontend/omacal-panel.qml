@@ -1085,10 +1085,13 @@ Panel {
                                         anchors.fill: parent
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.editEvent(modelData)
-                                        onSecondaryClicked: {
-                                            root.pendingDeleteEvent = modelData
-                                            root.showDeleteConfirm = true
+                                        onClicked: function(mouse) {
+                                            if (mouse.button === Qt.LeftButton) {
+                                                root.editEvent(modelData)
+                                            } else if (mouse.button === Qt.RightButton) {
+                                                root.pendingDeleteEvent = modelData
+                                                root.showDeleteConfirm = true
+                                            }
                                         }
                                     }
 
@@ -1137,10 +1140,11 @@ Panel {
 
                     Rectangle {
                         parent: root
-                        anchors.fill: root
+                        anchors.fill: parent
                         color: "#000000"
                         opacity: 0.6
                         visible: root.showDeleteConfirm
+                        enabled: root.showDeleteConfirm
                         z: 100
                         focus: root.showDeleteConfirm
                         Keys.onEscapePressed: {
@@ -1151,7 +1155,7 @@ Panel {
                     }
                     Rectangle {
                         parent: root
-                        anchors.centerIn: root
+                        anchors.centerIn: parent
                         width: dayContent.width - Style.space(16)
                         height: Style.space(80)
                         radius: Style.space(4)
