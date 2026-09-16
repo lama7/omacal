@@ -240,5 +240,6 @@ def update_event(
         (summary, location, start, end, all_day, uid),
     )
     row = cur.fetchone()
+    cur.close()
     conn.commit()
     return dict(row) if row else {}

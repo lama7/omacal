@@ -1085,13 +1085,10 @@ Panel {
                                         anchors.fill: parent
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         cursorShape: Qt.PointingHandCursor
-                                        onClicked: {
-                                            if (mouse.button === Qt.LeftButton) {
-                                                root.editEvent(modelData)
-                                            } else if (mouse.button === Qt.RightButton) {
-                                                root.pendingDeleteEvent = modelData
-                                                root.showDeleteConfirm = true
-                                            }
+                                        onClicked: root.editEvent(modelData)
+                                        onSecondaryClicked: {
+                                            root.pendingDeleteEvent = modelData
+                                            root.showDeleteConfirm = true
                                         }
                                     }
 
