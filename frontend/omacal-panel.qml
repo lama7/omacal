@@ -355,10 +355,23 @@ Panel {
         var map = {}
         for (var i = 0; i < evlist.length; i++) {
             var ev = evlist[i]
-            var d = new Date(ev.start)
-            var key = d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
-            if (!map[key]) map[key] = []
-            map[key].push(ev)
+            var start = new Date(ev.start)
+            var end = ev.end ? new Date(ev.end) : null
+            var day = new Date(start.getFullYear(), start.getMonth(), start.getDate())
+            var lastDay = day
+            if (end) {
+                lastDay = new Date(end.getFullYear(), end.getMonth(), end.getDate())
+                // All-day events: DTEND is exclusive (day after last day)
+                if (Number(ev.all_day)) {
+                    lastDay = new Date(lastDay.getFullYear(), lastDay.getMonth(), lastDay.getDate() - 1)
+                }
+            }
+            while (day <= lastDay) {
+                var key = day.getFullYear() + "-" + pad2(day.getMonth() + 1) + "-" + pad2(day.getDate())
+                if (!map[key]) map[key] = []
+                map[key].push(ev)
+                day.setDate(day.getDate() + 1)
+            }
         }
         return map
     }
