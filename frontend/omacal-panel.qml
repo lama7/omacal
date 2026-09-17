@@ -491,19 +491,38 @@ Panel {
         xhr.send()
     }
 
+    // Day object from the DATE part of an ISO string, with no timezone shift.
+    function dateFromIso(iso) {
+        var m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/)
+        if (!m) return new Date(iso)
+        return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10))
+    }
+
     function groupEventsByDay(evlist) {
         var map = {}
         for (var i = 0; i < evlist.length; i++) {
             var ev = evlist[i]
-            var start = new Date(ev.start)
-            var end = ev.end ? new Date(ev.end) : null
-            var day = new Date(start.getFullYear(), start.getMonth(), start.getDate())
-            var lastDay = day
-            if (end) {
-                lastDay = new Date(end.getFullYear(), end.getMonth(), end.getDate())
-                // All-day events: DTEND is exclusive (day after last day)
-                if (Number(ev.all_day)) {
-                    lastDay = new Date(lastDay.getFullYear(), lastDay.getMonth(), lastDay.getDate() - 1)
+            // All-day events are date-valued and land in the cache at UTC
+            // midnight. Bucketing them through local time pushed them a day
+            // earlier for anyone west of UTC (an Oct 1 all-day event's dot sat
+            // on Sep 30), so read their date straight off the ISO string.
+            var allDay = Number(ev.all_day) === 1
+            var day, lastDay
+            if (allDay) {
+                day = dateFromIso(ev.start)
+                lastDay = day
+                if (ev.end) {
+                    // DTEND is exclusive (day after the last day)
+                    var e = dateFromIso(ev.end)
+                    lastDay = new Date(e.getFullYear(), e.getMonth(), e.getDate() - 1)
+                }
+            } else {
+                var start = new Date(ev.start)
+                day = new Date(start.getFullYear(), start.getMonth(), start.getDate())
+                lastDay = day
+                if (ev.end) {
+                    var end = new Date(ev.end)
+                    lastDay = new Date(end.getFullYear(), end.getMonth(), end.getDate())
                 }
             }
             while (day <= lastDay) {
