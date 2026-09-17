@@ -1085,10 +1085,11 @@ Panel {
                                         anchors.fill: parent
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         cursorShape: Qt.PointingHandCursor
-                                        onClicked: function(mouse) {
+                                        onClicked: {
                                             if (mouse.button === Qt.LeftButton) {
                                                 root.editEvent(modelData)
-                                            } else if (mouse.button === Qt.RightButton) {
+                                            } else {
+                                                console.log("right-click detected:", mouse.button, "expected:", Qt.RightButton)
                                                 root.pendingDeleteEvent = modelData
                                                 root.showDeleteConfirm = true
                                             }
@@ -1144,14 +1145,17 @@ Panel {
                         color: "#000000"
                         opacity: 0.6
                         visible: root.showDeleteConfirm
-                        enabled: root.showDeleteConfirm
                         z: 100
                         focus: root.showDeleteConfirm
                         Keys.onEscapePressed: {
                             root.showDeleteConfirm = false
                             root.pendingDeleteEvent = null
                         }
-                        MouseArea { anchors.fill: parent; onClicked: { root.showDeleteConfirm = false; root.pendingDeleteEvent = null } }
+                        MouseArea {
+                            anchors.fill: parent
+                            enabled: root.showDeleteConfirm
+                            onClicked: { root.showDeleteConfirm = false; root.pendingDeleteEvent = null }
+                        }
                     }
                     Rectangle {
                         parent: root
