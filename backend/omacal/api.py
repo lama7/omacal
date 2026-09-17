@@ -132,6 +132,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 end_str = data.get("end")
                 all_day = data.get("all_day", False)
                 location = data.get("location", "")
+                rrule = (data.get("rrule") or "").strip() or None
 
                 start_dt = datetime.fromisoformat(start_str)
                 if start_dt.tzinfo is None:
@@ -144,9 +145,13 @@ class OmacalHandler(BaseHTTPRequestHandler):
                         end_dt = end_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
 
                 from omacal.sync import create_event
-                result = create_event(self.db_conn, calendar_id, summary, start_dt, end_dt, all_day, location)
+                result = create_event(self.db_conn, calendar_id, summary, start_dt, end_dt,
+                                      all_day, location, rrule=rrule)
                 self._json(200, result)
+            except ValueError as e:
+                self._json(400, {"error": str(e)})
             except Exception as e:
+                logger.error("POST /api/events failed: %s", e)
                 self._json(500, {"error": str(e)})
             return
         self._json(404, {"error": "not found"})

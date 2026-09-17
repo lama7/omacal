@@ -342,8 +342,13 @@ def create_event(
     end: datetime | None = None,
     all_day: bool = False,
     location: str | None = None,
+    rrule: str | None = None,
 ) -> dict[str, Any]:
     """Create an event on the CalDAV server and cache it locally.
+
+    all_day=True stores a DATE-valued event (DTSTART;VALUE=DATE), which is what
+    every other calendar client expects -- a midnight datetime is a timed event
+    to them. rrule makes it a repeating series (e.g. "FREQ=WEEKLY;INTERVAL=2").
 
     Pushes the event first; only writes to the local SQLite cache if the
     server accepts it.  Returns the inserted row as a dict (same shape as
@@ -364,9 +369,26 @@ def create_event(
 
     uid = str(uuid4())
 
-    # Default end = start + 1 hour (non-all-day) or start + 1 day (all-day)
-    if end is None:
-        end = start + (timedelta(days=1) if all_day else timedelta(hours=1))
+    # The panel sends ISO datetimes; turn an all-day event into dates so the
+    # server stores VALUE=DATE, with DTEND exclusive (iCalendar semantics).
+    if all_day:
+        start_date = start.date() if isinstance(start, datetime) else start
+        end_date = None
+        if end is not None:
+            end_date = end.date() if isinstance(end, datetime) else end
+        if end_date is None or end_date <= start_date:
+            end_date = start_date + timedelta(days=1)
+        push_kwargs: dict[str, Any] = {"dtstart": start_date, "dtend": end_date}
+        start_iso = datetime(start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc).isoformat()
+        end_iso = datetime(end_date.year, end_date.month, end_date.day, tzinfo=timezone.utc).isoformat()
+    else:
+        if end is None:
+            end = start + timedelta(hours=1)
+        push_kwargs = {"dtstart": start, "dtend": end}
+        start_iso, end_iso = start.isoformat(), end.isoformat()
+
+    if rrule:
+        push_kwargs["rrule"] = rrule
 
     # Push to CalDAV server
     client = caldav.DAVClient(
@@ -375,13 +397,7 @@ def create_event(
         password=row["password"],
     )
     cal_obj = client.calendar(url=row["url"])
-    cal_obj.add_event(
-        dtstart=start,
-        dtend=end,
-        summary=summary,
-        uid=uid,
-        location=location,
-    )
+    cal_obj.add_event(summary=summary, uid=uid, location=location, **push_kwargs)
 
     # Cache in local DB
     return add_event(
@@ -389,10 +405,11 @@ def create_event(
         calendar_id,
         uid,
         summary,
-        start.isoformat(),
-        end.isoformat() if end else None,
+        start_iso,
+        end_iso,
         1 if all_day else 0,
         location,
+        rrule=rrule,
     )
 
 
@@ -569,6 +586,14 @@ def update_event(
     from omacal.db import add_event as db_add_event
     # Delete stale rows (sync may have inserted duplicates) then insert fresh.
     # INSERT OR REPLACE in add_event handles sync race for same (calendar_id, uid).
+    # Preserve recurrence state: the resource keeps its RRULE/EXDATE (this path
+    # only rewrites summary/dtstart/dtend/location), so the cached row must keep
+    # them too or the panel would stop expanding the series until the next sync.
+    prev = conn.execute(
+        "SELECT rrule, exdates FROM events WHERE uid = ? ORDER BY start DESC LIMIT 1", (uid,)
+    ).fetchone()
+    prev_rrule = prev["rrule"] if prev else None
+    prev_exdates = prev["exdates"] if prev else None
     conn.execute("DELETE FROM events WHERE uid = ?", (uid,))
     conn.commit()
     return db_add_event(
@@ -580,6 +605,8 @@ def update_event(
         end.isoformat() if end else None,
         1 if all_day else 0,
         location,
+        rrule=prev_rrule,
+        exdates=prev_exdates,
     )
 
 

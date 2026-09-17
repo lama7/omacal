@@ -70,6 +70,18 @@ Panel {
     property string newEventLocation: ""
     property bool startDateValid: true
     property bool endDateValid: true
+    property bool newEventAllDay: false
+    property string newEventRepeat: ""
+    // RRULE presets. "Every 2 weeks" anchors on the weekday of the event's own
+    // start date, which is what users expect from a repeat dropdown.
+    readonly property var repeatPresets: [
+        { value: "", label: "Does not repeat" },
+        { value: "FREQ=DAILY", label: "Every day" },
+        { value: "FREQ=WEEKLY", label: "Every week" },
+        { value: "FREQ=WEEKLY;INTERVAL=2", label: "Every 2 weeks" },
+        { value: "FREQ=MONTHLY", label: "Every month" },
+        { value: "FREQ=YEARLY", label: "Every year" }
+    ]
 
     // Edit/delete state
     property string editingUid: ""
@@ -220,6 +232,10 @@ Panel {
         newEventStartMinute = 0
         newEventEndHour = 10
         newEventEndMinute = 0
+        newEventAllDay = false
+        newEventRepeat = ""
+        allDayToggle.checked = false
+        repeatDropdown.value = ""
         // Default calendar: prefer "Dad's Calendar", then first writable
         var writable = calendars.filter(function(c) { return c.writable })
         var dadCal = writable.find(function(c) { return c.display_name === "Dad's Calendar" })
@@ -254,6 +270,10 @@ Panel {
         newEventStartMinute = 0
         newEventEndHour = 10
         newEventEndMinute = 0
+        newEventAllDay = false
+        newEventRepeat = ""
+        allDayToggle.checked = false
+        repeatDropdown.value = ""
     }
 
     function submitAddEvent() {
@@ -264,11 +284,19 @@ Panel {
             error = "Invalid date"
             return
         }
-        var start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(),
+        var start, end
+        if (newEventAllDay) {
+            // All-day: midnight of the chosen dates; the backend stores these
+            // as DATE values and makes DTEND exclusive (start + 1 day).
+            start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0)
+            end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 0, 0, 0)
+        } else {
+            start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(),
                              newEventStartHour, newEventStartMinute)
-        var end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(),
+            end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(),
                            newEventEndHour, newEventEndMinute)
-        if (end <= start) end = new Date(end.getTime() + 3600000)
+            if (end <= start) end = new Date(end.getTime() + 3600000)
+        }
         var calId = newEventCalendarId
         var xhr = new XMLHttpRequest()
         var method, url
@@ -292,14 +320,16 @@ Panel {
                 }
             }
         }
-        xhr.send(JSON.stringify({
+        var payload = {
             summary: newEventSummary,
             start: start.toISOString(),
             end: end.toISOString(),
-            all_day: false,
+            all_day: newEventAllDay,
             calendar_id: calId,
             location: newEventLocation
-        }))
+        }
+        if (newEventRepeat) payload.rrule = newEventRepeat
+        xhr.send(JSON.stringify(payload))
     }
 
     function editEvent(ev) {
@@ -323,6 +353,10 @@ Panel {
         newEventEndMinute = end.getMinutes()
         newEventCalendarId = ev.calendar_id
         calendarDropdown.value = String(ev.calendar_id)
+        newEventAllDay = !!ev.all_day
+        newEventRepeat = ev.rrule || ""
+        allDayToggle.checked = newEventAllDay
+        repeatDropdown.value = newEventRepeat
         startHourDropdown.value = String(newEventStartHour)
         startMinuteDropdown.value = String(newEventStartMinute)
         endHourDropdown.value = String(newEventEndHour)
@@ -332,15 +366,11 @@ Panel {
     function openDeleteConfirm(ev) {
         pendingDeleteEvent = ev
         showDeleteConfirm = true
-        overlayBg.visible = true
-        overlayDialog.visible = true
     }
 
     function dismissDeleteConfirm() {
         showDeleteConfirm = false
         pendingDeleteEvent = null
-        overlayBg.visible = false
-        overlayDialog.visible = false
     }
 
     function deleteEvent() {
@@ -608,7 +638,10 @@ Panel {
             id: keyCatcher
             anchors.fill: parent
             onMoveRequested: function(dx, dy) {
-                if (root.showDeleteConfirm) return
+                if (root.showDeleteConfirm) {
+                    if (dx !== 0) deleteConfirm.handleKey({ key: dx < 0 ? Qt.Key_Left : Qt.Key_Right })
+                    return
+                }
                 if (root.showAddForm) return
                 if (root.viewMode === "day") {
                     if (dx !== 0) root.shiftDay(dx)
@@ -617,15 +650,18 @@ Panel {
                     if (dy !== 0) root.shiftMonth(dy * 12)
                 }
             }
-            // Enter never confirms a delete: a stray Enter must not destroy an
-            // event. The confirm is mouse-driven (right-click opened it).
+            // ConfirmDialog.selectedIndex defaults to 0 (Cancel), so Enter/Return
+            // cancels; you must click Delete (or arrow to it) to confirm.
             onActivateRequested: function() {
-                if (root.showDeleteConfirm) return
+                if (root.showDeleteConfirm) { deleteConfirm.handleKey({ key: Qt.Key_Return }); return }
                 if (root.showAddForm) root.submitAddEvent()
                 else root.close()
             }
-            onCloseRequested: root.showDeleteConfirm ? root.dismissDeleteConfirm() : (root.showAddForm ? root.dismissAddForm() : root.close())
-            onTabRequested: function(direction) { root.switchPanel(direction) }
+            onCloseRequested: root.showDeleteConfirm ? deleteConfirm.handleKey({ key: Qt.Key_Escape }) : (root.showAddForm ? root.dismissAddForm() : root.close())
+            onTabRequested: function(direction) {
+                if (root.showDeleteConfirm) { deleteConfirm.handleKey({ key: Qt.Key_Tab }); return }
+                root.switchPanel(direction)
+            }
             onTextKey: function(t) {
                 if (root.showDeleteConfirm) return
                 if (root.showAddForm) {
@@ -933,6 +969,47 @@ Panel {
                                 }
                             }
 
+                            Toggle {
+                                id: allDayToggle
+                                width: dayContent.width
+                                label: "All day"
+                                description: "Date-only event, no start/end time"
+                                checked: root.newEventAllDay
+                                foreground: root.contentForeground
+                                accent: (root.bar && root.bar.accent) ? root.bar.accent : Color.accent
+                                fontFamily: root.contentFontFamily
+                                onClicked: root.newEventAllDay = !root.newEventAllDay
+                            }
+
+                            Item {
+                                width: dayContent.width
+                                height: Style.spacing.controlHeight
+                                Text {
+                                    text: "Repeat"
+                                    width: Style.space(56)
+                                    color: Qt.darker(root.contentForeground, 1.5)
+                                    font.family: root.contentFontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                    verticalAlignment: Text.AlignVCenter
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Dropdown {
+                                    id: repeatDropdown
+                                    width: Style.space(240)
+                                    height: Style.spacing.controlHeight
+                                    showLabel: false
+                                    value: ""
+                                    options: root.repeatPresets
+                                    foreground: root.contentForeground
+                                    fontFamily: root.contentFontFamily
+                                    onChanged: root.newEventRepeat = value
+                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+
                             Item {
                                 width: dayContent.width
                                 height: Style.spacing.controlHeight
@@ -949,7 +1026,9 @@ Panel {
                                 }
                                 TextField {
                                     id: startDateField
-                                    width: Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
+                                    width: root.newEventAllDay
+                                        ? parent.width - Style.space(56) - Style.space(44)
+                                        : Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
                                     height: Style.spacing.controlHeight
                                     horizontalAlignment: Text.AlignHCenter
                                     placeholderText: "MM/dd/yyyy"
@@ -968,6 +1047,7 @@ Panel {
                                 }
                                 Dropdown {
                                     id: startMinuteDropdown
+                                    visible: !root.newEventAllDay
                                     width: Style.space(50)
                                     height: Style.spacing.controlHeight
                                     showLabel: false
@@ -982,6 +1062,7 @@ Panel {
                                 }
                                 Dropdown {
                                     id: startHourDropdown
+                                    visible: !root.newEventAllDay
                                     width: Style.space(50)
                                     height: Style.spacing.controlHeight
                                     showLabel: false
@@ -997,6 +1078,7 @@ Panel {
                                 }
                                 Text {
                                     id: startColon
+                                    visible: !root.newEventAllDay
                                     anchors.right: startMinuteDropdown.left
                                     anchors.rightMargin: Style.space(2)
                                     text: ":"
@@ -1026,7 +1108,9 @@ Panel {
                                 }
                                 TextField {
                                     id: endDateField
-                                    width: Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
+                                    width: root.newEventAllDay
+                                        ? parent.width - Style.space(56) - Style.space(44)
+                                        : Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
                                     height: Style.spacing.controlHeight
                                     horizontalAlignment: Text.AlignHCenter
                                     placeholderText: "MM/dd/yyyy"
@@ -1045,6 +1129,7 @@ Panel {
                                 }
                                 Dropdown {
                                     id: endMinuteDropdown
+                                    visible: !root.newEventAllDay
                                     width: Style.space(50)
                                     height: Style.spacing.controlHeight
                                     showLabel: false
@@ -1059,6 +1144,7 @@ Panel {
                                 }
                                 Dropdown {
                                     id: endHourDropdown
+                                    visible: !root.newEventAllDay
                                     width: Style.space(50)
                                     height: Style.spacing.controlHeight
                                     showLabel: false
@@ -1074,6 +1160,7 @@ Panel {
                                 }
                                 Text {
                                     id: endColon
+                                    visible: !root.newEventAllDay
                                     anchors.right: endMinuteDropdown.left
                                     anchors.rightMargin: Style.space(2)
                                     text: ":"
@@ -1202,79 +1289,22 @@ Panel {
                 }
             }
         }
-        // Delete confirmation overlay.
-        //
-        // These MUST be children of the panel window (KeyboardPanel), as
-        // siblings of the Flickable -- never inside contentColumn. The popup
-        // height is fitted from contentColumn.implicitHeight, so an extra child
-        // grows the popup, and "anchors.fill: parent" inside a Column binds the
-        // item's height back to the Column that is sizing it: a binding loop
-        // that collapsed the whole popup to an unreadable size.
-        Rectangle {
-            id: overlayBg
+        // Delete confirmation — Omarchy's ConfirmDialog (scrim + card + Cancel/Delete).
+        // selectedIndex 0 = Cancel, so Enter/Return cancels; you must click
+        // Delete (or arrow to it) to confirm. Keys are routed from PanelKeyCatcher.
+        ConfirmDialog {
+            id: deleteConfirm
             anchors.fill: parent
-            color: "#000000"
-            opacity: 0.6
-            visible: false
-            z: 100
-
-            MouseArea {
-                anchors.fill: parent
-                onClicked: root.dismissDeleteConfirm()
-            }
-        }
-
-        Rectangle {
-            id: overlayDialog
-            anchors.centerIn: parent
-            width: parent.width - Style.space(32)
-            height: deleteConfirmColumn.implicitHeight + Style.space(16)
-            radius: Style.space(4)
-            color: Qt.darker(Color.foreground, 2.8)
-            border.color: Qt.darker(root.contentForeground, 2.0)
-            border.width: 1
-            visible: false
-            z: 101
-
-            Column {
-                id: deleteConfirmColumn
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: Style.space(8)
-                spacing: Style.space(8)
-
-                Text {
-                    width: parent.width
-                    text: root.deleteConfirmText()
-                    textFormat: Text.PlainText
-                    color: root.contentForeground
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    wrapMode: Text.Wrap
-                    horizontalAlignment: Text.AlignHCenter
-                }
-
-                Row {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    height: Style.spacing.controlHeight
-                    spacing: Style.space(8)
-
-                    Button {
-                        text: "Delete"
-                        width: Style.space(70)
-                        height: parent.height
-                        onClicked: root.deleteEvent()
-                    }
-
-                    Button {
-                        text: "Cancel"
-                        width: Style.space(70)
-                        height: parent.height
-                        onClicked: root.dismissDeleteConfirm()
-                    }
-                }
-            }
+            z: 10
+            opened: root.showDeleteConfirm
+            message: root.deleteConfirmText()
+            confirmText: "Delete"
+            cancelText: "Cancel"
+            selectedIndex: 0
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onCanceled: root.dismissDeleteConfirm()
+            onConfirmed: root.deleteEvent()
         }
     }
 

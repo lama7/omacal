@@ -250,16 +250,18 @@ def add_event(
     end: str | None = None,
     all_day: int = 0,
     location: str | None = None,
+    rrule: str | None = None,
+    exdates: str | None = None,
 ) -> dict[str, Any]:
     """Insert a single event into the local cache. Returns the inserted row as a dict."""
     cur = conn.execute(
         """INSERT OR REPLACE INTO events
            (calendar_id, uid, summary, description, location, start, end,
-            all_day, recurrence_id, status, transparency)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            all_day, recurrence_id, status, transparency, rrule, exdates)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id, calendar_id, uid, summary, description, location,
-                  start, end, all_day, recurrence_id, status, transparency""",
-        (calendar_id, uid, summary, None, location, start, end, all_day, None, "CONFIRMED", None),
+                  start, end, all_day, recurrence_id, status, transparency, rrule, exdates""",
+        (calendar_id, uid, summary, None, location, start, end, all_day, None, "CONFIRMED", None, rrule, exdates),
     )
     row = cur.fetchone()
     cur.close()
