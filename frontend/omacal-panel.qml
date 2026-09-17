@@ -1095,12 +1095,10 @@ Panel {
                                             if (mouse.button === Qt.LeftButton) {
                                                 root.editEvent(modelData)
                                             } else {
-                                                console.log("right-click detected:", mouse.button)
                                                 root.pendingDeleteEvent = modelData
                                                 root.showDeleteConfirm = true
                                                 overlayBg.visible = true
                                                 overlayDialog.visible = true
-                                                console.log("showDeleteConfirm set to:", root.showDeleteConfirm)
                                             }
                                         }
                                     }
@@ -1147,42 +1145,40 @@ Panel {
                             }
                         }
                     }
+                }
 
-                    Rectangle {
-                        id: overlayBg
-                        parent: root
-                        anchors.fill: parent
-                        color: "#000000"
-                        opacity: 0.6
-                        visible: false
-                        onVisibleChanged: console.log("Overlay bg visible:", visible)
-                        z: 100
-                        focus: false
-                        Keys.onEscapePressed: {
-                            root.showDeleteConfirm = false
-                            root.pendingDeleteEvent = null
-                            overlayBg.visible = false
-                            overlayDialog.visible = false
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: { root.showDeleteConfirm = false; root.pendingDeleteEvent = null; overlayBg.visible = false; overlayDialog.visible = false }
-                        }
-                    }
-                    Rectangle {
-                        id: overlayDialog
-                        parent: root
-                        anchors.centerIn: parent
-                        width: dayContent.width - Style.space(16)
-                        height: Style.space(80)
-                        radius: Style.space(4)
-                        color: Qt.darker(Color.foreground, 2.8)
-                        border.color: Qt.darker(root.contentForeground, 2.0)
-                        border.width: 1
-                        visible: false
-                        z: 101
+    // Delete confirmation overlay — direct child of root Panel (not nested in dayView)
+    Rectangle {
+        id: overlayBg
+        anchors.fill: parent
+        color: "#000000"
+        opacity: 0.6
+        visible: false
+        z: 100
+        Keys.onEscapePressed: {
+            root.showDeleteConfirm = false
+            root.pendingDeleteEvent = null
+            overlayBg.visible = false
+            overlayDialog.visible = false
+        }
+        MouseArea {
+            anchors.fill: parent
+            onClicked: { root.showDeleteConfirm = false; root.pendingDeleteEvent = null; overlayBg.visible = false; overlayDialog.visible = false }
+        }
+    }
+    Rectangle {
+        id: overlayDialog
+        anchors.centerIn: parent
+        width: root.width - Style.space(32)
+        height: Style.space(80)
+        radius: Style.space(4)
+        color: Qt.darker(Color.foreground, 2.8)
+        border.color: Qt.darker(root.contentForeground, 2.0)
+        border.width: 1
+        visible: false
+        z: 101
 
-                        Text {
+        Text {
                             anchors.top: parent.top
                             anchors.topMargin: Style.space(8)
                             anchors.horizontalCenter: parent.horizontalCenter
@@ -1219,7 +1215,6 @@ Panel {
                             }
                         }
                     }
-                }
 
                 Item {
                     width: contentColumn.width
