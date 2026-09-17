@@ -337,6 +337,8 @@ Panel {
             if (xhr.readyState === XMLHttpRequest.DONE) {
                 showDeleteConfirm = false
                 pendingDeleteEvent = null
+                overlayBg.visible = false
+                overlayDialog.visible = false
                 loadRangeEvents(true)
             }
         }
@@ -533,6 +535,8 @@ Panel {
         showDeleteConfirm = false
         pendingDeleteEvent = null
         editingUid = ""
+        if (typeof overlayBg !== "undefined") overlayBg.visible = false
+        if (typeof overlayDialog !== "undefined") overlayDialog.visible = false
         root.opened = false
         if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function") root.bar.setCenterHoverRevealSuppressed(false)
         root.controller.hide()
@@ -543,6 +547,8 @@ Panel {
             showDeleteConfirm = false
             pendingDeleteEvent = null
             editingUid = ""
+            if (typeof overlayBg !== "undefined") overlayBg.visible = false
+            if (typeof overlayDialog !== "undefined") overlayDialog.visible = false
         }
     }
 
@@ -1089,9 +1095,12 @@ Panel {
                                             if (mouse.button === Qt.LeftButton) {
                                                 root.editEvent(modelData)
                                             } else {
-                                                console.log("right-click detected:", mouse.button, "expected:", Qt.RightButton)
+                                                console.log("right-click detected:", mouse.button)
                                                 root.pendingDeleteEvent = modelData
                                                 root.showDeleteConfirm = true
+                                                overlayBg.visible = true
+                                                overlayDialog.visible = true
+                                                console.log("showDeleteConfirm set to:", root.showDeleteConfirm)
                                             }
                                         }
                                     }
@@ -1140,24 +1149,27 @@ Panel {
                     }
 
                     Rectangle {
+                        id: overlayBg
                         parent: root
                         anchors.fill: parent
                         color: "#000000"
                         opacity: 0.6
-                        visible: root.showDeleteConfirm
+                        visible: false
+                        onVisibleChanged: console.log("Overlay bg visible:", visible)
                         z: 100
-                        focus: root.showDeleteConfirm
+                        focus: false
                         Keys.onEscapePressed: {
                             root.showDeleteConfirm = false
                             root.pendingDeleteEvent = null
+                            overlayBg.visible = false
+                            overlayDialog.visible = false
                         }
                         MouseArea {
                             anchors.fill: parent
-                            enabled: root.showDeleteConfirm
-                            onClicked: { root.showDeleteConfirm = false; root.pendingDeleteEvent = null }
-                        }
+                            onClicked: { root.showDeleteConfirm = false; root.pendingDeleteEvent = null; overlayBg.visible = false; overlayDialog.visible = false }
                     }
                     Rectangle {
+                        id: overlayDialog
                         parent: root
                         anchors.centerIn: parent
                         width: dayContent.width - Style.space(16)
@@ -1166,7 +1178,7 @@ Panel {
                         color: Qt.darker(Color.foreground, 2.8)
                         border.color: Qt.darker(root.contentForeground, 2.0)
                         border.width: 1
-                        visible: root.showDeleteConfirm
+                        visible: false
                         z: 101
 
                         Text {
@@ -1200,6 +1212,8 @@ Panel {
                                 onClicked: {
                                     root.showDeleteConfirm = false
                                     root.pendingDeleteEvent = null
+                                    overlayBg.visible = false
+                                    overlayDialog.visible = false
                                 }
                             }
                         }

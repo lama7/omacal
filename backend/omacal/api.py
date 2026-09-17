@@ -223,9 +223,8 @@ class OmacalServer:
 
     def _get_conn(self):
         if self._conn is None:
-            import sqlite3
-            self._conn = sqlite3.connect(str(self.db_path))
-            self._conn.row_factory = sqlite3.Row
+            from omacal.db import open_db
+            self._conn = open_db(self.db_path)
         return self._conn
 
     def start(self, background: bool = False):

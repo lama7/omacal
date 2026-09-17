@@ -487,6 +487,8 @@ def sync_all(config_path: Path | None = None) -> dict[str, Any]:
     from omacal.db import _migrate
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
     _migrate(conn)
 
     results = {}
