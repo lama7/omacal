@@ -868,11 +868,11 @@ Panel {
                                             Rectangle {
                                                 anchors.fill: parent
                                                 radius: 6
-                                                color: modelData.isToday
-                                                    ? Color.accent
-                                                    : (modelData.isLeadingOrTrailing
-                                                        ? Qt.darker(root.contentForeground, 2.8)
-                                                        : "transparent")
+                                                // Spill days carry no fill: the dimming lives in
+                                                // the number colour. A darker(fg, 2.8) box put
+                                                // the number (#434444) nearly on top of its own
+                                                // background (#484949).
+                                                color: modelData.isToday ? Color.accent : "transparent"
                                             }
 
                                             Text {
@@ -885,9 +885,12 @@ Panel {
                                                 font.family: root.contentFontFamily
                                                 font.pixelSize: Style.font.body
                                                 font.bold: modelData.isToday
+                                                // Leading/trailing days get a legible dim:
+                                                // darker(fg, 3.0) was ~#434444, invisible on a
+                                                // dark panel; 1.9 reads clearly as de-emphasised.
                                                 color: modelData.isToday ? "#FFFFFF"
-                                                    : (modelData.isLeadingOrTrailing
-                                                        ? Qt.darker(root.contentForeground, 3.0)
+                                                    : (isLeadingOrTrailing
+                                                        ? Qt.darker(root.contentForeground, 1.9)
                                                         : root.contentForeground)
                                             }
 
