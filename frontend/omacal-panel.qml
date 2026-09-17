@@ -234,7 +234,6 @@ Panel {
         newEventEndMinute = 0
         newEventAllDay = false
         newEventRepeat = ""
-        allDayToggle.checked = false
         repeatDropdown.value = ""
         // Default calendar: prefer "Dad's Calendar", then first writable
         var writable = calendars.filter(function(c) { return c.writable })
@@ -272,7 +271,6 @@ Panel {
         newEventEndMinute = 0
         newEventAllDay = false
         newEventRepeat = ""
-        allDayToggle.checked = false
         repeatDropdown.value = ""
     }
 
@@ -355,7 +353,6 @@ Panel {
         calendarDropdown.value = String(ev.calendar_id)
         newEventAllDay = !!ev.all_day
         newEventRepeat = ev.rrule || ""
-        allDayToggle.checked = newEventAllDay
         repeatDropdown.value = newEventRepeat
         startHourDropdown.value = String(newEventStartHour)
         startMinuteDropdown.value = String(newEventStartMinute)
