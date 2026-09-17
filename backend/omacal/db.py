@@ -67,6 +67,44 @@ def _migrate(conn: sqlite3.Connection) -> None:
         """)
         cur.execute("INSERT INTO schema_version VALUES (1)")
 
+    if version < 2:
+        # Recurring-event support.
+        #
+        # events.rrule   — the master's RRULE string (NULL for one-off events)
+        # events.exdates — JSON array of ISO datetimes excluded from the series
+        #
+        # Detached overrides (VEVENTs carrying RECURRENCE-ID) share their
+        # master's UID, so they cannot live in `events`: UNIQUE(calendar_id,
+        # uid) would make them overwrite the master row on upsert, which is
+        # exactly what used to happen. They get their own table instead of
+        # rebuilding `events` to widen its unique index.
+        cols = {r[1] for r in cur.execute("PRAGMA table_info(events)")}
+        if "rrule" not in cols:
+            cur.execute("ALTER TABLE events ADD COLUMN rrule TEXT")
+        if "exdates" not in cols:
+            cur.execute("ALTER TABLE events ADD COLUMN exdates TEXT")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS event_overrides (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+                uid TEXT NOT NULL,
+                recurrence_id TIMESTAMP NOT NULL,
+                summary TEXT,
+                description TEXT,
+                location TEXT,
+                start TIMESTAMP,
+                end TIMESTAMP,
+                all_day INTEGER NOT NULL DEFAULT 0,
+                status TEXT,
+                UNIQUE(calendar_id, uid, recurrence_id)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_overrides_uid
+                ON event_overrides(calendar_id, uid)
+        """)
+        cur.execute("INSERT INTO schema_version VALUES (2)")
+
     conn.commit()
 
 
@@ -109,13 +147,12 @@ def list_calendars(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict]) -> int:
     """Insert or replace events for a calendar. Returns count of rows touched."""
     cur = conn.cursor()
-    now = datetime.now(timezone.utc).isoformat()
     for ev in events:
         cur.execute(
             """INSERT INTO events
                (calendar_id, uid, summary, description, location, start, end,
-                all_day, recurrence_id, status, transparency)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                all_day, recurrence_id, status, transparency, rrule, exdates)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(calendar_id, uid) DO UPDATE SET
                 summary=excluded.summary,
                 description=excluded.description,
@@ -125,7 +162,9 @@ def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict]
                 all_day=excluded.all_day,
                 recurrence_id=excluded.recurrence_id,
                 status=excluded.status,
-                transparency=excluded.transparency
+                transparency=excluded.transparency,
+                rrule=excluded.rrule,
+                exdates=excluded.exdates
             """,
             (
                 calendar_id,
@@ -139,14 +178,65 @@ def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict]
                 ev.get("recurrence_id"),
                 ev.get("status"),
                 ev.get("transparency"),
+                ev.get("rrule"),
+                ev.get("exdates"),
             ),
         )
     conn.commit()
     return cur.rowcount
 
 
+def upsert_overrides(conn: sqlite3.Connection, calendar_id: int, overrides: list[dict]) -> int:
+    """Insert or replace detached recurrence overrides for a calendar."""
+    cur = conn.cursor()
+    for ov in overrides:
+        cur.execute(
+            """INSERT INTO event_overrides
+               (calendar_id, uid, recurrence_id, summary, description, location,
+                start, end, all_day, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
+                summary=excluded.summary,
+                description=excluded.description,
+                location=excluded.location,
+                start=excluded.start,
+                end=excluded.end,
+                all_day=excluded.all_day,
+                status=excluded.status
+            """,
+            (
+                calendar_id,
+                ov["uid"],
+                ov["recurrence_id"],
+                ov.get("summary"),
+                ov.get("description"),
+                ov.get("location"),
+                ov.get("start"),
+                ov.get("end"),
+                ov.get("all_day", 0),
+                ov.get("status"),
+            ),
+        )
+    conn.commit()
+    return cur.rowcount
+
+
+def get_overrides(conn: sqlite3.Connection, calendar_ids: list[int] | None = None) -> list[dict[str, Any]]:
+    """Return all detached overrides (used when expanding recurring series)."""
+    if calendar_ids:
+        placeholders = ",".join("?" for _ in calendar_ids)
+        cur = conn.execute(
+            f"SELECT * FROM event_overrides WHERE calendar_id IN ({placeholders})",
+            list(calendar_ids),
+        )
+    else:
+        cur = conn.execute("SELECT * FROM event_overrides")
+    return [dict(r) for r in cur.fetchall()]
+
+
 def clear_calendar_events(conn: sqlite3.Connection, calendar_id: int) -> None:
     conn.execute("DELETE FROM events WHERE calendar_id=?", (calendar_id,))
+    conn.execute("DELETE FROM event_overrides WHERE calendar_id=?", (calendar_id,))
     conn.commit()
 
 

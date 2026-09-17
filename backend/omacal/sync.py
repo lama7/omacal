@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import traceback
@@ -13,7 +14,8 @@ import caldav
 from icalendar import Calendar
 
 from omacal.config import load_config
-from omacal.db import add_calendar, clear_calendar_events, upsert_events
+from omacal.db import add_calendar, clear_calendar_events, upsert_events, upsert_overrides
+from omacal.recur import has_occurrence_after
 
 logger = logging.getLogger("omacal.sync")
 
@@ -44,10 +46,30 @@ def _unwrap_dt(value: Any) -> datetime | datetime.date | None:
     return None
 
 
-def _parse_ical_events(cal_data: bytes, calendar_id: int, cutoff: datetime) -> list[dict[str, Any]]:
-    """Parse raw iCalendar bytes and return events overlapping [cutoff, cutoff+90d)."""
+def _exdate_values(component) -> list[str]:
+    """ISO strings for every EXDATE on a VEVENT (icalendar yields vDDDLists)."""
+    raw = component.get("EXDATE")
+    if raw is None:
+        return []
+    out: list[str] = []
+    for item in (raw if isinstance(raw, list) else [raw]):
+        for d in getattr(item, "dts", [item]):
+            dt = _unwrap_dt(d.dt if hasattr(d, "dt") else d)
+            if dt is not None:
+                out.append(dt.isoformat())
+    return out
+
+
+def _parse_ical_events(cal_data: bytes, calendar_id: int, cutoff: datetime) -> dict[str, list[dict[str, Any]]]:
+    """Parse raw iCalendar bytes into {"events": [...], "overrides": [...]}.
+
+    Masters are kept when the series still has occurrences overlapping
+    [cutoff, cutoff+90d) -- judged by the occurrences, not by DTSTART.
+    Detached overrides (RECURRENCE-ID components) come back separately.
+    """
     calendar = Calendar.from_ical(cal_data)
-    events = []
+    events: list[dict[str, Any]] = []
+    overrides: list[dict[str, Any]] = []
     window_end = cutoff + timedelta(days=90)
 
     for component in calendar.walk():
@@ -110,10 +132,38 @@ def _parse_ical_events(cal_data: bytes, calendar_id: int, cutoff: datetime) -> l
             else:
                 end_dt = start_dt + timedelta(hours=1)
 
-        # Filter: event overlaps window if start < window_end and end > cutoff
-        if start_dt >= window_end:
+        # A detached override (RECURRENCE-ID) belongs to one occurrence of its
+        # master and shares the master's UID: caching it in `events` would
+        # overwrite the master row on upsert. Keep it in its own list.
+        if rid_prop is not None:
+            if start_dt >= window_end or end_dt <= cutoff:
+                continue
+            overrides.append({
+                "uid": uid,
+                "recurrence_id": rid.isoformat() if rid else None,
+                "summary": summary,
+                "description": description,
+                "location": location,
+                "start": start_dt.isoformat(),
+                "end": end_dt.isoformat() if end_dt else None,
+                "all_day": 1 if all_day else 0,
+                "status": status,
+            })
             continue
-        if end_dt <= cutoff:
+
+        rrule_str = None
+        rrule_prop = component.get("RRULE")
+        if rrule_prop is not None:
+            rrule_str = rrule_prop.to_ical().decode()
+            # A recurring master's DTSTART can sit far outside the window while
+            # occurrences still land inside it (why an old yearly birthday
+            # never appeared): judge the series by its occurrences. None means
+            # "could not parse" -- keep it rather than silently dropping a
+            # series, so a broken rule is visible instead of invisible.
+            if has_occurrence_after(rrule_str, start_dt, cutoff - timedelta(seconds=1)) is False:
+                continue
+        elif start_dt >= window_end or end_dt <= cutoff:
+            # one-off event: plain window overlap
             continue
 
         events.append({
@@ -127,9 +177,11 @@ def _parse_ical_events(cal_data: bytes, calendar_id: int, cutoff: datetime) -> l
             "recurrence_id": rid.isoformat() if rid else None,
             "status": status,
             "transparency": transparency,
+            "rrule": rrule_str,
+            "exdates": json.dumps(_exdate_values(component)) if rrule_str else None,
         })
 
-    return events
+    return {"events": events, "overrides": overrides}
 
 
 def _check_writable(client: Any, cal_url: str) -> bool:
@@ -259,11 +311,13 @@ def sync_source(
                 continue
 
             events = []
+            overrides = []
             for ev in raw_events:
                 try:
                     if ev.data:
                         parsed = _parse_ical_events(ev.data.encode("utf-8"), cal_id, cutoff)
-                        events.extend(parsed)
+                        events.extend(parsed["events"])
+                        overrides.extend(parsed["overrides"])
                 except Exception as e:
                     logger.warning("Skipping event in %s: %s", display, e)
 
@@ -271,6 +325,9 @@ def sync_source(
                 upsert_events(conn, cal_id, events)
                 total_events += len(events)
                 logger.info("Synced %d events from %s", len(events), display)
+            if overrides:
+                upsert_overrides(conn, cal_id, overrides)
+                logger.info("Synced %d recurrence overrides from %s", len(overrides), display)
         except Exception as e:
             logger.error("Sync failed for %s: %s", display, e)
 
