@@ -111,13 +111,19 @@ Panel {
         return rangeStartJs
     }
 
+    // First cell of the month grid. It is often a day from the previous month,
+    // and the last rendered row likewise spills into the next month.
+    function gridStartDate() {
+        var first = new Date(viewYear, viewMonth, 1)
+        var startWeekday = (first.getDay() - weekStart + 7) % 7
+        var cursor = new Date(first)
+        cursor.setDate(cursor.getDate() - startWeekday)
+        return cursor
+    }
+
     function computeRangeDays() {
         var days = []
-        var start = new Date(viewYear, viewMonth, 1)
-        var end = new Date(viewYear, viewMonth + 1, 0)
-        var startWeekday = (start.getDay() - weekStart + 7) % 7
-        var cursor = new Date(start)
-        cursor.setDate(cursor.getDate() - startWeekday)
+        var cursor = gridStartDate()
         for (var r = 0; r < 6; r++) {
             var row = []
             for (var c = 0; c < 7; c++) {
@@ -129,7 +135,7 @@ Panel {
                     weekdayLabel: String(labelLocale.dayName(d.getDay(), Locale.ShortFormat)).toUpperCase(),
                     isToday: key === todayKey,
                     isCurrentMonth: inMonth,
-                    dayEvents: inMonth ? eventsForDay(d.getFullYear(), d.getMonth(), d.getDate()) : [],
+                    dayEvents: eventsForDay(d.getFullYear(), d.getMonth(), d.getDate()),
                     year: d.getFullYear(),
                     month: d.getMonth(),
                     date: d.getDate(),
@@ -445,8 +451,11 @@ Panel {
         loadingEvents = true
         var calIds = []
         for (var i = 0; i < calendars.length; i++) calIds.push(calendars[i].id)
-        var start = new Date(viewYear, viewMonth, 1)
-        var end = new Date(viewYear, viewMonth + 1, 0, 23, 59, 59)
+        // Fetch the whole rendered grid, not just the calendar month: the grid
+        // starts with days from the previous month and ends in the next one,
+        // and those cells need their events to draw their dots.
+        var start = gridStartDate()
+        var end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 42)
         var url = eventsUrl + "?start=" + encodeURIComponent(start.toISOString())
             + "&end=" + encodeURIComponent(end.toISOString())
             + "&calendars=" + encodeURIComponent(calIds.join(","))
