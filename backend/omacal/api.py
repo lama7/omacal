@@ -211,6 +211,12 @@ class OmacalHandler(BaseHTTPRequestHandler):
 from datetime import timedelta  # noqa: E402
 
 
+class _OmacalHTTPServer(HTTPServer):
+    """HTTPServer with address reuse enabled so restarts survive TIME_WAIT."""
+
+    allow_reuse_address = True
+
+
 class OmacalServer:
     """Thin HTTP server wrapping the omacal backend."""
 
@@ -233,21 +239,31 @@ class OmacalServer:
         OmacalHandler.db_conn = conn
         OmacalHandler.cfg_calendars = self.cfg.get("calendars", [])
 
-        # Schedule periodic sync in a background thread
+        # Create the HTTP server first so bind failures crash the process
+        # before the periodic sync timer gets a chance to keep it alive.
+        server = _OmacalHTTPServer(("127.0.0.1", self.port), OmacalHandler)
+        logger.info("omacal API listening on http://127.0.0.1:%d", self.port)
+
+        # Schedule periodic sync in a daemon thread (so it won't keep a
+        # broken process alive if the server fails or exits).
         import threading
         poll_interval = self.cfg.get("poll_interval", 300)
+
         def periodic_sync():
             try:
                 from omacal.sync import sync_all
+
                 sync_all()
                 logger.info("Periodic sync complete")
             except Exception as e:
                 logger.error("Periodic sync failed: %s", e)
-            threading.Timer(poll_interval, periodic_sync).start()
-        threading.Timer(poll_interval, periodic_sync).start()
+            _t = threading.Timer(poll_interval, periodic_sync)
+            _t.daemon = True
+            _t.start()
 
-        server = HTTPServer(("127.0.0.1", self.port), OmacalHandler)
-        logger.info("omacal API listening on http://127.0.0.1:%d", self.port)
+        _sync_timer = threading.Timer(poll_interval, periodic_sync)
+        _sync_timer.daemon = True
+        _sync_timer.start()
 
         if background:
             return server
