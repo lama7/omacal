@@ -491,6 +491,14 @@ Panel {
         xhr.send()
     }
 
+    // Colour for an event's month-grid dot, darkened when the cell is
+    // de-emphasised so the dots dim along with the day number.
+    function eventDotColor(ev, dim) {
+        var cal = calendars.find(function(c) { return c.id === ev.calendar_id })
+        var base = (cal && cal.color) ? cal.color : "#888888"
+        return dim ? Qt.darker(base, 1.9) : base
+    }
+
     // Day object from the DATE part of an ISO string, with no timezone shift.
     function dateFromIso(iso) {
         var m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/)
@@ -864,6 +872,9 @@ Panel {
                                             width: weekGrid.dayCellWidth
                                             height: 50
                                             property bool isLeadingOrTrailing: !modelData.isCurrentMonth
+                                            // Today keeps full strength even when it lands on a
+                                            // leading/trailing day (viewing a month other than today's).
+                                            property bool isDimmed: isLeadingOrTrailing && !modelData.isToday
 
                                             Rectangle {
                                                 anchors.fill: parent
@@ -889,7 +900,7 @@ Panel {
                                                 // darker(fg, 3.0) was ~#434444, invisible on a
                                                 // dark panel; 1.9 reads clearly as de-emphasised.
                                                 color: modelData.isToday ? "#FFFFFF"
-                                                    : (isLeadingOrTrailing
+                                                    : (isDimmed
                                                         ? Qt.darker(root.contentForeground, 1.9)
                                                         : root.contentForeground)
                                             }
@@ -905,10 +916,7 @@ Panel {
                                                         width: 5
                                                         height: 5
                                                         radius: 2
-                                                        color: (function() {
-                                                            var cal = root.calendars.find(function(c) { return c.id === modelData.calendar_id })
-                                                            return cal ? (cal.color || "#888888") : "#888888"
-                                                        })()
+                                                        color: root.eventDotColor(modelData, isDimmed)
                                                     }
                                                 }
                                             }
