@@ -82,6 +82,17 @@ Panel {
         { value: "FREQ=MONTHLY", label: "Every month" },
         { value: "FREQ=YEARLY", label: "Every year" }
     ]
+    // Repeat end condition ("Ends" row). "never" leaves the RRULE unbounded,
+    // which is what a repeat with no COUNT/UNTIL means.
+    property string newEventEnds: "never"
+    property int newEventCount: 5
+    property string newEventUntilDate: ""
+    property bool untilDateValid: true
+    readonly property var endsOptions: [
+        { value: "never", label: "Never" },
+        { value: "count", label: "After N occurrences" },
+        { value: "until", label: "On date" }
+    ]
 
     // Edit/delete state
     property string editingUid: ""
@@ -241,6 +252,13 @@ Panel {
         newEventAllDay = false
         newEventRepeat = ""
         repeatDropdown.value = ""
+        newEventEnds = "never"
+        newEventCount = 5
+        newEventUntilDate = ""
+        endsDropdown.value = "never"
+        endsCountField.text = ""
+        untilDateField.text = ""
+        untilDateValid = true
         // Default calendar: prefer "Dad's Calendar", then first writable
         var writable = calendars.filter(function(c) { return c.writable })
         var dadCal = writable.find(function(c) { return c.display_name === "Dad's Calendar" })
@@ -278,6 +296,47 @@ Panel {
         newEventAllDay = false
         newEventRepeat = ""
         repeatDropdown.value = ""
+        newEventEnds = "never"
+        newEventCount = 5
+        newEventUntilDate = ""
+        endsDropdown.value = "never"
+        endsCountField.text = ""
+        untilDateField.text = ""
+        untilDateValid = true
+    }
+
+    // RRULE for the current form state: preset + end condition.
+    // "" = no repeat; null = the end date is unusable.
+    function buildRrule() {
+        if (!newEventRepeat) return ""
+        var rule = newEventRepeat
+        if (newEventEnds === "count") {
+            rule += ";COUNT=" + Math.min(999, Math.max(1, Math.floor(newEventCount || 1)))
+        } else if (newEventEnds === "until") {
+            var d = parseDateInput(newEventUntilDate)
+            if (!d) return null
+            rule += ";UNTIL=" + untilStamp(d)
+        }
+        return rule
+    }
+
+    // UNTIL has to be UTC when DTSTART is timezone-aware; an all-day series uses
+    // the plain DATE form. recur.normalise_rrule() accepts either.
+    function untilStamp(d) {
+        var stamp = d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate())
+        return newEventAllDay ? stamp : (stamp + "T235959Z")
+    }
+
+    // Read-only summary of a stored rule, for an event that already exists.
+    function repeatSummary() {
+        if (!newEventRepeat) return ""
+        var preset = repeatPresets.find(function(p) { return p.value === newEventRepeat })
+        var label = preset ? preset.label : newEventRepeat
+        var c = /COUNT=(\d+)/.exec(newEventRepeat)
+        var u = /UNTIL=(\d{8})/.exec(newEventRepeat)
+        if (c) label += ", " + c[1] + " occurrences"
+        else if (u) label += ", until " + u[1].slice(4, 6) + "/" + u[1].slice(6, 8) + "/" + u[1].slice(0, 4)
+        return label
     }
 
     function submitAddEvent() {
@@ -286,6 +345,13 @@ Panel {
         var endDate = parseDateInput(newEventEndDate)
         if (!startDate || !endDate) {
             error = "Invalid date"
+            return
+        }
+        // Validate the repeat rule before touching the server: "On date" with an
+        // unusable date would otherwise silently create an endless series.
+        var rrule = buildRrule()
+        if (rrule === null) {
+            error = "Invalid repeat end date"
             return
         }
         var start, end
@@ -332,7 +398,7 @@ Panel {
             calendar_id: calId,
             location: newEventLocation
         }
-        if (newEventRepeat) payload.rrule = newEventRepeat
+        if (rrule) payload.rrule = rrule
         xhr.send(JSON.stringify(payload))
     }
 
@@ -360,6 +426,13 @@ Panel {
         newEventAllDay = !!ev.all_day
         newEventRepeat = ev.rrule || ""
         repeatDropdown.value = newEventRepeat
+        // Feed the read-only summary on an existing event (the Repeat/Ends
+        // controls stay hidden while editing).
+        var cnt = /COUNT=(\d+)/.exec(newEventRepeat)
+        var unt = /UNTIL=(\d{8})/.exec(newEventRepeat)
+        newEventEnds = cnt ? "count" : (unt ? "until" : "never")
+        if (cnt) newEventCount = parseInt(cnt[1], 10)
+        if (unt) newEventUntilDate = unt[1].slice(4, 6) + "/" + unt[1].slice(6, 8) + "/" + unt[1].slice(0, 4)
         startHourDropdown.value = String(newEventStartHour)
         startMinuteDropdown.value = String(newEventStartMinute)
         endHourDropdown.value = String(newEventEndHour)
@@ -1020,6 +1093,9 @@ Panel {
                             Item {
                                 width: dayContent.width
                                 height: Style.spacing.controlHeight
+                                // Only when creating: update_event() preserves the stored
+                                // rule, so editing it here would be a lie.
+                                visible: root.editingUid === ""
                                 Text {
                                     text: "Repeat"
                                     width: Style.space(56)
@@ -1044,6 +1120,98 @@ Panel {
                                     anchors.right: parent.right
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
+                            }
+
+                            Item {
+                                width: dayContent.width
+                                height: Style.spacing.controlHeight
+                                visible: root.editingUid === "" && root.newEventRepeat !== ""
+                                Text {
+                                    text: "Ends"
+                                    width: Style.space(56)
+                                    color: Qt.darker(root.contentForeground, 1.5)
+                                    font.family: root.contentFontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                    verticalAlignment: Text.AlignVCenter
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Dropdown {
+                                    id: endsDropdown
+                                    width: Style.space(240)
+                                    height: Style.spacing.controlHeight
+                                    showLabel: false
+                                    value: ""
+                                    options: root.endsOptions
+                                    foreground: root.contentForeground
+                                    fontFamily: root.contentFontFamily
+                                    onChanged: root.newEventEnds = value
+                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+
+                            Item {
+                                width: dayContent.width
+                                height: Style.spacing.controlHeight
+                                visible: root.editingUid === "" && root.newEventRepeat !== ""
+                                         && root.newEventEnds !== "never"
+                                Text {
+                                    id: endsValueLabel
+                                    text: root.newEventEnds === "count" ? "Times" : "On"
+                                    width: Style.space(56)
+                                    color: Qt.darker(root.contentForeground, 1.5)
+                                    font.family: root.contentFontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                    verticalAlignment: Text.AlignVCenter
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                TextField {
+                                    id: endsCountField
+                                    visible: root.newEventEnds === "count"
+                                    width: Style.space(90)
+                                    height: Style.spacing.controlHeight
+                                    horizontalAlignment: Text.AlignHCenter
+                                    placeholderText: "COUNT"
+                                    inputMask: "999"
+                                    foreground: root.contentForeground
+                                    onTextChanged: root.newEventCount = parseInt(text, 10)
+                                    anchors.left: endsValueLabel.right
+                                    anchors.leftMargin: Style.space(34)
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                TextField {
+                                    id: untilDateField
+                                    visible: root.newEventEnds === "until"
+                                    width: Style.space(120)
+                                    height: Style.spacing.controlHeight
+                                    horizontalAlignment: Text.AlignHCenter
+                                    placeholderText: "MM/dd/yyyy"
+                                    inputMask: "00/00/0000"
+                                    foreground: root.untilDateValid ? root.contentForeground : Color.urgent
+                                    onTextChanged: {
+                                        root.newEventUntilDate = text
+                                        root.untilDateValid = root.parseDateInput(text) !== null
+                                    }
+                                    onEditingFinished: keyCatcher.forceActiveFocus()
+                                    anchors.left: endsValueLabel.right
+                                    anchors.leftMargin: Style.space(34)
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+
+                            Text {
+                                width: dayContent.width
+                                visible: root.editingUid !== "" && root.newEventRepeat !== ""
+                                text: "Repeats: " + root.repeatSummary() + " \u2014 not editable here"
+                                textFormat: Text.PlainText
+                                wrapMode: Text.Wrap
+                                color: Qt.darker(root.contentForeground, 1.5)
+                                font.family: root.contentFontFamily
+                                font.pixelSize: Style.font.bodySmall
+                                font.italic: true
                             }
 
                             Item {
