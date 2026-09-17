@@ -1167,6 +1167,7 @@ Panel {
                         MouseArea {
                             anchors.fill: parent
                             onClicked: { root.showDeleteConfirm = false; root.pendingDeleteEvent = null; overlayBg.visible = false; overlayDialog.visible = false }
+                        }
                     }
                     Rectangle {
                         id: overlayDialog
