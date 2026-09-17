@@ -226,6 +226,7 @@ class OmacalServer:
         self.db_path = Path(self.cfg["database"])
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = None
+        self._httpd = None
 
     def _get_conn(self):
         if self._conn is None:
@@ -242,6 +243,7 @@ class OmacalServer:
         # Create the HTTP server first so bind failures crash the process
         # before the periodic sync timer gets a chance to keep it alive.
         server = _OmacalHTTPServer(("127.0.0.1", self.port), OmacalHandler)
+        self._httpd = server
         logger.info("omacal API listening on http://127.0.0.1:%d", self.port)
 
         # Schedule periodic sync in a daemon thread (so it won't keep a
@@ -298,15 +300,42 @@ def main():
         result = sync_all(args.config)
         logging.info("Sync complete: %s", result)
 
-    # Handle SIGTERM gracefully
+    # Handle SIGTERM/SIGINT gracefully.
+    #
+    # Do NOT raise SystemExit from inside the handler. The handler runs *in*
+    # the serve_forever thread, so the interpreter starts tearing the process
+    # down while that thread is still live ("Exception ignored while joining a
+    # thread in _thread._shutdown()"), and systemd records status=1 -- the unit
+    # shows "failed" after every normal stop/restart.
+    #
+    # HTTPServer.shutdown() blocks until serve_forever() returns, so it cannot
+    # be called from the serve_forever thread either. Signal a helper thread
+    # and let main() unwind normally, for a clean exit code 0.
+    import threading
+
     def shutdown(sig, frame):
-        logging.info("Shutting down...")
-        sys.exit(0)
+        logging.info("Shutting down (signal %s)...", sig)
+        httpd = server._httpd
+        if httpd is None:
+            # Signal arrived before the socket was bound (e.g. during the
+            # initial sync): nothing is serving, so leave now.
+            raise SystemExit(0)
+        threading.Thread(target=httpd.shutdown, daemon=True).start()
+
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
-    server.start()
+    try:
+        server.start()
+    finally:
+        # Close the cached DB connection so the WAL is checkpointed on exit.
+        if server._conn is not None:
+            try:
+                server._conn.close()
+            except Exception:
+                pass
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
