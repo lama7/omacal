@@ -400,9 +400,20 @@ def delete_event(
     conn: Any,
     calendar_id: int,
     uid: str,
+    occurrence: datetime | None = None,
+    series: bool = False,
 ) -> dict[str, Any]:
-    """Delete an event from the CalDAV server and local cache."""
-    from omacal.db import delete_event as db_delete_event
+    """Delete an event from the CalDAV server and local cache.
+
+    occurrence=None -> remove the whole resource (a one-off event)
+    occurrence=<dt> -> remove just that occurrence of a series by adding an
+                       EXDATE, leaving the rest of the series untouched
+
+    A recurring event with neither `occurrence` nor `series=True` raises: a
+    right-click on one occurrence must never silently wipe the series.
+    """
+    from omacal.db import delete_event as db_delete_event, set_event_exdates
+    from omacal.recur import parse_dt
 
     cur = conn.execute(
         "SELECT url, username, password FROM calendars WHERE id = ?",
@@ -418,15 +429,53 @@ def delete_event(
         password=row["password"],
     )
     cal_obj = client.calendar(url=row["url"])
-    try:
-        event = cal_obj.get_event_by_uid(uid)
-        event.delete()
-    except Exception as e:
-        logger.error("Failed to delete event uid=%s on CalDAV: %s", uid, e)
-        raise
+    event = cal_obj.get_event_by_uid(uid)
 
-    db_delete_event(conn, calendar_id, uid)
-    return {"status": "deleted", "uid": uid}
+    comp = Calendar.from_ical(event.data)
+    masters = [c for c in comp.walk("VEVENT") if not c.get("RECURRENCE-ID")]
+    master = masters[0] if masters else None
+    master_rrule = master.get("RRULE") if master is not None else None
+
+    if occurrence is None:
+        if master_rrule is not None and not series:
+            raise ValueError(
+                "this is a repeating event: pass occurrence=<ISO datetime> to "
+                "delete one occurrence, or series=true to delete the whole series"
+            )
+        event.delete()
+        db_delete_event(conn, calendar_id, uid)
+        return {"status": "deleted", "uid": uid, "scope": "series" if series else "event"}
+
+    if master is None or master_rrule is None:
+        raise ValueError("occurrence given but this event does not repeat")
+
+    target = parse_dt(occurrence)
+    if target is None:
+        raise ValueError(f"invalid occurrence value: {occurrence!r}")
+
+    # Mirror the master's DTSTART form so the EXDATE matches what other clients
+    # (and this parser) compare against: DATE for all-day, the same tz otherwise.
+    dtstart = master.get("DTSTART").dt
+    if not hasattr(dtstart, "hour"):                      # all-day series
+        exdate_value = target.date()
+    elif dtstart.tzinfo is not None:
+        exdate_value = target.astimezone(dtstart.tzinfo)
+    else:
+        exdate_value = target.replace(tzinfo=None)
+
+    existing = [parse_dt(v) for v in _exdate_values(master)]
+    existing = [d for d in existing if d is not None]
+    if any(d == target or (d is not None and d.astimezone(timezone.utc) == target.astimezone(timezone.utc)) for d in existing):
+        return {"status": "already-excluded", "uid": uid, "occurrence": target.isoformat()}
+
+    master.add("EXDATE", exdate_value)
+    event.data = comp.to_ical().decode()
+    event.save()
+
+    new_exdates = [d.isoformat() for d in existing] + [target.isoformat()]
+    set_event_exdates(conn, calendar_id, uid, new_exdates)
+
+    return {"status": "deleted", "scope": "occurrence", "uid": uid, "occurrence": target.isoformat()}
 
 
 def update_event(

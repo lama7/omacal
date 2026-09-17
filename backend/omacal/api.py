@@ -22,7 +22,14 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from omacal.config import load_config
-from omacal.db import list_calendars as db_get_calendars, get_events as db_get_events, get_today_events as db_get_today
+from omacal.db import (
+    list_calendars as db_get_calendars,
+    get_events as db_get_events,
+    get_today_events as db_get_today,
+    get_overrides as db_get_overrides,
+    get_events_for_window as db_get_window,
+)
+from omacal.recur import expand_events
 
 logger = logging.getLogger("omacal.api")
 
@@ -61,7 +68,13 @@ class OmacalHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/events/today":
-            events = db_get_today(self.db_conn)
+            # Build today's window here (rather than delegating to
+            # db_get_today) so recurrence expansion sees the same bounds the
+            # cache query used. UTC midnight-to-midnight, as before.
+            today = datetime.now(timezone.utc).date()
+            start = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
+            end = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc)
+            events = self._events_in_window(start, end, None)
             self._json(200, events)
             return
 
@@ -91,7 +104,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
                     self._json(400, {"error": "invalid calendar ids"})
                     return
 
-            events = db_get_events(self.db_conn, start, end, cal_ids)
+            events = self._events_in_window(start, end, cal_ids)
             self._json(200, events)
             return
 
@@ -144,15 +157,33 @@ class OmacalHandler(BaseHTTPRequestHandler):
             query = parse_qs(parsed.query)
             uid = query.get("uid", [None])[0]
             calendar_id_raw = query.get("calendar_id", [None])[0]
+            occurrence_raw = query.get("occurrence", [None])[0]
+            series = (query.get("series", ["false"])[0] or "").strip().lower() in ("1", "true", "yes")
             if not uid or not calendar_id_raw:
                 self._json(400, {"error": "uid and calendar_id query parameters required"})
                 return
+
+            occurrence = None
+            if occurrence_raw:
+                try:
+                    occurrence = datetime.fromisoformat(occurrence_raw)
+                except ValueError:
+                    self._json(400, {"error": "invalid occurrence format, use ISO 8601"})
+                    return
+                if occurrence.tzinfo is None:
+                    occurrence = occurrence.replace(tzinfo=timezone.utc)
+
             try:
                 calendar_id = int(calendar_id_raw)
                 from omacal.sync import delete_event
-                result = delete_event(self.db_conn, calendar_id, uid)
+                result = delete_event(self.db_conn, calendar_id, uid, occurrence=occurrence, series=series)
                 self._json(200, result)
+            except ValueError as e:
+                # e.g. "this is a repeating event: pass occurrence=..." -- a
+                # caller error, not a server fault.
+                self._json(400, {"error": str(e)})
             except Exception as e:
+                logger.error("DELETE failed: %s", e)
                 self._json(500, {"error": str(e)})
             return
         self._json(404, {"error": "not found"})
@@ -193,6 +224,26 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 self._json(500, {"error": str(e)})
             return
         self._json(404, {"error": "not found"})
+
+    def _events_in_window(self, start: datetime, end: datetime, calendar_ids: list[int] | None) -> list[dict]:
+        """Cached events plus expanded occurrences for [start, end).
+
+        Series are expanded at read time, so the 5-minute wipe-and-rebuild sync
+        never has to keep occurrence rows in step and every occurrence carries
+        the date it was expanded from in `recurrence_id`.
+        """
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+
+        rows = db_get_window(self.db_conn, start, end, calendar_ids)
+        if not rows:
+            return []
+        if not any(r.get("rrule") for r in rows):
+            return rows                      # nothing recurring in this window
+        overrides = db_get_overrides(self.db_conn, calendar_ids)
+        return expand_events(rows, overrides, start, end)
 
     def _json(self, code: int, data: object) -> None:
         payload = json.dumps(data, default=str).encode("utf-8")

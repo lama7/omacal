@@ -7,6 +7,7 @@ query window?) agree on the same rules.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -98,3 +99,85 @@ def has_occurrence_after(rrule: str, dtstart: datetime, after: datetime) -> bool
         return rule.after(after, inc=True) is not None
     except Exception:
         return None
+
+
+def _ts(value) -> datetime | None:
+    dt = parse_dt(value)
+    return dt.astimezone(timezone.utc) if dt is not None else None
+
+
+def _load_exdates(value) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return []
+    return [str(v) for v in parsed] if isinstance(parsed, list) else []
+
+
+def expand_events(
+    masters: list[dict],
+    overrides: list[dict],
+    window_start: datetime,
+    window_end: datetime,
+) -> list[dict]:
+    """Turn cached rows into per-occurrence rows for [window_start, window_end).
+
+    Rows without an rrule pass through untouched. A series is expanded into one
+    row per occurrence, each carrying its master's fields with `start`/`end`
+    moved to that occurrence, `recurrence_id` set to the occurrence start (the
+    value a single-occurrence delete has to send back) and `is_recurring` set.
+
+    A detached override replaces the occurrence it points at; an override with
+    STATUS:CANCELLED removes it.
+    """
+    by_key: dict[tuple, dict] = {}
+    for ov in overrides:
+        by_key[(ov.get("calendar_id"), ov.get("uid"), _ts(ov.get("recurrence_id")))] = ov
+
+    out: list[dict] = []
+    for ev in masters:
+        rrule = ev.get("rrule")
+        if not rrule:
+            out.append(ev)
+            continue
+        if str(ev.get("status") or "").upper() == "CANCELLED":
+            continue
+
+        start_dt = parse_dt(ev.get("start"))
+        if start_dt is None:
+            continue
+        end_dt = parse_dt(ev.get("end"))
+        if end_dt is not None and end_dt > start_dt:
+            duration = end_dt - start_dt
+        else:
+            duration = timedelta(days=1) if ev.get("all_day") else timedelta(hours=1)
+
+        for occ_start, occ_end in occurrences_between(
+            rrule, start_dt, window_start, window_end, duration, _load_exdates(ev.get("exdates"))
+        ):
+            row = dict(ev)
+            row["start"] = occ_start.isoformat()
+            row["end"] = occ_end.isoformat()
+            row["recurrence_id"] = occ_start.isoformat()
+            row["is_recurring"] = 1
+
+            ov = by_key.get((ev.get("calendar_id"), ev.get("uid"), _ts(occ_start)))
+            if ov is not None:
+                if str(ov.get("status") or "").upper() == "CANCELLED":
+                    continue
+                for field in ("summary", "description", "location", "all_day"):
+                    if ov.get(field) not in (None, ""):
+                        row[field] = ov[field]
+                ov_start = parse_dt(ov.get("start"))
+                if ov_start is not None:
+                    row["start"] = ov_start.isoformat()
+                    row["end"] = (parse_dt(ov.get("end")) or (ov_start + duration)).isoformat()
+                row["is_override"] = 1
+            out.append(row)
+
+    out.sort(key=lambda e: str(e.get("start") or ""))
+    return out

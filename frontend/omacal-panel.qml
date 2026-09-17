@@ -345,19 +345,34 @@ Panel {
 
     function deleteEvent() {
         if (!pendingDeleteEvent) return
+        var ev = pendingDeleteEvent
+        var url = apiBase + "/api/events?uid=" + encodeURIComponent(ev.uid) + "&calendar_id=" + ev.calendar_id
+        // A repeating event is deleted one occurrence at a time: pass the
+        // occurrence date the user right-clicked so the backend excludes just
+        // that day (EXDATE) instead of removing the series.
+        if (ev.is_recurring) url += "&occurrence=" + encodeURIComponent(ev.recurrence_id || ev.start)
         var xhr = new XMLHttpRequest()
-        xhr.open("DELETE", apiBase + "/api/events?uid=" + encodeURIComponent(pendingDeleteEvent.uid) + "&calendar_id=" + pendingDeleteEvent.calendar_id, true)
+        xhr.open("DELETE", url, true)
         xhr.onreadystatechange = function() {
             if (xhr.readyState === XMLHttpRequest.DONE) {
                 dismissDeleteConfirm()
                 if (xhr.status === 200) {
                     loadRangeEvents(true)
                 } else {
-                    error = "Delete failed (" + xhr.status + ")"
+                    var msg = ""
+                    try { msg = JSON.parse(xhr.responseText).error || "" } catch (e) { msg = "" }
+                    error = "Delete failed (" + xhr.status + ")" + (msg ? ": " + msg : "")
                 }
             }
         }
         xhr.send()
+    }
+
+    function deleteConfirmText() {
+        var ev = pendingDeleteEvent
+        if (!ev) return "Delete this event?"
+        if (!ev.is_recurring) return "Delete \"" + ev.summary + "\"?"
+        return "Delete \"" + ev.summary + "\" on " + Qt.formatDateTime(new Date(ev.start), "MMM d") + "?"
     }
 
     function eventTimeStr(ev) {
@@ -1231,7 +1246,7 @@ Panel {
 
                 Text {
                     width: parent.width
-                    text: "Delete \"" + (root.pendingDeleteEvent ? root.pendingDeleteEvent.summary : "") + "\"?"
+                    text: root.deleteConfirmText()
                     textFormat: Text.PlainText
                     color: root.contentForeground
                     font.family: root.contentFontFamily

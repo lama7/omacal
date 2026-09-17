@@ -1,5 +1,6 @@
 """SQLite schema and operations for omacal event cache."""
 
+import json
 import sqlite3
 from datetime import datetime, date, timezone
 from pathlib import Path
@@ -266,6 +267,37 @@ def add_event(
     return dict(row)
 
 
+def get_events_for_window(
+    conn: sqlite3.Connection,
+    start: datetime,
+    end: datetime,
+    calendar_ids: list[int] | None = None,
+) -> list[dict[str, Any]]:
+    """Rows the API needs to answer a [start, end) query.
+
+    Non-recurring rows must overlap the window. Recurring masters are returned
+    regardless of their DTSTART, because a series that started years ago can
+    still have occurrences inside the window -- the window filter for those is
+    applied by the expansion in `recur.expand_events`, not by SQL.
+    """
+    placeholders = ",".join("?" for _ in (calendar_ids or []))
+    where = f" AND e.calendar_id IN ({placeholders})" if calendar_ids else ""
+    params = list(calendar_ids) if calendar_ids else []
+
+    cur = conn.execute(
+        f"""SELECT e.*, c.display_name, c.color
+            FROM events e
+            JOIN calendars c ON c.id = e.calendar_id
+            WHERE (e.rrule IS NOT NULL
+                   OR (e.start < ? AND (e.end IS NULL OR e.end > ?)))
+            {where}
+            ORDER BY e.start
+        """,
+        [end.isoformat(), start.isoformat()] + params,
+    )
+    return [dict(r) for r in cur.fetchall()]
+
+
 def get_events(
     conn: sqlite3.Connection,
     start: datetime,
@@ -305,6 +337,21 @@ def get_today_events(conn: sqlite3.Connection, calendar_ids: list[int] | None = 
 def delete_event(conn: sqlite3.Connection, calendar_id: int, uid: str) -> None:
     """Delete an event from the local cache by calendar_id and uid."""
     conn.execute("DELETE FROM events WHERE calendar_id = ? AND uid = ?", (calendar_id, uid))
+    conn.commit()
+
+
+def set_event_exdates(conn: sqlite3.Connection, calendar_id: int, uid: str, exdates: list[str]) -> None:
+    """Write the EXDATE list for a cached master.
+
+    Called right after a single-occurrence delete so the panel stops drawing
+    that occurrence immediately instead of resurrecting it until the next sync:
+    the series is expanded from the cache, so the cache has to carry the new
+    exclusion.
+    """
+    conn.execute(
+        "UPDATE events SET exdates = ? WHERE calendar_id = ? AND uid = ?",
+        (json.dumps(sorted(set(exdates))), calendar_id, uid),
+    )
     conn.commit()
 
 
