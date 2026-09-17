@@ -329,17 +329,32 @@ Panel {
         endMinuteDropdown.value = String(newEventEndMinute)
     }
 
+    function openDeleteConfirm(ev) {
+        pendingDeleteEvent = ev
+        showDeleteConfirm = true
+        overlayBg.visible = true
+        overlayDialog.visible = true
+    }
+
+    function dismissDeleteConfirm() {
+        showDeleteConfirm = false
+        pendingDeleteEvent = null
+        overlayBg.visible = false
+        overlayDialog.visible = false
+    }
+
     function deleteEvent() {
         if (!pendingDeleteEvent) return
         var xhr = new XMLHttpRequest()
         xhr.open("DELETE", apiBase + "/api/events?uid=" + encodeURIComponent(pendingDeleteEvent.uid) + "&calendar_id=" + pendingDeleteEvent.calendar_id, true)
         xhr.onreadystatechange = function() {
             if (xhr.readyState === XMLHttpRequest.DONE) {
-                showDeleteConfirm = false
-                pendingDeleteEvent = null
-                overlayBg.visible = false
-                overlayDialog.visible = false
-                loadRangeEvents(true)
+                dismissDeleteConfirm()
+                if (xhr.status === 200) {
+                    loadRangeEvents(true)
+                } else {
+                    error = "Delete failed (" + xhr.status + ")"
+                }
             }
         }
         xhr.send()
@@ -532,11 +547,8 @@ Panel {
     }
 
     function close() {
-        showDeleteConfirm = false
-        pendingDeleteEvent = null
+        dismissDeleteConfirm()
         editingUid = ""
-        if (typeof overlayBg !== "undefined") overlayBg.visible = false
-        if (typeof overlayDialog !== "undefined") overlayDialog.visible = false
         root.opened = false
         if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function") root.bar.setCenterHoverRevealSuppressed(false)
         root.controller.hide()
@@ -544,11 +556,8 @@ Panel {
 
     onOpenedChanged: {
         if (!root.opened) {
-            showDeleteConfirm = false
-            pendingDeleteEvent = null
+            dismissDeleteConfirm()
             editingUid = ""
-            if (typeof overlayBg !== "undefined") overlayBg.visible = false
-            if (typeof overlayDialog !== "undefined") overlayDialog.visible = false
         }
     }
 
@@ -584,6 +593,7 @@ Panel {
             id: keyCatcher
             anchors.fill: parent
             onMoveRequested: function(dx, dy) {
+                if (root.showDeleteConfirm) return
                 if (root.showAddForm) return
                 if (root.viewMode === "day") {
                     if (dx !== 0) root.shiftDay(dx)
@@ -592,10 +602,17 @@ Panel {
                     if (dy !== 0) root.shiftMonth(dy * 12)
                 }
             }
-            onActivateRequested: root.showAddForm ? root.submitAddEvent() : root.close()
-            onCloseRequested: root.showAddForm ? root.dismissAddForm() : root.close()
+            // Enter never confirms a delete: a stray Enter must not destroy an
+            // event. The confirm is mouse-driven (right-click opened it).
+            onActivateRequested: function() {
+                if (root.showDeleteConfirm) return
+                if (root.showAddForm) root.submitAddEvent()
+                else root.close()
+            }
+            onCloseRequested: root.showDeleteConfirm ? root.dismissDeleteConfirm() : (root.showAddForm ? root.dismissAddForm() : root.close())
             onTabRequested: function(direction) { root.switchPanel(direction) }
             onTextKey: function(t) {
+                if (root.showDeleteConfirm) return
                 if (root.showAddForm) {
                     if (t === "\b" || t === "\x7F") root.dismissAddForm()
                     return
@@ -1095,10 +1112,7 @@ Panel {
                                             if (mouse.button === Qt.LeftButton) {
                                                 root.editEvent(modelData)
                                             } else {
-                                                root.pendingDeleteEvent = modelData
-                                                root.showDeleteConfirm = true
-                                                overlayBg.visible = true
-                                                overlayDialog.visible = true
+                                                root.openDeleteConfirm(modelData)
                                             }
                                         }
                                     }
@@ -1147,74 +1161,6 @@ Panel {
                     }
                 }
 
-    // Delete confirmation overlay — direct child of root Panel (not nested in dayView)
-    Rectangle {
-        id: overlayBg
-        anchors.fill: parent
-        color: "#000000"
-        opacity: 0.6
-        visible: false
-        z: 100
-        Keys.onEscapePressed: {
-            root.showDeleteConfirm = false
-            root.pendingDeleteEvent = null
-            overlayBg.visible = false
-            overlayDialog.visible = false
-        }
-        MouseArea {
-            anchors.fill: parent
-            onClicked: { root.showDeleteConfirm = false; root.pendingDeleteEvent = null; overlayBg.visible = false; overlayDialog.visible = false }
-        }
-    }
-    Rectangle {
-        id: overlayDialog
-        anchors.centerIn: parent
-        width: root.width - Style.space(32)
-        height: Style.space(80)
-        radius: Style.space(4)
-        color: Qt.darker(Color.foreground, 2.8)
-        border.color: Qt.darker(root.contentForeground, 2.0)
-        border.width: 1
-        visible: false
-        z: 101
-
-        Text {
-                            anchors.top: parent.top
-                            anchors.topMargin: Style.space(8)
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            width: parent.width - Style.space(16)
-                            text: "Delete \"" + (root.pendingDeleteEvent ? root.pendingDeleteEvent.summary : "") + "\"?"
-                            color: root.contentForeground
-                            font.family: root.contentFontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            wrapMode: Text.Wrap
-                            horizontalAlignment: Text.AlignHCenter
-                        }
-
-                        Row {
-                            anchors.bottom: parent.bottom
-                            anchors.bottomMargin: Style.space(8)
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            height: Style.spacing.controlHeight
-                            spacing: Style.space(8)
-
-                            Button {
-                                text: "Delete"
-                                width: Style.space(70)
-                                onClicked: root.deleteEvent()
-                            }
-                            Button {
-                                text: "Cancel"
-                                width: Style.space(70)
-                                onClicked: {
-                                    root.showDeleteConfirm = false
-                                    root.pendingDeleteEvent = null
-                                    overlayBg.visible = false
-                                    overlayDialog.visible = false
-                                }
-                            }
-                        }
-                    }
 
                 Item {
                     width: contentColumn.width
@@ -1237,6 +1183,80 @@ Panel {
                         font.pixelSize: Style.font.bodySmall
                         font.italic: true
                         visible: text !== ""
+                    }
+                }
+            }
+        }
+        // Delete confirmation overlay.
+        //
+        // These MUST be children of the panel window (KeyboardPanel), as
+        // siblings of the Flickable -- never inside contentColumn. The popup
+        // height is fitted from contentColumn.implicitHeight, so an extra child
+        // grows the popup, and "anchors.fill: parent" inside a Column binds the
+        // item's height back to the Column that is sizing it: a binding loop
+        // that collapsed the whole popup to an unreadable size.
+        Rectangle {
+            id: overlayBg
+            anchors.fill: parent
+            color: "#000000"
+            opacity: 0.6
+            visible: false
+            z: 100
+
+            MouseArea {
+                anchors.fill: parent
+                onClicked: root.dismissDeleteConfirm()
+            }
+        }
+
+        Rectangle {
+            id: overlayDialog
+            anchors.centerIn: parent
+            width: parent.width - Style.space(32)
+            height: deleteConfirmColumn.implicitHeight + Style.space(16)
+            radius: Style.space(4)
+            color: Qt.darker(Color.foreground, 2.8)
+            border.color: Qt.darker(root.contentForeground, 2.0)
+            border.width: 1
+            visible: false
+            z: 101
+
+            Column {
+                id: deleteConfirmColumn
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: Style.space(8)
+                spacing: Style.space(8)
+
+                Text {
+                    width: parent.width
+                    text: "Delete \"" + (root.pendingDeleteEvent ? root.pendingDeleteEvent.summary : "") + "\"?"
+                    textFormat: Text.PlainText
+                    color: root.contentForeground
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    height: Style.spacing.controlHeight
+                    spacing: Style.space(8)
+
+                    Button {
+                        text: "Delete"
+                        width: Style.space(70)
+                        height: parent.height
+                        onClicked: root.deleteEvent()
+                    }
+
+                    Button {
+                        text: "Cancel"
+                        width: Style.space(70)
+                        height: parent.height
+                        onClicked: root.dismissDeleteConfirm()
                     }
                 }
             }
