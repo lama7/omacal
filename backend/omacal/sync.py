@@ -595,8 +595,15 @@ def update_event(
     all_day: bool = False,
     location: str | None = None,
     description: str | None = None,
+    occurrence: datetime | None = None,
 ) -> dict[str, Any]:
-    """Update an existing event on the CalDAV server and local cache."""
+    """Update an existing event on the CalDAV server and local cache.
+
+    occurrence=None edits the whole event (or moves it between calendars).
+    occurrence=<dt> edits just that one occurrence of a recurring series by
+    writing a detached RECURRENCE-ID override (the same mechanism the phone
+    uses), leaving the rest of the series untouched.
+    """
     from omacal.db import update_event as db_update_event
 
     cur = conn.execute(
@@ -655,6 +662,74 @@ def update_event(
             description=description,
             tzid=_tzid_of(start, start),
         )
+    # --- Per-occurrence edit: write a detached RECURRENCE-ID override ---
+    if occurrence is not None:
+        from omacal.recur import parse_dt
+        from omacal.db import upsert_overrides
+        from icalendar import vDatetime, vDate, Event
+
+        comp = Calendar.from_ical(event.data)
+        masters = [c for c in comp.walk("VEVENT") if not c.get("RECURRENCE-ID")]
+        master = masters[0] if masters else None
+        if master is None or master.get("RRULE") is None:
+            raise ValueError("occurrence given but this event does not repeat")
+
+        target = parse_dt(occurrence)
+        if target is None:
+            raise ValueError(f"invalid occurrence value: {occurrence!r}")
+
+        # RECURRENCE-ID must mirror the master's DTSTART form so other clients
+        # (and this parser) match it: DATE for all-day, same tz otherwise.
+        mstart = master.get("DTSTART").dt
+        if not hasattr(mstart, "hour"):                 # all-day series
+            rid_value = target.date()
+        elif mstart.tzinfo is not None:
+            rid_value = target.astimezone(mstart.tzinfo)
+        else:
+            rid_value = target.replace(tzinfo=None)
+
+        # Build the detached override VEVENT.
+        ov = Event()
+        ov.add("uid", uid)
+        ov.add("recurrence-id", rid_value)
+        ov.add("summary", summary)
+        if description:
+            ov.add("description", description)
+        if location:
+            ov.add("location", location)
+        if all_day:
+            sd = start.date() if isinstance(start, datetime) else start
+            ed = end.date() if isinstance(end, datetime) else end
+            if ed is None or ed <= sd:
+                ed = sd + timedelta(days=1)
+            ov.add("dtstart", vDate(sd), parameters={"VALUE": "DATE"})
+            ov.add("dtend", vDate(ed), parameters={"VALUE": "DATE"})
+        else:
+            ov.add("dtstart", vDatetime(start))
+            if end is not None:
+                ov.add("dtend", vDatetime(end))
+        comp.add_component(ov)
+        event.data = comp.to_ical().decode()
+        event.save()
+
+        # Cache the override so the panel reflects it immediately (expansion
+        # applies overrides from event_overrides). Upsert on (cal, uid, rid).
+        upsert_overrides(conn, calendar_id, [{
+            "uid": uid,
+            "recurrence_id": target.isoformat(),
+            "summary": summary,
+            "description": description,
+            "location": location,
+            "start": start.isoformat(),
+            "end": end.isoformat() if end else None,
+            "all_day": 1 if all_day else 0,
+            "status": "CONFIRMED",
+            "href": None,
+            "tzid": _tzid_of(start, start),
+        }])
+        return {"status": "updated", "scope": "occurrence", "uid": uid,
+                "occurrence": target.isoformat()}
+
     comp = event.icalendar_component
     comp["summary"] = summary
     if description:

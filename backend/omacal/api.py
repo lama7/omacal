@@ -243,6 +243,16 @@ class OmacalHandler(BaseHTTPRequestHandler):
             if not uid:
                 self._json(400, {"error": "uid query parameter required"})
                 return
+            occurrence_raw = query.get("occurrence", [None])[0]
+            occurrence = None
+            if occurrence_raw:
+                try:
+                    occurrence = datetime.fromisoformat(occurrence_raw)
+                except ValueError:
+                    self._json(400, {"error": "invalid occurrence format, use ISO 8601"})
+                    return
+                if occurrence.tzinfo is None:
+                    occurrence = occurrence.replace(tzinfo=timezone.utc)
             try:
                 body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
                 data = json.loads(body)
@@ -264,7 +274,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
                         end_dt = end_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
 
                 from omacal.sync import update_event
-                result = update_event(self.db_conn, calendar_id, uid, summary, start_dt, end_dt, all_day, location, description)
+                result = update_event(self.db_conn, calendar_id, uid, summary, start_dt, end_dt, all_day, location, description, occurrence)
                 self._json(200, result)
             except Exception as e:
                 import traceback
