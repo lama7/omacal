@@ -57,6 +57,16 @@ def _unwrap_dt(value: Any) -> datetime | datetime.date | None:
     return None
 
 
+def _tzid_of(dtstart: Any, start_dt: Any) -> str | None:
+    """IANA zone name for a DTSTART, or None if the event is all-day/naive/UTC."""
+    pz = getattr(dtstart, "params", {})
+    if isinstance(pz, dict):
+        tz = pz.get("TZID")
+        if tz:
+            return str(tz)
+    return getattr(getattr(start_dt, "tzinfo", None), "key", None)
+
+
 def _exdate_values(component) -> list[str]:
     """ISO strings for every EXDATE on a VEVENT (icalendar yields vDDDLists)."""
     raw = component.get("EXDATE")
@@ -102,6 +112,14 @@ def _parse_ical_events(cal_data: bytes, calendar_id: int, cutoff: datetime, href
         start_dt = _unwrap_dt(dtstart.dt if hasattr(dtstart, "dt") else dtstart)
         if start_dt is None:
             continue
+
+        # IANA zone name of this component's DTSTART. We cache `isoformat()`,
+        # which bakes in a FIXED offset and drops the zone name (so a tz-aware
+        # series expanded from cache drifts 1 h after DST, and a TZID-aware
+        # EXDATE/override written by another client never matches). Persist the
+        # TZID so expansion can re-attach a real (DST-aware) ZoneInfo at load.
+        # All-day / floating / naive events carry no named zone -> None.
+        tzid = _tzid_of(dtstart, start_dt)
 
         all_day = isinstance(start_dt, date_type) and not isinstance(start_dt, datetime)
 
@@ -160,6 +178,7 @@ def _parse_ical_events(cal_data: bytes, calendar_id: int, cutoff: datetime, href
                 "all_day": 1 if all_day else 0,
                 "status": status,
                 "href": href,
+                "tzid": tzid,
             })
             continue
 
@@ -192,6 +211,7 @@ def _parse_ical_events(cal_data: bytes, calendar_id: int, cutoff: datetime, href
             "rrule": rrule_str,
             "exdates": json.dumps(_exdate_values(component)) if rrule_str else None,
             "href": href,
+            "tzid": tzid,
         })
 
     return {"events": events, "overrides": overrides}
@@ -481,6 +501,7 @@ def create_event(
         1 if all_day else 0,
         location,
         rrule=rrule,
+        tzid=_tzid_of(start, start),
     )
 
 
@@ -627,6 +648,7 @@ def update_event(
             end.isoformat() if end else None,
             1 if all_day else 0,
             location,
+            tzid=_tzid_of(start, start),
         )
     comp = event.icalendar_component
     comp["summary"] = summary
@@ -682,6 +704,7 @@ def update_event(
         location,
         rrule=prev_rrule,
         exdates=prev_exdates,
+        tzid=_tzid_of(start, start),
     )
 
 

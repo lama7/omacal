@@ -132,6 +132,28 @@ def _migrate(conn: sqlite3.Connection) -> None:
             cur.execute("ALTER TABLE event_overrides ADD COLUMN href TEXT")
         cur.execute("INSERT INTO schema_version VALUES (5)")
 
+    if version < 6:
+        # events.tzid / event_overrides.tzid -- the IANA zone name of a timed
+        # event's DTSTART. Start/end are cached as `isoformat()` which bakes in
+        # a FIXED offset and drops the zone name, so a tz-aware series expanded
+        # from cache drifts 1 h after a DST change, and a TZID-aware EXDATE /
+        # detached override written by another client never matches the cached
+        # occurrence (a deleted occurrence reappears). Persisting the TZID lets
+        # expansion re-attach a real (DST-aware) ZoneInfo at load time. NULL for
+        # all-day events (date-valued, no zone).
+        cols = {r[1] for r in cur.execute("PRAGMA table_info(events)")}
+        if "tzid" not in cols:
+            cur.execute("ALTER TABLE events ADD COLUMN tzid TEXT")
+        cols = {r[1] for r in cur.execute("PRAGMA table_info(event_overrides)")}
+        if "tzid" not in cols:
+            cur.execute("ALTER TABLE event_overrides ADD COLUMN tzid TEXT")
+        # Existing cached rows have NULL tzid and a token-based incremental sync
+        # will NOT re-fetch unchanged events, so the fix would never reach them.
+        # Clear each calendar's sync token once so the next sync does a full
+        # rebuild and repopulates tzid from the server.
+        cur.execute("UPDATE calendars SET sync_token = NULL")
+        cur.execute("INSERT INTO schema_version VALUES (6)")
+
     conn.commit()
 
 
@@ -199,41 +221,43 @@ def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict]
     cur = conn.cursor()
     for ev in events:
         cur.execute(
-            """INSERT INTO events
-               (calendar_id, uid, summary, description, location, start, end,
-                all_day, recurrence_id, status, transparency, rrule, exdates, href)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(calendar_id, uid) DO UPDATE SET
-                summary=excluded.summary,
-                description=excluded.description,
-                location=excluded.location,
-                start=excluded.start,
-                end=excluded.end,
-                all_day=excluded.all_day,
-                recurrence_id=excluded.recurrence_id,
-                status=excluded.status,
-                transparency=excluded.transparency,
-                rrule=excluded.rrule,
-                exdates=excluded.exdates,
-                href=excluded.href
-            """,
-            (
-                calendar_id,
-                ev["uid"],
-                ev.get("summary"),
-                ev.get("description"),
-                ev.get("location"),
-                ev["start"],
-                ev.get("end"),
-                ev.get("all_day", 0),
-                ev.get("recurrence_id"),
-                ev.get("status"),
-                ev.get("transparency"),
-                ev.get("rrule"),
-                ev.get("exdates"),
-                ev.get("href"),
-            ),
-        )
+                    """INSERT INTO events
+                       (calendar_id, uid, summary, description, location, start, end,
+                        all_day, recurrence_id, status, transparency, rrule, exdates, href, tzid)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(calendar_id, uid) DO UPDATE SET
+                       summary=excluded.summary,
+                       description=excluded.description,
+                       location=excluded.location,
+                       start=excluded.start,
+                       end=excluded.end,
+                       all_day=excluded.all_day,
+                       recurrence_id=excluded.recurrence_id,
+                       status=excluded.status,
+                       transparency=excluded.transparency,
+                       rrule=excluded.rrule,
+                       exdates=excluded.exdates,
+                       href=excluded.href,
+                       tzid=excluded.tzid
+                    """,
+                    (
+                        calendar_id,
+                        ev["uid"],
+                        ev.get("summary"),
+                        ev.get("description"),
+                        ev.get("location"),
+                        ev["start"],
+                        ev.get("end"),
+                        ev.get("all_day", 0),
+                        ev.get("recurrence_id"),
+                        ev.get("status"),
+                        ev.get("transparency"),
+                        ev.get("rrule"),
+                        ev.get("exdates"),
+                        ev.get("href"),
+                        ev.get("tzid"),
+                    ),
+                )
     conn.commit()
     return cur.rowcount
 
@@ -243,34 +267,36 @@ def upsert_overrides(conn: sqlite3.Connection, calendar_id: int, overrides: list
     cur = conn.cursor()
     for ov in overrides:
         cur.execute(
-            """INSERT INTO event_overrides
-               (calendar_id, uid, recurrence_id, summary, description, location,
-                start, end, all_day, status, href)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
-                summary=excluded.summary,
-                description=excluded.description,
-                location=excluded.location,
-                start=excluded.start,
-                end=excluded.end,
-                all_day=excluded.all_day,
-                status=excluded.status,
-                href=excluded.href
-            """,
-            (
-                calendar_id,
-                ov["uid"],
-                ov["recurrence_id"],
-                ov.get("summary"),
-                ov.get("description"),
-                ov.get("location"),
-                ov.get("start"),
-                ov.get("end"),
-                ov.get("all_day", 0),
-                ov.get("status"),
-                ov.get("href"),
-            ),
-        )
+                    """INSERT INTO event_overrides
+                       (calendar_id, uid, recurrence_id, summary, description, location,
+                        start, end, all_day, status, href, tzid)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
+                       summary=excluded.summary,
+                       description=excluded.description,
+                       location=excluded.location,
+                       start=excluded.start,
+                       end=excluded.end,
+                       all_day=excluded.all_day,
+                       status=excluded.status,
+                       href=excluded.href,
+                       tzid=excluded.tzid
+                    """,
+                    (
+                        calendar_id,
+                        ov["uid"],
+                        ov["recurrence_id"],
+                        ov.get("summary"),
+                        ov.get("description"),
+                        ov.get("location"),
+                        ov.get("start"),
+                        ov.get("end"),
+                        ov.get("all_day", 0),
+                        ov.get("status"),
+                        ov.get("href"),
+                        ov.get("tzid"),
+                    ),
+                )
     conn.commit()
     return cur.rowcount
 
@@ -333,16 +359,17 @@ def add_event(
     rrule: str | None = None,
     exdates: str | None = None,
     href: str | None = None,
+    tzid: str | None = None,
 ) -> dict[str, Any]:
     """Insert a single event into the local cache. Returns the inserted row as a dict."""
     cur = conn.execute(
         """INSERT OR REPLACE INTO events
            (calendar_id, uid, summary, description, location, start, end,
-            all_day, recurrence_id, status, transparency, rrule, exdates, href)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            all_day, recurrence_id, status, transparency, rrule, exdates, href, tzid)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id, calendar_id, uid, summary, description, location,
-                  start, end, all_day, recurrence_id, status, transparency, rrule, exdates, href""",
-        (calendar_id, uid, summary, None, location, start, end, all_day, None, "CONFIRMED", None, rrule, exdates, href),
+                  start, end, all_day, recurrence_id, status, transparency, rrule, exdates, href, tzid""",
+        (calendar_id, uid, summary, None, location, start, end, all_day, None, "CONFIRMED", None, rrule, exdates, href, tzid),
     )
     row = cur.fetchone()
     cur.close()

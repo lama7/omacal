@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from dateutil.rrule import rrulestr
 
@@ -23,8 +24,25 @@ def normalise_rrule(rrule: str) -> str:
     return _DATE_UNTIL_RE.sub(lambda m: f"UNTIL={m.group(1)}T235959Z", rrule)
 
 
-def parse_dt(value) -> datetime | None:
-    """Parse an ISO string / datetime / date into an aware datetime (UTC if naive)."""
+def _zone_for(tzid: str | None):
+    """A DST-aware ZoneInfo for a persisted IANA name, or None if unusable."""
+    if not tzid:
+        return None
+    try:
+        return ZoneInfo(tzid)
+    except Exception:
+        return None
+
+
+def parse_dt(value, tzid: str | None = None) -> datetime | None:
+    """Parse an ISO string / datetime / date into an aware datetime (UTC if naive).
+
+    When `tzid` names a real IANA zone, the parsed offset (which was baked into
+    the cached ISO at sync time and is fixed) is discarded and replaced with the
+    named, DST-aware zone -- so a series expanded across a DST change keeps its
+    true local time, and EXDATEs/overrides written by other clients in the same
+    zone match the cached occurrence instead of drifting by the stale offset.
+    """
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -38,7 +56,12 @@ def parse_dt(value) -> datetime | None:
         dt = datetime.fromisoformat(text)
     except ValueError:
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    zone = _zone_for(tzid)
+    if zone is not None:
+        dt = dt.replace(tzinfo=zone)
+    return dt
 
 
 def build_rule(rrule: str, dtstart: datetime):
@@ -56,6 +79,7 @@ def occurrences_between(
     window_end: datetime,
     duration: timedelta = timedelta(hours=1),
     exdates: list[str] | None = None,
+    tzid: str | None = None,
     limit: int = 400,
 ) -> list[tuple[datetime, datetime]]:
     """Occurrences of a series overlapping [window_start, window_end).
@@ -70,7 +94,7 @@ def occurrences_between(
 
     excluded = set()
     for raw in exdates or []:
-        dt = parse_dt(raw)
+        dt = parse_dt(raw, tzid)
         if dt is not None:
             excluded.add(dt.astimezone(timezone.utc))
 
@@ -101,8 +125,8 @@ def has_occurrence_after(rrule: str, dtstart: datetime, after: datetime) -> bool
         return None
 
 
-def _ts(value) -> datetime | None:
-    dt = parse_dt(value)
+def _ts(value, tzid: str | None = None) -> datetime | None:
+    dt = parse_dt(value, tzid)
     return dt.astimezone(timezone.utc) if dt is not None else None
 
 
@@ -136,7 +160,7 @@ def expand_events(
     """
     by_key: dict[tuple, dict] = {}
     for ov in overrides:
-        by_key[(ov.get("calendar_id"), ov.get("uid"), _ts(ov.get("recurrence_id")))] = ov
+        by_key[(ov.get("calendar_id"), ov.get("uid"), _ts(ov.get("recurrence_id"), ov.get("tzid")))] = ov
 
     out: list[dict] = []
     for ev in masters:
@@ -147,17 +171,18 @@ def expand_events(
         if str(ev.get("status") or "").upper() == "CANCELLED":
             continue
 
-        start_dt = parse_dt(ev.get("start"))
+        tzid = ev.get("tzid")
+        start_dt = parse_dt(ev.get("start"), tzid)
         if start_dt is None:
             continue
-        end_dt = parse_dt(ev.get("end"))
+        end_dt = parse_dt(ev.get("end"), tzid)
         if end_dt is not None and end_dt > start_dt:
             duration = end_dt - start_dt
         else:
             duration = timedelta(days=1) if ev.get("all_day") else timedelta(hours=1)
 
         for occ_start, occ_end in occurrences_between(
-            rrule, start_dt, window_start, window_end, duration, _load_exdates(ev.get("exdates"))
+            rrule, start_dt, window_start, window_end, duration, _load_exdates(ev.get("exdates")), tzid
         ):
             row = dict(ev)
             row["start"] = occ_start.isoformat()
@@ -172,10 +197,10 @@ def expand_events(
                 for field in ("summary", "description", "location", "all_day"):
                     if ov.get(field) not in (None, ""):
                         row[field] = ov[field]
-                ov_start = parse_dt(ov.get("start"))
+                ov_start = parse_dt(ov.get("start"), ov.get("tzid"))
                 if ov_start is not None:
                     row["start"] = ov_start.isoformat()
-                    row["end"] = (parse_dt(ov.get("end")) or (ov_start + duration)).isoformat()
+                    row["end"] = (parse_dt(ov.get("end"), ov.get("tzid")) or (ov_start + duration)).isoformat()
                 row["is_override"] = 1
             out.append(row)
 
