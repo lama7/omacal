@@ -68,6 +68,7 @@ Panel {
     property string newEventStartDate: ""
     property string newEventEndDate: ""
     property string newEventLocation: ""
+    property string newEventDescription: ""
     property bool startDateValid: true
     property bool endDateValid: true
     property bool newEventAllDay: false
@@ -256,6 +257,8 @@ Panel {
         newEventTitleField.text = ""
         newEventLocation = ""
         newEventLocationField.text = ""
+        newEventDescription = ""
+        newEventDescriptionField.text = ""
         newEventStartHour = 9
         newEventStartMinute = 0
         newEventEndHour = 10
@@ -299,6 +302,8 @@ Panel {
         newEventTitleField.text = ""
         newEventLocation = ""
         newEventLocationField.text = ""
+        newEventDescription = ""
+        newEventDescriptionField.text = ""
         newEventStartDate = ""
         newEventEndDate = ""
         startDateField.text = ""
@@ -423,7 +428,8 @@ Panel {
             end: end.toISOString(),
             all_day: newEventAllDay,
             calendar_id: calId,
-            location: newEventLocation
+            location: newEventLocation,
+            description: newEventDescription
         }
         if (rrule) payload.rrule = rrule
         xhr.send(JSON.stringify(payload))
@@ -441,6 +447,8 @@ Panel {
         newEventTitleField.text = ev.summary || ""
         newEventLocation = ev.location || ""
         newEventLocationField.text = ev.location || ""
+        newEventDescription = ev.description || ""
+        newEventDescriptionField.text = ev.description || ""
         // All-day rows are cached at UTC midnight with an exclusive DTEND, so
         // read the DATE part of the ISO string (new Date() reads the previous
         // day west of UTC, and a save then PUTs the shifted dates) and turn the
@@ -1138,6 +1146,14 @@ Panel {
                                 onTextChanged: root.newEventLocation = text
                             }
 
+                            TextField {
+                                id: newEventDescriptionField
+                                width: dayContent.width
+                                placeholderText: "Notes"
+                                foreground: root.contentForeground
+                                onTextChanged: root.newEventDescription = text
+                            }
+
                             Item {
                                 width: dayContent.width
                                 height: Style.spacing.controlHeight
@@ -1515,7 +1531,7 @@ Panel {
                                 model: root.dayEvents
                                 Item {
                                     width: dayEventsList.width
-                                    height: eventText.implicitHeight
+                                    height: eventText.implicitHeight + (modelData.description ? eventDescText.implicitHeight + Style.space(2) : 0)
 
                                     MouseArea {
                                         anchors.fill: parent
@@ -1561,6 +1577,22 @@ Panel {
                                         font.family: root.contentFontFamily
                                         font.pixelSize: Style.font.bodySmall
                                         color: root.contentForeground
+                                    }
+
+                                    Text {
+                                        id: eventDescText
+                                        visible: modelData.description && modelData.description !== ""
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 10
+                                        anchors.right: parent.right
+                                        anchors.top: eventText.bottom
+                                        anchors.topMargin: Style.space(2)
+                                        text: modelData.description
+                                        textFormat: Text.PlainText
+                                        wrapMode: Text.WordWrap
+                                        font.family: root.contentFontFamily
+                                        font.pixelSize: Style.font.bodySmall
+                                        color: Qt.darker(root.contentForeground, 1.5)
                                     }
                                 }
                             }
