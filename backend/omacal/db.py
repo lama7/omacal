@@ -106,6 +106,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         """)
         cur.execute("INSERT INTO schema_version VALUES (2)")
 
+    if version < 3:
+        # Incremental sync (RFC 6578 sync-collection). Each calendar stores the
+        # server's sync token; on SabreDAV this is also the getctag, so one value
+        # is both the change-detection cursor and the incremental-sync cursor.
+        cols = {r[1] for r in cur.execute("PRAGMA table_info(calendars)")}
+        if "sync_token" not in cols:
+            cur.execute("ALTER TABLE calendars ADD COLUMN sync_token TEXT")
+        cur.execute("INSERT INTO schema_version VALUES (3)")
+
     conn.commit()
 
 
@@ -140,9 +149,29 @@ def add_calendar(
 
 def list_calendars(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     cur = conn.execute(
-        "SELECT id, uid, display_name, color, url, username, password, principal_url, last_sync, enabled FROM calendars ORDER BY display_name"
+        "SELECT id, uid, display_name, color, url, username, password, principal_url, last_sync, sync_token, enabled FROM calendars ORDER BY display_name"
     )
     return [dict(r) for r in cur.fetchall()]
+
+
+def get_sync_token(conn: sqlite3.Connection, calendar_id: int) -> str | None:
+    """The calendar's stored RFC 6578 sync token (also the getctag on SabreDAV)."""
+    cur = conn.execute("SELECT sync_token FROM calendars WHERE id = ?", (calendar_id,))
+    row = cur.fetchone()
+    return row["sync_token"] if row else None
+
+
+def set_sync_token(conn: sqlite3.Connection, calendar_id: int, token: str | None) -> None:
+    """Persist the sync token after a successful sync-collection REPORT."""
+    conn.execute("UPDATE calendars SET sync_token = ? WHERE id = ?", (token, calendar_id))
+    conn.commit()
+
+
+def set_last_sync(conn: sqlite3.Connection, calendar_id: int) -> None:
+    """Stamp a calendar as freshly synced (for the API's staleness surface)."""
+    conn.execute("UPDATE calendars SET last_sync = ? WHERE id = ?",
+                 (datetime.now(timezone.utc).isoformat(), calendar_id))
+    conn.commit()
 
 
 def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict], commit: bool = True) -> int:
