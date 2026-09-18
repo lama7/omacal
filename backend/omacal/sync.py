@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import traceback
 from datetime import datetime, timedelta, timezone, date as date_type
 from pathlib import Path
@@ -14,7 +15,7 @@ import caldav
 from icalendar import Calendar
 
 from omacal.config import load_config
-from omacal.db import add_calendar, clear_calendar_events, upsert_events, upsert_overrides
+from omacal.db import add_calendar, replace_calendar_events
 from omacal.recur import has_occurrence_after
 
 logger = logging.getLogger("omacal.sync")
@@ -265,10 +266,13 @@ def sync_source(
     calendar_uid: str | None = None,
     display_name: str | None = None,
     color: str | None = None,
-) -> int:
+) -> tuple[int, list[str], list[str]]:
     """
     Sync one CalDAV source into the database.
-    Returns number of events stored.
+
+    Returns (events stored, URLs whose cache was replaced, URLs that failed).
+    Raises if the source itself failed (discovery/connect) -- the caller must
+    not treat that as "nothing to sync" when pruning stale calendars.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=30)
 
@@ -278,17 +282,21 @@ def sync_source(
     else:
         discovered = _discover_calendars(url, username, password)
         if not discovered:
-            logger.error("No calendars discovered at %s", url)
-            return 0
+            # Do NOT return "0 events, nothing synced": sync_all used to treat a
+            # failed discovery as a successful empty source and then delete every
+            # cache row not in the (empty) synced set. A source-level failure has
+            # to reach the caller as a failure.
+            raise RuntimeError(f"no calendars discovered at {url}")
         cals = discovered
 
     try:
         client = caldav.DAVClient(url=url, username=username, password=password)
     except Exception as e:
-        logger.error("Failed to connect to CalDAV server %s: %s", url, e)
-        return 0
+        raise RuntimeError(f"failed to connect to CalDAV server {url}: {e}") from e
 
     total_events = 0
+    urls_synced: list[str] = []
+    urls_failed: list[str] = []
     for cal_info in cals:
         cal_uid = cal_info["uid"]
         display = cal_info["display_name"]
@@ -301,37 +309,41 @@ def sync_source(
             password if is_writable else None,
             prop_color, cal_info.get("principal_url"),
         )
-        clear_calendar_events(conn, cal_id)
 
+        # Fetch BEFORE touching the cache. The old order cleared this calendar's
+        # rows and then fetched, so a GET /api/events during a sync saw it
+        # mid-wipe (row count bouncing 30 -> 16 -> 30) and a failed fetch left
+        # the calendar empty for the whole interval. A fetch that raises now
+        # leaves the previous cache untouched.
         try:
             cal_obj = client.calendar(url=cal_info["url"])
             raw_events = cal_obj.events()
-            if not raw_events:
-                logger.info("No events from %s", cal_info["url"])
-                continue
-
-            events = []
-            overrides = []
-            for ev in raw_events:
-                try:
-                    if ev.data:
-                        parsed = _parse_ical_events(ev.data.encode("utf-8"), cal_id, cutoff)
-                        events.extend(parsed["events"])
-                        overrides.extend(parsed["overrides"])
-                except Exception as e:
-                    logger.warning("Skipping event in %s: %s", display, e)
-
-            if events:
-                upsert_events(conn, cal_id, events)
-                total_events += len(events)
-                logger.info("Synced %d events from %s", len(events), display)
-            if overrides:
-                upsert_overrides(conn, cal_id, overrides)
-                logger.info("Synced %d recurrence overrides from %s", len(overrides), display)
         except Exception as e:
             logger.error("Sync failed for %s: %s", display, e)
+            urls_failed.append(cal_info["url"])
+            continue
 
-    return total_events
+        if not raw_events:
+            logger.warning("No events returned from %s -- clearing its cached rows", cal_info["url"])
+
+        events = []
+        overrides = []
+        for ev in raw_events:
+            try:
+                if ev.data:
+                    parsed = _parse_ical_events(ev.data.encode("utf-8"), cal_id, cutoff)
+                    events.extend(parsed["events"])
+                    overrides.extend(parsed["overrides"])
+            except Exception as e:
+                logger.warning("Skipping event in %s: %s", display, e)
+
+        # One transaction: readers see the old set or the new set, never a gap.
+        replace_calendar_events(conn, cal_id, events, overrides)
+        total_events += len(events)
+        urls_synced.append(cal_info["url"])
+        logger.info("Synced %d events from %s", len(events), display)
+
+    return total_events, urls_synced, urls_failed
 
 
 def create_event(
@@ -610,8 +622,31 @@ def update_event(
     )
 
 
-def sync_all(config_path: Path | None = None) -> dict[str, Any]:
-    """Sync all configured calendars. Returns summary."""
+_sync_lock = threading.Lock()
+
+
+def sync_all(config_path: Path | None = None, *, raise_if_busy: bool = False) -> dict[str, Any]:
+    """Sync all configured calendars. Returns summary.
+
+    Serialized by a process-wide lock: the periodic timer thread and
+    POST /api/sync used to run sync_all() concurrently on separate SQLite
+    connections, double-fetching every calendar and fighting over the same rows
+    ("database is locked"). An overlapping call returns a skipped summary (or
+    raises, for the API's explicit-sync endpoint) instead.
+    """
+    if not _sync_lock.acquire(blocking=False):
+        logger.warning("Sync already in progress; skipping this run")
+        if raise_if_busy:
+            raise RuntimeError("sync already in progress")
+        return {"total_events": 0, "calendars": {}, "status": "skipped",
+                "reason": "sync already in progress"}
+    try:
+        return _sync_all_locked(config_path)
+    finally:
+        _sync_lock.release()
+
+
+def _sync_all_locked(config_path: Path | None = None) -> dict[str, Any]:
     cfg = load_config(config_path)
     db_path = Path(cfg["database"])
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -627,14 +662,19 @@ def sync_all(config_path: Path | None = None) -> dict[str, Any]:
     results = {}
     total = 0
 
-    # Track which calendar URLs we're syncing this run.
+    # Track which calendar URLs this run actually replaced, and which sources
+    # finished cleanly. The stale prune below must never run on partial
+    # information -- it used to re-discover calendars itself (a second call,
+    # ~30 extra requests), and a discovery failure there returned [] which
+    # marked EVERY calendar stale and deleted it along with its events.
     synced_urls: set[str] = set()
+    incomplete: list[str] = []
     for cal in cfg["calendars"]:
         if not cal.get("enabled", True):
             continue
         name = cal.get("display_name", cal.get("url", "unknown"))
         try:
-            n = sync_source(
+            n, urls, failed = sync_source(
                 conn,
                 cal["url"],
                 cal.get("username"),
@@ -645,21 +685,33 @@ def sync_all(config_path: Path | None = None) -> dict[str, Any]:
             )
             results[name] = {"status": "ok", "events": n}
             total += n
-            for c in _discover_calendars(cal["url"], cal.get("username"), cal.get("password")):
-                synced_urls.add(c["url"])
+            synced_urls.update(urls)
+            if failed:
+                results[name]["status"] = "partial"
+                results[name]["failed"] = failed
+                incomplete.append(name)
+                logger.warning("%s: %d calendar(s) failed to fetch", name, len(failed))
         except Exception as e:
             results[name] = {"status": "error", "error": str(e)}
+            incomplete.append(name)
             logger.error("Sync failed for %s: %s", name, e)
 
-    # Remove stale calendar entries that are no longer discovered.
-    cur = conn.execute("SELECT id, url FROM calendars")
-    stale = [row["id"] for row in cur.fetchall() if row["url"] not in synced_urls]
-    if stale:
-        placeholders = ",".join("?" for _ in stale)
-        conn.execute(f"DELETE FROM calendars WHERE id IN ({placeholders})", stale)
-        conn.execute(f"DELETE FROM events WHERE calendar_id IN ({placeholders})", stale)
-        conn.commit()
-        logger.info("Removed %d stale calendar(s) from cache", len(stale))
+    if incomplete:
+        logger.warning(
+            "Skipping stale-calendar cleanup: %d source(s) did not complete (%s)",
+            len(incomplete), ", ".join(incomplete),
+        )
+    else:
+        # Remove stale calendar entries that are no longer discovered.
+        cur = conn.execute("SELECT id, url FROM calendars")
+        stale = [row["id"] for row in cur.fetchall() if row["url"] not in synced_urls]
+        if stale:
+            placeholders = ",".join("?" for _ in stale)
+            conn.execute(f"DELETE FROM calendars WHERE id IN ({placeholders})", stale)
+            conn.execute(f"DELETE FROM events WHERE calendar_id IN ({placeholders})", stale)
+            conn.execute(f"DELETE FROM event_overrides WHERE calendar_id IN ({placeholders})", stale)
+            conn.commit()
+            logger.info("Removed %d stale calendar(s) from cache", len(stale))
 
     conn.close()
     return {"total_events": total, "calendars": results}

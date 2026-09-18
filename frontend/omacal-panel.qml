@@ -163,10 +163,11 @@ Panel {
 
     function computeWeekRows() {
         var rows = []
-        for (var i = 0; i < 5; i++) {
-            if (rangeDaysArr.length > i) {
-                rows.push({ idx: i, days: rangeDaysArr[i] })
-            }
+        // Render every row computeRangeDays() produced. Slicing to 5 dropped the
+        // 6th row whole, so any month that needs it lost those days entirely --
+        // no cell, no dot, no click target (2026-05, 2026-08, 2027-01, ...).
+        for (var i = 0; i < rangeDaysArr.length; i++) {
+            rows.push({ idx: i, days: rangeDaysArr[i] })
         }
         weekRows = rows
     }
@@ -356,10 +357,14 @@ Panel {
         }
         var start, end
         if (newEventAllDay) {
-            // All-day: midnight of the chosen dates; the backend stores these
-            // as DATE values and makes DTEND exclusive (start + 1 day).
+            // All-day: midnight of the chosen dates. The form's End Date is the
+            // event's LAST day but iCalendar DTEND is exclusive, so send the
+            // following midnight (a one-day event sends start + 1 as well, which
+            // the backend also stores). Without this a 3-day all-day event was
+            // created one day short.
             start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0)
-            end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 0, 0, 0)
+            end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate() + 1, 0, 0, 0)
+            if (end <= start) end = new Date(start.getTime() + 86400000)
         } else {
             start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(),
                              newEventStartHour, newEventStartMinute)
@@ -379,6 +384,10 @@ Panel {
         }
         xhr.open(method, url, true)
         xhr.setRequestHeader("Content-Type", "application/json")
+        // The backend pushes to CalDAV synchronously, so a write gets longer than
+        // a read -- but never forever: with no timeout a wedged API left the form
+        // open with no feedback at all.
+        xhr.timeout = 30000
         xhr.onreadystatechange = function() {
             if (xhr.readyState === XMLHttpRequest.DONE) {
                 if (xhr.status === 200) {
@@ -386,7 +395,7 @@ Panel {
                     dismissAddForm()
                     loadRangeEvents(true)
                 } else {
-                    error = "Failed to save event"
+                    error = xhr.status === 0 ? "No response from omacal API" : "Failed to save event (" + xhr.status + ")"
                 }
             }
         }
@@ -411,8 +420,21 @@ Panel {
         newEventTitleField.text = ev.summary || ""
         newEventLocation = ev.location || ""
         newEventLocationField.text = ev.location || ""
-        var start = new Date(ev.start)
-        var end = ev.end ? new Date(ev.end) : new Date(start.getTime() + 3600000)
+        // All-day rows are cached at UTC midnight with an exclusive DTEND, so
+        // read the DATE part of the ISO string (new Date() reads the previous
+        // day west of UTC, and a save then PUTs the shifted dates) and turn the
+        // exclusive end back into the last day the form edits.
+        var allDay = !!ev.all_day
+        var start, end
+        if (allDay) {
+            start = dateFromIso(ev.start)
+            end = dateFromIso(ev.end || ev.start)
+            end = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 1)
+            if (end < start) end = start
+        } else {
+            start = new Date(ev.start)
+            end = ev.end ? new Date(ev.end) : new Date(start.getTime() + 3600000)
+        }
         newEventStartDate = formatDateInput(start)
         newEventEndDate = formatDateInput(end)
         startDateField.text = newEventStartDate
@@ -459,6 +481,7 @@ Panel {
         if (ev.is_recurring) url += "&occurrence=" + encodeURIComponent(ev.recurrence_id || ev.start)
         var xhr = new XMLHttpRequest()
         xhr.open("DELETE", url, true)
+        xhr.timeout = 30000
         xhr.onreadystatechange = function() {
             if (xhr.readyState === XMLHttpRequest.DONE) {
                 dismissDeleteConfirm()
@@ -467,7 +490,9 @@ Panel {
                 } else {
                     var msg = ""
                     try { msg = JSON.parse(xhr.responseText).error || "" } catch (e) { msg = "" }
-                    error = "Delete failed (" + xhr.status + ")" + (msg ? ": " + msg : "")
+                    error = xhr.status === 0
+                        ? "No response from omacal API"
+                        : "Delete failed (" + xhr.status + ")" + (msg ? ": " + msg : "")
                 }
             }
         }
@@ -500,19 +525,23 @@ Panel {
         error = ""
         var xhr = new XMLHttpRequest()
         xhr.open("GET", calendarsUrl, true)
+        xhr.timeout = 15000
         xhr.onreadystatechange = function() {
             if (xhr.readyState === XMLHttpRequest.DONE) {
                 loadingCalendars = false
                 if (xhr.status === 200) {
-                    var data = JSON.parse(xhr.responseText)
+                    var data = null
+                    try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
                     if (Array.isArray(data) && data.length > 0) {
                         calendars = data
                         loadRangeEvents(false)
+                    } else if (data === null) {
+                        error = "Bad response from omacal API"
                     } else {
                         error = "No calendars found"
                     }
                 } else {
-                    error = "Cannot reach omacal API"
+                    error = xhr.status === 0 ? "omacal API did not respond" : "Cannot reach omacal API (" + xhr.status + ")"
                 }
             }
         }
@@ -534,11 +563,13 @@ Panel {
             + "&calendars=" + encodeURIComponent(calIds.join(","))
         var xhr = new XMLHttpRequest()
         xhr.open("GET", url, true)
+        xhr.timeout = 15000
         xhr.onreadystatechange = function() {
             if (xhr.readyState === XMLHttpRequest.DONE) {
                 loadingEvents = false
                 if (xhr.status === 200) {
-                    var data = JSON.parse(xhr.responseText)
+                    var data = null
+                    try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
                     if (Array.isArray(data)) {
                         events = data
                         monthEvents = groupEventsByDay(data)
@@ -553,11 +584,13 @@ Panel {
                             dayEvents = monthEvents[dayKey] || []
                         }
                         if (refreshLabels) initRange()
+                    } else if (data === null) {
+                        error = "Bad response from omacal API"
                     } else {
                         error = "API error"
                     }
                 } else {
-                    error = "API error " + xhr.status
+                    error = xhr.status === 0 ? "omacal API did not respond" : "API error " + xhr.status
                 }
             }
         }
@@ -690,11 +723,9 @@ Panel {
         viewMode = "month"
         dayDate = null
         pendingDayDate = null
-        if (rangeDaysArr.length === 0) {
-            initView()
-            initRange()
-            loadCalendars()
-        }
+        // refresh() already kicked off loadCalendars() (which chains
+        // loadRangeEvents), and it cleared rangeDaysArr -- so the old
+        // "length === 0" guard below was always true and fetched everything twice.
     }
 
     function close() {
@@ -708,6 +739,9 @@ Panel {
     onOpenedChanged: {
         if (!root.opened) {
             dismissDeleteConfirm()
+            // Drop a half-filled add/edit form too: reopening used to show the
+            // stale draft the user had abandoned.
+            dismissAddForm()
             editingUid = ""
         }
     }

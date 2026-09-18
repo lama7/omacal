@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -25,7 +25,6 @@ from omacal.config import load_config
 from omacal.db import (
     list_calendars as db_get_calendars,
     get_events as db_get_events,
-    get_today_events as db_get_today,
     get_overrides as db_get_overrides,
     get_events_for_window as db_get_window,
 )
@@ -68,12 +67,14 @@ class OmacalHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/events/today":
-            # Build today's window here (rather than delegating to
-            # db_get_today) so recurrence expansion sees the same bounds the
-            # cache query used. UTC midnight-to-midnight, as before.
-            today = datetime.now(timezone.utc).date()
-            start = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
-            end = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc)
+            # Today in LOCAL time. Midnight-to-midnight UTC made the bar
+            # tooltip's "today" mean [yesterday 20:00, today 20:00] in US Eastern:
+            # anything after 8pm vanished from it, and last night's 8pm-midnight
+            # events showed up as today's. Each boundary is resolved through the
+            # system zone separately so the window is right across a DST change.
+            local_today = datetime.now().date()
+            start = datetime.combine(local_today, time.min).astimezone(timezone.utc)
+            end = datetime.combine(local_today + timedelta(days=1), time.min).astimezone(timezone.utc)
             events = self._events_in_window(start, end, None)
             self._json(200, events)
             return
@@ -91,9 +92,10 @@ class OmacalHandler(BaseHTTPRequestHandler):
                     self._json(400, {"error": "invalid start/end format, use ISO 8601"})
                     return
             else:
-                # Default: next 7 days
-                now = datetime.now(timezone.utc)
-                start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                # Default: the next 7 days from local midnight (the panel always
+                # passes explicit bounds; this is for manual calls, and UTC
+                # midnight would put the window 4h off in US Eastern).
+                start = datetime.combine(datetime.now().date(), time.min).astimezone(timezone.utc)
                 end = start + timedelta(days=7)
 
             cal_ids = None
@@ -114,11 +116,15 @@ class OmacalHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/sync":
             try:
-                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-                # Actually run the sync
+                # The lock means a concurrent run (the periodic timer) is
+                # reported rather than double-fetching every calendar. No body
+                # is read: this endpoint takes no input (reading Content-Length
+                # bytes unbounded was pointless and unbounded).
                 from omacal.sync import sync_all
-                result = sync_all()
+                result = sync_all(raise_if_busy=True)
                 self._json(200, result)
+            except RuntimeError as e:
+                self._json(409, {"error": str(e)})
             except Exception as e:
                 self._json(500, {"error": str(e)})
             return

@@ -17,11 +17,27 @@ function keyForDate(date) {
     return y + "-" + pad2(m) + "-" + pad2(d)
 }
 
+// Weekday-name/number coercion. Accepts "monday"/"Mon"/"MONDAY"/1/"1" and
+// returns null for anything that carries no weekday. The previous version only
+// matched the exact words "monday"/"sunday" case-sensitively, so "Mon",
+// "MONDAY", "wednesday" and "" all silently fell through to Sunday.
+function coerceWeekStart(value) {
+    if (value === undefined || value === null) return null
+    if (typeof value === "number")
+        return isFinite(value) ? ((Math.round(value) % 7) + 7) % 7 : null
+    var text = String(value).replace(/^\s+|\s+$/g, "").toLowerCase()
+    if (text === "") return null
+    for (var i = 0; i < WEEKDAY_NAMES.length; i++)
+        if (WEEKDAY_NAMES[i] === text || WEEKDAY_NAMES[i].substr(0, 3) === text) return i
+    var parsed = parseInt(text, 10)
+    return isFinite(parsed) ? ((parsed % 7) + 7) % 7 : null
+}
+
 function normalizedWeekStart(raw, fallback) {
-    if (raw === "monday" || raw === "Monday" || raw === 1) return 1
-    if (raw === "sunday" || raw === "Sunday" || raw === 0) return 0
-    if (raw === null || raw === undefined) return fallback % 7
-    return Number(raw) % 7 || 0
+    var configured = coerceWeekStart(raw)
+    if (configured !== null) return configured
+    var fallbackStart = coerceWeekStart(fallback)
+    return fallbackStart === null ? 1 : fallbackStart
 }
 
 function weekStartSettingName(day) {
@@ -41,13 +57,17 @@ function weekdayOrder(ws) {
     return out
 }
 
+// ISO 8601 week number, computed in UTC. The previous local-time day-of-year
+// version was wrong on ~70% of dates (2026-11-09 rendered W45 for the true W46;
+// early-January dates fell a week behind) -- reachable through the bar tooltip's
+// right-click format ring ('W'ww). This is Omarchy's own clock/Model.js
+// implementation, which is unit-tested upstream.
 function isoWeek(year, month, day) {
-    var d = new Date(year, month, day)
-    var dayNum = (d.getDay() + 6) % 7
-    var jan4 = new Date(year, 0, 4)
-    var jan4Day = (jan4.getDay() + 6) % 7
-    var ordinal = Math.floor((d - jan4) / MS_PER_DAY) + 1
-    return Math.ceil((ordinal - jan4Day + 10) / 7)
+    var date = new Date(Date.UTC(year, month, day))
+    var weekday = date.getUTCDay() || 7
+    date.setUTCDate(date.getUTCDate() + 4 - weekday)
+    var yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1))
+    return Math.ceil(((date.getTime() - yearStart.getTime()) / MS_PER_DAY + 1) / 7)
 }
 
 function stepMonth(year, month, delta) {
@@ -105,6 +125,7 @@ if (typeof module !== "undefined") {
         dateKey: keyForDate,
         keyForDate: keyForDate,
         normalizedWeekStart: normalizedWeekStart,
+        coerceWeekStart: coerceWeekStart,
         weekStartSettingName: weekStartSettingName,
         toggledWeekStart: toggledWeekStart,
         weekdayOrder: weekdayOrder,

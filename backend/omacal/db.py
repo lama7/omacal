@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from datetime import datetime, date, timezone
+from datetime import datetime, date, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -145,8 +145,11 @@ def list_calendars(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in cur.fetchall()]
 
 
-def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict]) -> int:
-    """Insert or replace events for a calendar. Returns count of rows touched."""
+def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict], commit: bool = True) -> int:
+    """Insert or replace events for a calendar. Returns count of rows touched.
+
+    commit=False leaves the caller's transaction open, for replace_calendar_events.
+    """
     cur = conn.cursor()
     for ev in events:
         cur.execute(
@@ -220,6 +223,33 @@ def upsert_overrides(conn: sqlite3.Connection, calendar_id: int, overrides: list
         )
     conn.commit()
     return cur.rowcount
+
+
+def replace_calendar_events(
+    conn: sqlite3.Connection,
+    calendar_id: int,
+    events: list[dict],
+    overrides: list[dict] | None = None,
+) -> int:
+    """Swap a calendar's cached rows for a freshly fetched set, in ONE transaction.
+
+    A reader (GET /api/events) either sees the old set or the new one -- never a
+    calendar mid-wipe. An empty fetch legitimately clears the calendar; a failed
+    fetch must not reach here at all (leave the previous cache in place).
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM events WHERE calendar_id=?", (calendar_id,))
+        cur.execute("DELETE FROM event_overrides WHERE calendar_id=?", (calendar_id,))
+        if events:
+            upsert_events(conn, calendar_id, events, commit=False)
+        if overrides:
+            upsert_overrides(conn, calendar_id, overrides, commit=False)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return len(events)
 
 
 def get_overrides(conn: sqlite3.Connection, calendar_ids: list[int] | None = None) -> list[dict[str, Any]]:
@@ -329,10 +359,15 @@ def get_events(
 
 
 def get_today_events(conn: sqlite3.Connection, calendar_ids: list[int] | None = None) -> list[dict[str, Any]]:
-    """Return events for today (midnight to midnight local)."""
+    """Return events for today (midnight to midnight LOCAL).
+
+    The boundaries are resolved through the system zone per instant, so a DST
+    day is 23 or 25 hours rather than a wrong-length UTC day. (This used to use
+    UTC midnight while the docstring claimed local.)
+    """
     today = date.today()
-    start = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
-    end = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc)
+    start = datetime.combine(today, time.min).astimezone(timezone.utc)
+    end = datetime.combine(today + timedelta(days=1), time.min).astimezone(timezone.utc)
     return get_events(conn, start, end, calendar_ids)
 
 
