@@ -58,6 +58,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 c["writable"] = bool(c.get("username") and c.get("password"))
                 c.pop("password", None)
                 c.pop("username", None)
+                c.pop("sync_token", None)
             self._json(200, calendars)
             return
 
@@ -112,14 +113,47 @@ class OmacalHandler(BaseHTTPRequestHandler):
 
         self._json(404, {"error": "not found"})
 
+    def _cache_fresh(self, max_age_seconds: int) -> bool:
+        """True if every enabled calendar was synced within max_age_seconds.
+
+        A calendar with no last_sync (never synced) makes the cache stale.
+        """
+        cur = self.db_conn.execute("SELECT last_sync FROM calendars WHERE enabled=1")
+        rows = cur.fetchall()
+        if not rows:
+            return False
+        now = datetime.now(timezone.utc)
+        for r in rows:
+            ts = r["last_sync"]
+            if not ts:
+                return False
+            try:
+                age = (now - datetime.fromisoformat(ts)).total_seconds()
+            except (ValueError, TypeError):
+                return False
+            if age > max_age_seconds:
+                return False
+        return True
+
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/api/sync":
+            # ?if-stale=N: skip the sync entirely when the cache is fresher than
+            # N seconds (the on-demand path the panel uses on open). The lock
+            # means a concurrent run (the periodic timer) is reported rather
+            # than double-fetching every calendar. No body is read.
+            qs = parse_qs(parsed.query)
+            if_stale = qs.get("if-stale", [None])[0]
+            if if_stale is not None:
+                try:
+                    max_age = int(if_stale)
+                except ValueError:
+                    self._json(400, {"error": "if-stale must be seconds"})
+                    return
+                if self._cache_fresh(max_age):
+                    self._json(200, {"status": "fresh", "synced": False})
+                    return
             try:
-                # The lock means a concurrent run (the periodic timer) is
-                # reported rather than double-fetching every calendar. No body
-                # is read: this endpoint takes no input (reading Content-Length
-                # bytes unbounded was pointless and unbounded).
                 from omacal.sync import sync_all
                 result = sync_all(raise_if_busy=True)
                 self._json(200, result)
