@@ -15,7 +15,7 @@ import caldav
 from icalendar import Calendar
 
 from omacal.config import load_config
-from omacal.db import add_calendar, replace_calendar_events
+from omacal.db import add_calendar, replace_calendar_events, upsert_events, upsert_overrides
 from omacal.recur import has_occurrence_after
 
 logger = logging.getLogger("omacal.sync")
@@ -61,7 +61,7 @@ def _exdate_values(component) -> list[str]:
     return out
 
 
-def _parse_ical_events(cal_data: bytes, calendar_id: int, cutoff: datetime) -> dict[str, list[dict[str, Any]]]:
+def _parse_ical_events(cal_data: bytes, calendar_id: int, cutoff: datetime, href: str | None = None) -> dict[str, list[dict[str, Any]]]:
     """Parse raw iCalendar bytes into {"events": [...], "overrides": [...]}.
 
     Masters are kept when the series still has occurrences overlapping
@@ -149,6 +149,7 @@ def _parse_ical_events(cal_data: bytes, calendar_id: int, cutoff: datetime) -> d
                 "end": end_dt.isoformat() if end_dt else None,
                 "all_day": 1 if all_day else 0,
                 "status": status,
+                "href": href,
             })
             continue
 
@@ -180,6 +181,7 @@ def _parse_ical_events(cal_data: bytes, calendar_id: int, cutoff: datetime) -> d
             "transparency": transparency,
             "rrule": rrule_str,
             "exdates": json.dumps(_exdate_values(component)) if rrule_str else None,
+            "href": href,
         })
 
     return {"events": events, "overrides": overrides}
@@ -258,6 +260,77 @@ def _discover_calendars(
     return result
 
 
+def _sync_calendar_incremental(
+    conn: Any,
+    client: Any,
+    cal_id: int,
+    cal_url: str,
+    display: str,
+    cutoff: datetime,
+) -> tuple[int, int]:
+    """Incremental sync of one calendar via RFC 6578 sync-collection.
+
+    Returns (events stored, deletions applied). Uses the stored sync token; an
+    unknown/invalid token makes the server return everything (safe full
+    fallback). Deletions come back as hrefs, which are matched to cached rows
+    by the events.href column (the filename UID differs from the iCal UID).
+    """
+    from omacal.db import get_sync_token, set_sync_token, set_last_sync
+
+    cal_obj = client.calendar(url=cal_url)
+    token = get_sync_token(conn, cal_id)
+
+    # Build the sync-collection REPORT (getetag + calendardata inline). With no
+    # token the server returns everything (full) and hands back a token; with a
+    # valid token it returns only what changed since it.
+    body = client._build_sync_collection_body(sync_token=token, props=None)
+    resp, _ = cal_obj._request_report_build_resultlist(body, None, None, no_calendardata=False)
+    res = resp.parse_sync_collection()
+
+    events = []
+    overrides = []
+    for ch in res.changed:
+        if not ch.calendar_data:
+            continue
+        try:
+            parsed = _parse_ical_events(ch.calendar_data.encode("utf-8"), cal_id, cutoff, href=ch.href)
+            events.extend(parsed["events"])
+            overrides.extend(parsed["overrides"])
+        except Exception as e:
+            logger.warning("Skipping changed event in %s: %s", display, e)
+
+    cur = conn.cursor()
+    try:
+        if token is None:
+            # First sync (or a lost token): the server returned everything but
+            # no deletion history, so do a full replace -- otherwise events
+            # deleted before this token existed would linger in the cache.
+            cur.execute("DELETE FROM events WHERE calendar_id=?", (cal_id,))
+            cur.execute("DELETE FROM event_overrides WHERE calendar_id=?", (cal_id,))
+        elif res.deleted:
+            placeholders = ",".join("?" for _ in res.deleted)
+            cur.execute(
+                f"DELETE FROM events WHERE calendar_id=? AND href IN ({placeholders})",
+                [cal_id] + res.deleted,
+            )
+            cur.execute(
+                f"DELETE FROM event_overrides WHERE calendar_id=? AND href IN ({placeholders})",
+                [cal_id] + res.deleted,
+            )
+        if events:
+            upsert_events(conn, cal_id, events, commit=False)
+        if overrides:
+            upsert_overrides(conn, cal_id, overrides, commit=False)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    set_sync_token(conn, cal_id, res.sync_token)
+    set_last_sync(conn, cal_id)
+    return len(events), len(res.deleted)
+
+
 def sync_source(
     conn: Any,
     url: str,
@@ -310,38 +383,18 @@ def sync_source(
             prop_color, cal_info.get("principal_url"),
         )
 
-        # Fetch BEFORE touching the cache. The old order cleared this calendar's
-        # rows and then fetched, so a GET /api/events during a sync saw it
-        # mid-wipe (row count bouncing 30 -> 16 -> 30) and a failed fetch left
-        # the calendar empty for the whole interval. A fetch that raises now
-        # leaves the previous cache untouched.
+        # One sync-collection REPORT per calendar: full replace on the first
+        # run (no token), incremental afterwards. Applies atomically and a
+        # failed fetch leaves the previous cache untouched.
         try:
-            cal_obj = client.calendar(url=cal_info["url"])
-            raw_events = cal_obj.events()
+            n, dels = _sync_calendar_incremental(conn, client, cal_id, cal_info["url"], display, cutoff)
+            total_events += n
+            urls_synced.append(cal_info["url"])
+            logger.info("Synced %s: %d events, %d deleted", display, n, dels)
         except Exception as e:
             logger.error("Sync failed for %s: %s", display, e)
             urls_failed.append(cal_info["url"])
             continue
-
-        if not raw_events:
-            logger.warning("No events returned from %s -- clearing its cached rows", cal_info["url"])
-
-        events = []
-        overrides = []
-        for ev in raw_events:
-            try:
-                if ev.data:
-                    parsed = _parse_ical_events(ev.data.encode("utf-8"), cal_id, cutoff)
-                    events.extend(parsed["events"])
-                    overrides.extend(parsed["overrides"])
-            except Exception as e:
-                logger.warning("Skipping event in %s: %s", display, e)
-
-        # One transaction: readers see the old set or the new set, never a gap.
-        replace_calendar_events(conn, cal_id, events, overrides)
-        total_events += len(events)
-        urls_synced.append(cal_info["url"])
-        logger.info("Synced %d events from %s", len(events), display)
 
     return total_events, urls_synced, urls_failed
 

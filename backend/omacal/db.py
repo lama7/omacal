@@ -125,6 +125,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
             cur.execute("ALTER TABLE events ADD COLUMN href TEXT")
         cur.execute("INSERT INTO schema_version VALUES (4)")
 
+    if version < 5:
+        # event_overrides.href -- same deletion-matching need as events.href.
+        cols = {r[1] for r in cur.execute("PRAGMA table_info(event_overrides)")}
+        if "href" not in cols:
+            cur.execute("ALTER TABLE event_overrides ADD COLUMN href TEXT")
+        cur.execute("INSERT INTO schema_version VALUES (5)")
+
     conn.commit()
 
 
@@ -238,8 +245,8 @@ def upsert_overrides(conn: sqlite3.Connection, calendar_id: int, overrides: list
         cur.execute(
             """INSERT INTO event_overrides
                (calendar_id, uid, recurrence_id, summary, description, location,
-                start, end, all_day, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                start, end, all_day, status, href)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
                 summary=excluded.summary,
                 description=excluded.description,
@@ -247,7 +254,8 @@ def upsert_overrides(conn: sqlite3.Connection, calendar_id: int, overrides: list
                 start=excluded.start,
                 end=excluded.end,
                 all_day=excluded.all_day,
-                status=excluded.status
+                status=excluded.status,
+                href=excluded.href
             """,
             (
                 calendar_id,
@@ -260,6 +268,7 @@ def upsert_overrides(conn: sqlite3.Connection, calendar_id: int, overrides: list
                 ov.get("end"),
                 ov.get("all_day", 0),
                 ov.get("status"),
+                ov.get("href"),
             ),
         )
     conn.commit()
