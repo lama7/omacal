@@ -1554,7 +1554,7 @@ Panel {
 
                                     Rectangle {
                                         anchors.left: parent.left
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.verticalCenter: eventText.verticalCenter
                                         width: 6
                                         height: 6
                                         radius: 3
@@ -1569,7 +1569,7 @@ Panel {
                                         anchors.left: parent.left
                                         anchors.leftMargin: 10
                                         anchors.right: parent.right
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.top: parent.top
                                         text: root.eventTimeStr(modelData) + " \u2014 " + modelData.summary
                                         textFormat: Text.PlainText
                                         wrapMode: Text.WordWrap
