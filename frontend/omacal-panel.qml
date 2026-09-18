@@ -1139,6 +1139,21 @@ Panel {
                             width: contentColumn.width
                             height: visible ? implicitHeight : 0
                             spacing: Style.space(8)
+                            // Keypad digits arrive with empty event.text (only
+                            // KeypadModifier + key code), so QQC TextFields can't
+                            // insert them. Synthesize the digit and insert it into
+                            // the focused field.
+                            Keys.onPressed: function(event) {
+                                if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
+                                    var focused = activeFocusItem
+                                    if (focused && focused.hasOwnProperty("insert")) {
+                                        var digit = String(event.key - Qt.Key_0)
+                                        focused.insert(focused.cursorPosition, digit)
+                                        focused.cursorPosition += 1
+                                        event.accepted = true
+                                    }
+                                }
+                            }
 
                             TextField {
                                 id: newEventTitleField
@@ -1310,14 +1325,6 @@ Panel {
                                     placeholderText: "COUNT"
                                     foreground: root.contentForeground
                                     onTextChanged: root.newEventCount = parseInt(text, 10)
-                                    // Keypad digits carry KeypadModifier and can be
-                                    // swallowed by the PanelKeyCatcher even when blocked;
-                                    // accept them here so they reach the field.
-                                    Keys.onPressed: function(event) {
-                                        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9) {
-                                            event.accepted = false
-                                        }
-                                    }
                                     anchors.left: endsValueLabel.right
                                     anchors.leftMargin: Style.space(34)
                                     anchors.verticalCenter: parent.verticalCenter
