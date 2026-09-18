@@ -115,6 +115,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
             cur.execute("ALTER TABLE calendars ADD COLUMN sync_token TEXT")
         cur.execute("INSERT INTO schema_version VALUES (3)")
 
+    if version < 4:
+        # events.href -- the CalDAV resource URL. Needed to match a deleted
+        # resource (sync-collection reports deletions as hrefs) back to a cached
+        # row: the filename UID and the iCal UID differ, so the href is the only
+        # stable key. Populated on the next full sync.
+        cols = {r[1] for r in cur.execute("PRAGMA table_info(events)")}
+        if "href" not in cols:
+            cur.execute("ALTER TABLE events ADD COLUMN href TEXT")
+        cur.execute("INSERT INTO schema_version VALUES (4)")
+
     conn.commit()
 
 
@@ -184,8 +194,8 @@ def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict]
         cur.execute(
             """INSERT INTO events
                (calendar_id, uid, summary, description, location, start, end,
-                all_day, recurrence_id, status, transparency, rrule, exdates)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                all_day, recurrence_id, status, transparency, rrule, exdates, href)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(calendar_id, uid) DO UPDATE SET
                 summary=excluded.summary,
                 description=excluded.description,
@@ -197,7 +207,8 @@ def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict]
                 status=excluded.status,
                 transparency=excluded.transparency,
                 rrule=excluded.rrule,
-                exdates=excluded.exdates
+                exdates=excluded.exdates,
+                href=excluded.href
             """,
             (
                 calendar_id,
@@ -213,6 +224,7 @@ def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict]
                 ev.get("transparency"),
                 ev.get("rrule"),
                 ev.get("exdates"),
+                ev.get("href"),
             ),
         )
     conn.commit()
@@ -311,16 +323,17 @@ def add_event(
     location: str | None = None,
     rrule: str | None = None,
     exdates: str | None = None,
+    href: str | None = None,
 ) -> dict[str, Any]:
     """Insert a single event into the local cache. Returns the inserted row as a dict."""
     cur = conn.execute(
         """INSERT OR REPLACE INTO events
            (calendar_id, uid, summary, description, location, start, end,
-            all_day, recurrence_id, status, transparency, rrule, exdates)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            all_day, recurrence_id, status, transparency, rrule, exdates, href)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id, calendar_id, uid, summary, description, location,
-                  start, end, all_day, recurrence_id, status, transparency, rrule, exdates""",
-        (calendar_id, uid, summary, None, location, start, end, all_day, None, "CONFIRMED", None, rrule, exdates),
+                  start, end, all_day, recurrence_id, status, transparency, rrule, exdates, href""",
+        (calendar_id, uid, summary, None, location, start, end, all_day, None, "CONFIRMED", None, rrule, exdates, href),
     )
     row = cur.fetchone()
     cur.close()
