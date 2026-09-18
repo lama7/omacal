@@ -151,6 +151,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
                     self._json(400, {"error": "if-stale must be seconds"})
                     return
                 if self._cache_fresh(max_age):
+                    logger.info("Sync skipped: cache fresh (if-stale=%d)", max_age)
                     self._json(200, {"status": "fresh", "synced": False})
                     return
             try:
