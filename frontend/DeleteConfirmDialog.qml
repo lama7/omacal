@@ -65,7 +65,11 @@ Item {
             + messageText.implicitHeight
             + (root.showScope ? scopeRow.implicitHeight + Style.space(12) : 0)
             + Style.space(20) + Style.space(34)
-    anchors.centerIn: parent
+    // Anchor the card's top to the panel top (not centered) so a tall card on a
+    // short panel stays on screen instead of pushing its top off the top edge.
+    anchors.top: parent.top
+    anchors.topMargin: Style.space(24)
+    anchors.horizontalCenter: parent.horizontalCenter
     color: root.background
     border.color: root.selectedText
     border.width: Style.normalBorderWidth
