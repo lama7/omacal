@@ -740,6 +740,28 @@ Panel {
         // refresh() already kicked off loadCalendars() (which chains
         // loadRangeEvents), and it cleared rangeDaysArr -- so the old
         // "length === 0" guard below was always true and fetched everything twice.
+        // Ask the backend to refresh if its cache is stale; the panel already
+        // rendered from cache, so this never blocks the open.
+        requestSync()
+    }
+
+    // Fire-and-forget on-demand refresh. The backend skips the sync entirely
+    // when its cache is fresher than 60s, so opening the panel repeatedly costs
+    // one small local request. When a sync did run, re-read the events.
+    function requestSync() {
+        var xhr = new XMLHttpRequest()
+        xhr.open("POST", apiBase + "/api/sync?if-stale=60", true)
+        xhr.timeout = 30000
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (xhr.status !== 200) return
+            var data = null
+            try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
+            // {"status":"fresh","synced":false} means there was nothing to do.
+            if (data && data.synced === false) return
+            loadRangeEvents(false)
+        }
+        xhr.send()
     }
 
     function close() {
