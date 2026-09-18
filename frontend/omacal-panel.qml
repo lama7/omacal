@@ -566,6 +566,30 @@ Panel {
         return cal ? !!cal.writable : false
     }
 
+    // Map a keypad key to the digit/character it represents, or null if the
+    // event isn't a keypad entry. Keypad keys arrive under the influence of the
+    // compositor's NumLock state: with NumLock off they come in AS the cursor/
+    // canvas keys (4=Left, 6=Right, 2=Down, 8=Up, 7=Home, 1=End, 9=PgUp, 3=PgDn,
+    // 0=Insert) plus Qt.KeypadModifier, so they never match Qt.Key_0..9. Map by
+    // keycode when KeypadModifier is present.
+    function keypadDigitFor(event) {
+        if (!(event.modifiers & Qt.KeypadModifier)) return null
+        switch (event.key) {
+        case Qt.Key_0: return "0"; case Qt.Key_1: return "1"
+        case Qt.Key_2: return "2"; case Qt.Key_3: return "3"
+        case Qt.Key_4: return "4"; case Qt.Key_5: return "5"
+        case Qt.Key_6: return "6"; case Qt.Key_7: return "7"
+        case Qt.Key_8: return "8"; case Qt.Key_9: return "9"
+        case Qt.Key_Left: return "4"; case Qt.Key_Right: return "6"
+        case Qt.Key_Up: return "8"; case Qt.Key_Down: return "2"
+        case Qt.Key_Home: return "7"; case Qt.Key_End: return "1"
+        case Qt.Key_PageUp: return "9"; case Qt.Key_PageDown: return "3"
+        case Qt.Key_Insert: return "0"; case Qt.Key_Clear: return "5"
+        case Qt.Key_Delete: return "."
+        }
+        return null
+    }
+
     function loadCalendars() {
         loadingCalendars = true
         error = ""
@@ -1141,8 +1165,9 @@ Panel {
                                 onTextChanged: root.newEventSummary = text
                                     Keys.priority: Keys.BeforeItem
                                     Keys.onPressed: function(event) {
-                                        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
-                                            insert(cursorPosition, String(event.key - Qt.Key_0))
+                                        var d = root.keypadDigitFor(event)
+                                        if (d) {
+                                            insert(cursorPosition, d)
                                             cursorPosition += 1
                                             event.accepted = true
                                         }
@@ -1157,8 +1182,9 @@ Panel {
                                 onTextChanged: root.newEventLocation = text
                                     Keys.priority: Keys.BeforeItem
                                     Keys.onPressed: function(event) {
-                                        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
-                                            insert(cursorPosition, String(event.key - Qt.Key_0))
+                                        var d = root.keypadDigitFor(event)
+                                        if (d) {
+                                            insert(cursorPosition, d)
                                             cursorPosition += 1
                                             event.accepted = true
                                         }
@@ -1173,8 +1199,9 @@ Panel {
                                 onTextChanged: root.newEventDescription = text
                                     Keys.priority: Keys.BeforeItem
                                     Keys.onPressed: function(event) {
-                                        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
-                                            insert(cursorPosition, String(event.key - Qt.Key_0))
+                                        var d = root.keypadDigitFor(event)
+                                        if (d) {
+                                            insert(cursorPosition, d)
                                             cursorPosition += 1
                                             event.accepted = true
                                         }
@@ -1329,8 +1356,9 @@ Panel {
                                     onTextChanged: root.newEventCount = parseInt(text, 10)
                                         Keys.priority: Keys.BeforeItem
                                         Keys.onPressed: function(event) {
-                                            if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
-                                                insert(cursorPosition, String(event.key - Qt.Key_0))
+                                            var d = root.keypadDigitFor(event)
+                                            if (d) {
+                                                insert(cursorPosition, d)
                                                 cursorPosition += 1
                                                 event.accepted = true
                                             }
@@ -1356,8 +1384,9 @@ Panel {
 
                                     Keys.priority: Keys.BeforeItem
                                     Keys.onPressed: function(event) {
-                                        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
-                                            insert(cursorPosition, String(event.key - Qt.Key_0))
+                                        var d = root.keypadDigitFor(event)
+                                        if (d) {
+                                            insert(cursorPosition, d)
                                             cursorPosition += 1
                                             event.accepted = true
                                         }
@@ -1414,8 +1443,9 @@ Panel {
 
                                     Keys.priority: Keys.BeforeItem
                                     Keys.onPressed: function(event) {
-                                        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
-                                            insert(cursorPosition, String(event.key - Qt.Key_0))
+                                        var d = root.keypadDigitFor(event)
+                                        if (d) {
+                                            insert(cursorPosition, d)
                                             cursorPosition += 1
                                             event.accepted = true
                                         }
@@ -1505,8 +1535,9 @@ Panel {
 
                                     Keys.priority: Keys.BeforeItem
                                     Keys.onPressed: function(event) {
-                                        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
-                                            insert(cursorPosition, String(event.key - Qt.Key_0))
+                                        var d = root.keypadDigitFor(event)
+                                        if (d) {
+                                            insert(cursorPosition, d)
                                             cursorPosition += 1
                                             event.accepted = true
                                         }
