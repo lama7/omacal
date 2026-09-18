@@ -97,6 +97,9 @@ Panel {
     // Edit/delete state
     property string editingUid: ""
     property int editingCalendarId: 0
+    property string editingOccurrence: ""   // recurrence_id of the occurrence being edited (recurring only)
+    property bool editingIsRecurring: false
+    property bool editThisOccurrence: true  // scope toggle: true = this occurrence, false = whole series
     property var pendingDeleteEvent: null
     property bool showDeleteConfirm: false
 
@@ -287,6 +290,9 @@ Panel {
     function dismissAddForm() {
         showAddForm = false
         editingUid = ""
+        editingIsRecurring = false
+        editingOccurrence = ""
+        editThisOccurrence = true
         error = ""
         newEventSummary = ""
         newEventTitleField.text = ""
@@ -384,6 +390,11 @@ Panel {
         if (editingUid) {
             method = "PUT"
             url = apiBase + "/api/events?uid=" + encodeURIComponent(editingUid)
+            // Editing one occurrence of a recurring series: pass the occurrence
+            // so the backend writes a detached override instead of moving the
+            // whole series. Whole-series edits omit it.
+            if (editingIsRecurring && editThisOccurrence && editingOccurrence)
+                url += "&occurrence=" + encodeURIComponent(editingOccurrence)
         } else {
             method = "POST"
             url = apiBase + "/api/events"
@@ -420,6 +431,9 @@ Panel {
     function editEvent(ev) {
         editingUid = ev.uid
         editingCalendarId = ev.calendar_id
+        editingOccurrence = ev.recurrence_id || ev.start || ""
+        editingIsRecurring = !!ev.is_recurring
+        editThisOccurrence = true
         showAddForm = true
         error = ""
         newEventSummary = ev.summary || ""
@@ -1158,6 +1172,22 @@ Panel {
                                 accent: (root.bar && root.bar.accent) ? root.bar.accent : Color.accent
                                 fontFamily: root.contentFontFamily
                                 onClicked: root.newEventAllDay = !root.newEventAllDay
+                            }
+
+                            Toggle {
+                                id: editScopeToggle
+                                width: dayContent.width
+                                // Only when editing a recurring event: choose whether the
+                                // change applies to just this occurrence (detached override)
+                                // or the whole series. One-off events have no scope question.
+                                visible: root.editingUid !== "" && root.editingIsRecurring
+                                label: "This occurrence only"
+                                description: "Edit just this occurrence; the rest of the series is unchanged"
+                                checked: root.editThisOccurrence
+                                foreground: root.contentForeground
+                                accent: (root.bar && root.bar.accent) ? root.bar.accent : Color.accent
+                                fontFamily: root.contentFontFamily
+                                onClicked: root.editThisOccurrence = !root.editThisOccurrence
                             }
 
                             Item {
