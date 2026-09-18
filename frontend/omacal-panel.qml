@@ -1310,6 +1310,14 @@ Panel {
                                     placeholderText: "COUNT"
                                     foreground: root.contentForeground
                                     onTextChanged: root.newEventCount = parseInt(text, 10)
+                                    // Keypad digits carry KeypadModifier and can be
+                                    // swallowed by the PanelKeyCatcher even when blocked;
+                                    // accept them here so they reach the field.
+                                    Keys.onPressed: function(event) {
+                                        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9) {
+                                            event.accepted = false
+                                        }
+                                    }
                                     anchors.left: endsValueLabel.right
                                     anchors.leftMargin: Style.space(34)
                                     anchors.verticalCenter: parent.verticalCenter
