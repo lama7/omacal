@@ -156,7 +156,13 @@ Panel {
                 cursor.setDate(cursor.getDate() + 1)
             }
             days.push(row)
-            if (cursor.getMonth() > viewMonth && r >= 4) break
+            // Stop once the grid has covered the month AND the cursor has moved
+            // into a later month. The old test compared only the month index, so
+            // it never fired in December (January's 0 is not > December's 11) and
+            // December always rendered a full 6th row of next-year days.
+            var spilled = cursor.getFullYear() > viewYear
+                || (cursor.getFullYear() === viewYear && cursor.getMonth() > viewMonth)
+            if (r >= 4 && spilled) break
         }
         return days
     }
@@ -518,6 +524,14 @@ Panel {
             }
         }
         return Qt.formatTime(start, "HH:mm")
+    }
+
+    // Whether an event's calendar accepts writes. Shared read-only calendars
+    // (a spouse's, e.g.) have no stored credentials, so the API reports
+    // writable:false -- the panel must not offer edit/delete on those.
+    function calendarWritable(ev) {
+        var cal = calendars.find(function(c) { return c.id === ev.calendar_id })
+        return cal ? !!cal.writable : false
     }
 
     function loadCalendars() {
@@ -1447,8 +1461,14 @@ Panel {
                                     MouseArea {
                                         anchors.fill: parent
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                        cursorShape: Qt.PointingHandCursor
+                                        cursorShape: root.calendarWritable(modelData) ? Qt.PointingHandCursor : Qt.ArrowCursor
                                         onClicked: {
+                                            // Read-only shared calendars (a spouse's, e.g.) reject
+                                            // writes server-side, so don't offer edit/delete on them.
+                                            if (!root.calendarWritable(modelData)) {
+                                                root.error = "Read-only calendar \u2014 can't edit"
+                                                return
+                                            }
                                             if (mouse.button === Qt.LeftButton) {
                                                 root.editEvent(modelData)
                                             } else {

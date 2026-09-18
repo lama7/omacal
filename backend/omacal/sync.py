@@ -580,14 +580,26 @@ def update_event(
     comp = event.icalendar_component
     comp["summary"] = summary
     from icalendar import vDatetime, vDate
+    # Pop DTSTART/DTEND before re-adding. Assigning to an existing key keeps the
+    # old property's params, so converting a timed event to all-day left a stale
+    # VALUE=DATE-TIME on a DATE value and SabreDAV rejected it ("20260921 is not
+    # a correct DATE-TIME", HTTP 415). Re-adding with the explicit VALUE=DATE
+    # param emits DTSTART;VALUE=DATE:... correctly.
+    comp.pop("DTSTART", None)
+    comp.pop("DTEND", None)
     if all_day:
-        comp["dtstart"] = vDate(start.date()) if isinstance(start, datetime) else vDate(start)
-        if end:
-            comp["dtend"] = vDate(end.date()) if isinstance(end, datetime) else vDate(end)
+        start_date = start.date() if isinstance(start, datetime) else start
+        end_date = None
+        if end is not None:
+            end_date = end.date() if isinstance(end, datetime) else end
+        if end_date is None or end_date <= start_date:
+            end_date = start_date + timedelta(days=1)
+        comp.add("dtstart", vDate(start_date), parameters={"VALUE": "DATE"})
+        comp.add("dtend", vDate(end_date), parameters={"VALUE": "DATE"})
     else:
-        comp["dtstart"] = vDatetime(start)
-        if end:
-            comp["dtend"] = vDatetime(end)
+        comp.add("dtstart", vDatetime(start))
+        if end is not None:
+            comp.add("dtend", vDatetime(end))
     if location:
         comp["location"] = location
     else:
