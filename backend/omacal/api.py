@@ -342,26 +342,33 @@ class OmacalServer:
         self._httpd = server
         logger.info("omacal API listening on http://127.0.0.1:%d", self.port)
 
-        # Schedule periodic sync in a daemon thread (so it won't keep a
-        # broken process alive if the server fails or exits).
+        # Schedule periodic sync in a daemon scheduler thread. The scheduler
+        # always ticks (Event.wait) and runs each sync in its own worker thread,
+        # so a hung sync can never stop future syncs from being scheduled. The
+        # old code re-armed the next Timer only AFTER a sync returned, so one
+        # hung connection (caldav had no timeout) stopped syncs forever. The
+        # sync_all lock makes an overlapping run a cheap no-op ("skipped").
         import threading
         poll_interval = self.cfg.get("poll_interval", 300)
+        stop = threading.Event()
 
-        def periodic_sync():
+        def run_sync():
+            from omacal.sync import sync_all
             try:
-                from omacal.sync import sync_all
-
-                sync_all()
-                logger.info("Periodic sync complete")
+                result = sync_all()
+                if result.get("status") == "skipped":
+                    logger.debug("Periodic sync skipped: a sync is already running")
+                else:
+                    logger.info("Periodic sync complete: %d events", result.get("total_events", 0))
             except Exception as e:
                 logger.error("Periodic sync failed: %s", e)
-            _t = threading.Timer(poll_interval, periodic_sync)
-            _t.daemon = True
-            _t.start()
 
-        _sync_timer = threading.Timer(poll_interval, periodic_sync)
-        _sync_timer.daemon = True
-        _sync_timer.start()
+        def scheduler():
+            while not stop.wait(poll_interval):
+                threading.Thread(target=run_sync, daemon=True).start()
+
+        _scheduler = threading.Thread(target=scheduler, daemon=True)
+        _scheduler.start()
 
         if background:
             return server

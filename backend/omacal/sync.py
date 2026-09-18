@@ -20,6 +20,16 @@ from omacal.recur import has_occurrence_after
 
 logger = logging.getLogger("omacal.sync")
 
+# caldav defaults to NO timeout (infinite), so a half-open connection hangs the
+# sync thread forever -- and the old periodic timer re-armed only after a sync
+# returned, so one hang stopped all future syncs. Bound every client.
+_DAV_TIMEOUT = 30
+
+
+def _dav_client(url: str, username: str | None, password: str | None) -> caldav.DAVClient:
+    """Build a DAVClient with a bounded timeout."""
+    return caldav.DAVClient(url=url, username=username, password=password, timeout=_DAV_TIMEOUT)
+
 _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$")
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -225,12 +235,12 @@ def _discover_calendars(
 ) -> list[dict[str, Any]]:
     """Discover calendars at a CalDAV URL. Returns list of {uid, display_name, url, principal_url}."""
     try:
-        client = caldav.DAVClient(url=url, username=username, password=password)
+        client = _dav_client(url, username, password)
         principal = client.principal()
         calendars = principal.calendars()
     except Exception:
         try:
-            client = caldav.DAVClient(url=url, username=username, password=password)
+            client = _dav_client(url, username, password)
             calendars = client.calendars()
         except Exception as e:
             logger.error("Failed to discover calendars at %s: %s", url, e)
@@ -363,7 +373,7 @@ def sync_source(
         cals = discovered
 
     try:
-        client = caldav.DAVClient(url=url, username=username, password=password)
+        client = _dav_client(url, username, password)
     except Exception as e:
         raise RuntimeError(f"failed to connect to CalDAV server {url}: {e}") from e
 
@@ -456,11 +466,7 @@ def create_event(
         push_kwargs["rrule"] = rrule
 
     # Push to CalDAV server
-    client = caldav.DAVClient(
-        url=row["url"],
-        username=row["username"],
-        password=row["password"],
-    )
+    client = _dav_client(row["url"], row["username"], row["password"])
     cal_obj = client.calendar(url=row["url"])
     cal_obj.add_event(summary=summary, uid=uid, location=location, **push_kwargs)
 
@@ -505,11 +511,7 @@ def delete_event(
     if not row:
         raise ValueError(f"Calendar id={calendar_id} not found in local cache")
 
-    client = caldav.DAVClient(
-        url=row["url"],
-        username=row["username"],
-        password=row["password"],
-    )
+    client = _dav_client(row["url"], row["username"], row["password"])
     cal_obj = client.calendar(url=row["url"])
     event = cal_obj.get_event_by_uid(uid)
 
@@ -581,11 +583,7 @@ def update_event(
     if not row:
         raise ValueError(f"Calendar id={calendar_id} not found in local cache")
 
-    client = caldav.DAVClient(
-        url=row["url"],
-        username=row["username"],
-        password=row["password"],
-    )
+    client = _dav_client(row["url"], row["username"], row["password"])
     cal_obj = client.calendar(url=row["url"])
     try:
         event = cal_obj.get_event_by_uid(uid)
