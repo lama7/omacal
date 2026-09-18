@@ -1298,7 +1298,6 @@ Panel {
                                     height: Style.spacing.controlHeight
                                     horizontalAlignment: Text.AlignHCenter
                                     placeholderText: "COUNT"
-                                    inputMask: "999"
                                     foreground: root.contentForeground
                                     onTextChanged: root.newEventCount = parseInt(text, 10)
                                     anchors.left: endsValueLabel.right
