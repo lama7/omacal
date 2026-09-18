@@ -1130,10 +1130,13 @@ Panel {
                             height: visible ? implicitHeight : 0
                             spacing: Style.space(8)
                             // Keypad digits arrive with empty event.text (only
-                            // KeypadModifier + key code), so QQC TextFields can't
-                            // insert them. Synthesize the digit and insert it into
-                            // the focused field. Only handles empty-text digits, so
+                            // KeypadModifier + key code), so the QQC TextField's
+                            // internal handler can't insert them and swallows them.
+                            // Run BEFORE the field's internal handler (BeforeItem)
+                            // to synthesize the digit and insert it into the focused
+                            // field. Only handles empty-text digits, so
                             // ESC/brackets/arrows still reach the PanelKeyCatcher.
+                            Keys.priority: Keys.BeforeItem
                             Keys.onPressed: function(event) {
                                 if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
                                     var focused = activeFocusItem
