@@ -322,6 +322,9 @@ Panel {
         endsCountField.text = ""
         untilDateField.text = ""
         untilDateValid = true
+        // Release the focused field so it stops holding keys (ESC etc.) after
+        // the form is dismissed.
+        keyCatcher.forceActiveFocus()
     }
 
     // RRULE for the current form state: preset + end condition.
@@ -1129,25 +1132,6 @@ Panel {
                             width: contentColumn.width
                             height: visible ? implicitHeight : 0
                             spacing: Style.space(8)
-                            // Keypad digits arrive with empty event.text (only
-                            // KeypadModifier + key code), so the QQC TextField's
-                            // internal handler can't insert them and swallows them.
-                            // Run BEFORE the field's internal handler (BeforeItem)
-                            // to synthesize the digit and insert it into the focused
-                            // field. Only handles empty-text digits, so
-                            // ESC/brackets/arrows still reach the PanelKeyCatcher.
-                            Keys.priority: Keys.BeforeItem
-                            Keys.onPressed: function(event) {
-                                if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
-                                    var focused = activeFocusItem
-                                    if (focused && focused.hasOwnProperty("insert")) {
-                                        var digit = String(event.key - Qt.Key_0)
-                                        focused.insert(focused.cursorPosition, digit)
-                                        focused.cursorPosition += 1
-                                        event.accepted = true
-                                    }
-                                }
-                            }
 
                             TextField {
                                 id: newEventTitleField
@@ -1155,6 +1139,14 @@ Panel {
                                 placeholderText: "Event title"
                                 foreground: root.contentForeground
                                 onTextChanged: root.newEventSummary = text
+                                    Keys.priority: Keys.BeforeItem
+                                    Keys.onPressed: function(event) {
+                                        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
+                                            insert(cursorPosition, String(event.key - Qt.Key_0))
+                                            cursorPosition += 1
+                                            event.accepted = true
+                                        }
+                                    }
                             }
 
                             TextField {
@@ -1163,6 +1155,14 @@ Panel {
                                 placeholderText: "Location"
                                 foreground: root.contentForeground
                                 onTextChanged: root.newEventLocation = text
+                                    Keys.priority: Keys.BeforeItem
+                                    Keys.onPressed: function(event) {
+                                        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
+                                            insert(cursorPosition, String(event.key - Qt.Key_0))
+                                            cursorPosition += 1
+                                            event.accepted = true
+                                        }
+                                    }
                             }
 
                             TextField {
@@ -1171,6 +1171,14 @@ Panel {
                                 placeholderText: "Notes"
                                 foreground: root.contentForeground
                                 onTextChanged: root.newEventDescription = text
+                                    Keys.priority: Keys.BeforeItem
+                                    Keys.onPressed: function(event) {
+                                        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
+                                            insert(cursorPosition, String(event.key - Qt.Key_0))
+                                            cursorPosition += 1
+                                            event.accepted = true
+                                        }
+                                    }
                             }
 
                             Item {
@@ -1319,6 +1327,14 @@ Panel {
                                     placeholderText: "COUNT"
                                     foreground: root.contentForeground
                                     onTextChanged: root.newEventCount = parseInt(text, 10)
+                                        Keys.priority: Keys.BeforeItem
+                                        Keys.onPressed: function(event) {
+                                            if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
+                                                insert(cursorPosition, String(event.key - Qt.Key_0))
+                                                cursorPosition += 1
+                                                event.accepted = true
+                                            }
+                                        }
                                     anchors.left: endsValueLabel.right
                                     anchors.leftMargin: Style.space(34)
                                     anchors.verticalCenter: parent.verticalCenter
@@ -1337,6 +1353,15 @@ Panel {
                                         root.untilDateValid = root.parseDateInput(text) !== null
                                     }
                                     onEditingFinished: keyCatcher.forceActiveFocus()
+
+                                    Keys.priority: Keys.BeforeItem
+                                    Keys.onPressed: function(event) {
+                                        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
+                                            insert(cursorPosition, String(event.key - Qt.Key_0))
+                                            cursorPosition += 1
+                                            event.accepted = true
+                                        }
+                                    }
                                     anchors.left: endsValueLabel.right
                                     anchors.leftMargin: Style.space(34)
                                     anchors.verticalCenter: parent.verticalCenter
@@ -1385,6 +1410,15 @@ Panel {
                                     }
                                     onEditingFinished: {
                                         keyCatcher.forceActiveFocus()
+                                    }
+
+                                    Keys.priority: Keys.BeforeItem
+                                    Keys.onPressed: function(event) {
+                                        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
+                                            insert(cursorPosition, String(event.key - Qt.Key_0))
+                                            cursorPosition += 1
+                                            event.accepted = true
+                                        }
                                     }
                                     anchors.left: startLabel.right
                                     anchors.leftMargin: Style.space(34)
@@ -1467,6 +1501,15 @@ Panel {
                                     }
                                     onEditingFinished: {
                                         keyCatcher.forceActiveFocus()
+                                    }
+
+                                    Keys.priority: Keys.BeforeItem
+                                    Keys.onPressed: function(event) {
+                                        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && event.text === "") {
+                                            insert(cursorPosition, String(event.key - Qt.Key_0))
+                                            cursorPosition += 1
+                                            event.accepted = true
+                                        }
                                     }
                                     anchors.left: endLabel.right
                                     anchors.leftMargin: Style.space(34)
