@@ -173,6 +173,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 end_str = data.get("end")
                 all_day = data.get("all_day", False)
                 location = data.get("location", "")
+                description = data.get("description", "")
                 rrule = (data.get("rrule") or "").strip() or None
 
                 start_dt = datetime.fromisoformat(start_str)
@@ -187,7 +188,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
 
                 from omacal.sync import create_event
                 result = create_event(self.db_conn, calendar_id, summary, start_dt, end_dt,
-                                      all_day, location, rrule=rrule)
+                                      all_day, location, description, rrule=rrule)
                 self._json(200, result)
             except ValueError as e:
                 self._json(400, {"error": str(e)})
@@ -251,6 +252,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 end_str = data.get("end")
                 all_day = data.get("all_day", False)
                 location = data.get("location", "")
+                description = data.get("description", "")
 
                 start_dt = datetime.fromisoformat(start_str)
                 if start_dt.tzinfo is None:
@@ -262,7 +264,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
                         end_dt = end_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
 
                 from omacal.sync import update_event
-                result = update_event(self.db_conn, calendar_id, uid, summary, start_dt, end_dt, all_day, location)
+                result = update_event(self.db_conn, calendar_id, uid, summary, start_dt, end_dt, all_day, location, description)
                 self._json(200, result)
             except Exception as e:
                 import traceback

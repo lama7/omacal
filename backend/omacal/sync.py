@@ -437,6 +437,7 @@ def create_event(
     end: datetime | None = None,
     all_day: bool = False,
     location: str | None = None,
+    description: str | None = None,
     rrule: str | None = None,
 ) -> dict[str, Any]:
     """Create an event on the CalDAV server and cache it locally.
@@ -488,7 +489,7 @@ def create_event(
     # Push to CalDAV server
     client = _dav_client(row["url"], row["username"], row["password"])
     cal_obj = client.calendar(url=row["url"])
-    cal_obj.add_event(summary=summary, uid=uid, location=location, **push_kwargs)
+    cal_obj.add_event(summary=summary, uid=uid, location=location, description=description, **push_kwargs)
 
     # Cache in local DB
     return add_event(
@@ -500,6 +501,7 @@ def create_event(
         end_iso,
         1 if all_day else 0,
         location,
+        description=description,
         rrule=rrule,
         tzid=_tzid_of(start, start),
     )
@@ -592,6 +594,7 @@ def update_event(
     end: datetime | None = None,
     all_day: bool = False,
     location: str | None = None,
+    description: str | None = None,
 ) -> dict[str, Any]:
     """Update an existing event on the CalDAV server and local cache."""
     from omacal.db import update_event as db_update_event
@@ -628,6 +631,7 @@ def update_event(
             dtend=end,
             summary=summary,
             location=location,
+            description=description,
         )
         from omacal.db import delete_event as db_delete_event, add_event as db_add_event
         # Delete old DB row (by old calendar_id), then insert fresh
@@ -648,10 +652,15 @@ def update_event(
             end.isoformat() if end else None,
             1 if all_day else 0,
             location,
+            description=description,
             tzid=_tzid_of(start, start),
         )
     comp = event.icalendar_component
     comp["summary"] = summary
+    if description:
+        comp["description"] = description
+    else:
+        comp.pop("description", None)
     from icalendar import vDatetime, vDate
     # Pop DTSTART/DTEND before re-adding. Assigning to an existing key keeps the
     # old property's params, so converting a timed event to all-day left a stale
@@ -702,6 +711,7 @@ def update_event(
         end.isoformat() if end else None,
         1 if all_day else 0,
         location,
+        description=description,
         rrule=prev_rrule,
         exdates=prev_exdates,
         tzid=_tzid_of(start, start),
