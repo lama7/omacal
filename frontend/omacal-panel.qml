@@ -1606,10 +1606,11 @@ Panel {
                 }
             }
         }
-        // Delete confirmation — Omarchy's ConfirmDialog (scrim + card + Cancel/Delete).
-        // selectedIndex 0 = Cancel, so Enter/Return cancels; you must click
-        // Delete (or arrow to it) to confirm. Keys are routed from PanelKeyCatcher.
-        ConfirmDialog {
+        // Delete confirmation — local clone of ConfirmDialog with a scope toggle
+        // inside the card (the stock component has no content slot). selectedIndex
+        // 0 = Cancel, so Enter/Return cancels; you must click Delete (or arrow to
+        // it) to confirm. Keys are routed from PanelKeyCatcher.
+        DeleteConfirmDialog {
             id: deleteConfirm
             anchors.fill: parent
             z: 10
@@ -1618,30 +1619,13 @@ Panel {
             confirmText: "Delete"
             cancelText: "Cancel"
             selectedIndex: 0
+            showScope: root.pendingDeleteEvent && root.pendingDeleteEvent.is_recurring
+            scopeChecked: root.deleteWholeSeries
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
             onCanceled: root.dismissDeleteConfirm()
             onConfirmed: root.deleteEvent()
-        }
-
-        // Delete scope for a recurring event: this occurrence (default) or the
-        // whole series. Sits above the ConfirmDialog's scrim, only when the
-        // event being deleted is recurring.
-        Toggle {
-            id: deleteScopeToggle
-            z: 11
-            width: Style.space(300)
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: parent.top
-            anchors.topMargin: Style.space(24)
-            visible: root.showDeleteConfirm && root.pendingDeleteEvent && root.pendingDeleteEvent.is_recurring
-            label: "Delete whole series"
-            description: "Remove every occurrence of this repeating event"
-            checked: root.deleteWholeSeries
-            foreground: root.contentForeground
-            accent: (root.bar && root.bar.accent) ? root.bar.accent : Color.accent
-            fontFamily: root.contentFontFamily
-            onClicked: root.deleteWholeSeries = !root.deleteWholeSeries
+            onScopeToggled: root.deleteWholeSeries = checked
         }
     }
 
