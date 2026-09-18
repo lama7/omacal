@@ -100,6 +100,7 @@ Panel {
     property string editingOccurrence: ""   // recurrence_id of the occurrence being edited (recurring only)
     property bool editingIsRecurring: false
     property bool editThisOccurrence: true  // scope toggle: true = this occurrence, false = whole series
+    property bool deleteWholeSeries: false  // delete scope: true = whole series, false = this occurrence
     property var pendingDeleteEvent: null
     property bool showDeleteConfirm: false
 
@@ -483,12 +484,14 @@ Panel {
 
     function openDeleteConfirm(ev) {
         pendingDeleteEvent = ev
+        deleteWholeSeries = false
         showDeleteConfirm = true
     }
 
     function dismissDeleteConfirm() {
         showDeleteConfirm = false
         pendingDeleteEvent = null
+        deleteWholeSeries = false
     }
 
     function deleteEvent() {
@@ -498,7 +501,10 @@ Panel {
         // A repeating event is deleted one occurrence at a time: pass the
         // occurrence date the user right-clicked so the backend excludes just
         // that day (EXDATE) instead of removing the series.
-        if (ev.is_recurring) url += "&occurrence=" + encodeURIComponent(ev.recurrence_id || ev.start)
+        if (ev.is_recurring) {
+            if (deleteWholeSeries) url += "&series=true"
+            else url += "&occurrence=" + encodeURIComponent(ev.recurrence_id || ev.start)
+        }
         var xhr = new XMLHttpRequest()
         xhr.open("DELETE", url, true)
         xhr.timeout = 30000
@@ -523,6 +529,7 @@ Panel {
         var ev = pendingDeleteEvent
         if (!ev) return "Delete this event?"
         if (!ev.is_recurring) return "Delete \"" + ev.summary + "\"?"
+        if (deleteWholeSeries) return "Delete the whole series \"" + ev.summary + "\"?"
         return "Delete \"" + ev.summary + "\" on " + Qt.formatDateTime(new Date(ev.start), "MMM d") + "?"
     }
 
@@ -1615,6 +1622,26 @@ Panel {
             fontFamily: root.contentFontFamily
             onCanceled: root.dismissDeleteConfirm()
             onConfirmed: root.deleteEvent()
+        }
+
+        // Delete scope for a recurring event: this occurrence (default) or the
+        // whole series. Sits above the ConfirmDialog's scrim, only when the
+        // event being deleted is recurring.
+        Toggle {
+            id: deleteScopeToggle
+            z: 11
+            width: Style.space(300)
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            anchors.topMargin: Style.space(24)
+            visible: root.showDeleteConfirm && root.pendingDeleteEvent && root.pendingDeleteEvent.is_recurring
+            label: "Delete whole series"
+            description: "Remove every occurrence of this repeating event"
+            checked: root.deleteWholeSeries
+            foreground: root.contentForeground
+            accent: (root.bar && root.bar.accent) ? root.bar.accent : Color.accent
+            fontFamily: root.contentFontFamily
+            onClicked: root.deleteWholeSeries = !root.deleteWholeSeries
         }
     }
 
