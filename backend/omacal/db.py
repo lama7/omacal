@@ -357,6 +357,8 @@ def add_event(
     all_day: int = 0,
     location: str | None = None,
     description: str | None = None,
+    status: str = "CONFIRMED",
+    transparency: str | None = None,
     rrule: str | None = None,
     exdates: str | None = None,
     href: str | None = None,
@@ -370,7 +372,7 @@ def add_event(
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id, calendar_id, uid, summary, description, location,
                   start, end, all_day, recurrence_id, status, transparency, rrule, exdates, href, tzid""",
-        (calendar_id, uid, summary, description, location, start, end, all_day, None, "CONFIRMED", None, rrule, exdates, href, tzid),
+        (calendar_id, uid, summary, description, location, start, end, all_day, None, status, transparency, rrule, exdates, href, tzid),
     )
     row = cur.fetchone()
     cur.close()

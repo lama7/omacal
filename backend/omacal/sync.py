@@ -771,10 +771,12 @@ def update_event(
     # only rewrites summary/dtstart/dtend/location), so the cached row must keep
     # them too or the panel would stop expanding the series until the next sync.
     prev = conn.execute(
-        "SELECT rrule, exdates FROM events WHERE uid = ? ORDER BY start DESC LIMIT 1", (uid,)
+        "SELECT rrule, exdates, status, transparency FROM events WHERE uid = ? ORDER BY start DESC LIMIT 1", (uid,)
     ).fetchone()
     prev_rrule = prev["rrule"] if prev else None
     prev_exdates = prev["exdates"] if prev else None
+    prev_status = prev["status"] if prev else "CONFIRMED"
+    prev_transparency = prev["transparency"] if prev else None
     conn.execute("DELETE FROM events WHERE uid = ?", (uid,))
     conn.commit()
     return db_add_event(
@@ -787,6 +789,8 @@ def update_event(
         1 if all_day else 0,
         location,
         description=description,
+        status=prev_status,
+        transparency=prev_transparency,
         rrule=prev_rrule,
         exdates=prev_exdates,
         tzid=_tzid_of(start, start),
