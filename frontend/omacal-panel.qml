@@ -842,6 +842,16 @@ Panel {
         PanelKeyCatcher {
             id: keyCatcher
             anchors.fill: parent
+            // A focused form field must receive its keys (digits, letters)
+            // instead of the catcher swallowing them. Per the component's
+            // contract: blocked: <editor>.activeFocus.
+            blocked: root.showAddForm && (newEventTitleField.activeFocus
+                || newEventLocationField.activeFocus
+                || newEventDescriptionField.activeFocus
+                || endsCountField.activeFocus
+                || startDateField.activeFocus
+                || endDateField.activeFocus
+                || untilDateField.activeFocus)
             onMoveRequested: function(dx, dy) {
                 if (root.showDeleteConfirm) {
                     if (dx !== 0) deleteConfirm.handleKey({ key: dx < 0 ? Qt.Key_Left : Qt.Key_Right })
