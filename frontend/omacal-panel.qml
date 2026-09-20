@@ -65,12 +65,8 @@ Panel {
     property int newEventEndHour: 10
     property int newEventEndMinute: 0
     property int newEventCalendarId: 0
-    property string newEventStartDate: ""
-    property string newEventEndDate: ""
     property string newEventLocation: ""
     property string newEventDescription: ""
-    property bool startDateValid: true
-    property bool endDateValid: true
     property bool newEventAllDay: false
     property string newEventRepeat: ""
     // RRULE presets. "Every 2 weeks" anchors on the weekday of the event's own
@@ -87,8 +83,7 @@ Panel {
     // which is what a repeat with no COUNT/UNTIL means.
     property string newEventEnds: "never"
     property int newEventCount: 5
-    property string newEventUntilDate: ""
-    property bool untilDateValid: true
+
     readonly property var endsOptions: [
         { value: "never", label: "Never" },
         { value: "count", label: "After N occurrences" },
@@ -268,11 +263,9 @@ Panel {
         repeatDropdown.value = ""
         newEventEnds = "never"
         newEventCount = 5
-        newEventUntilDate = ""
         endsDropdown.value = "never"
         endsCountField.text = ""
-        untilDateField.text = ""
-        untilDateValid = true
+        untilDateField.clear()
         // Default calendar: prefer "Dad's Calendar", then first writable
         var writable = calendars.filter(function(c) { return c.writable })
         var dadCal = writable.find(function(c) { return c.display_name === "Dad's Calendar" })
@@ -285,10 +278,8 @@ Panel {
         endHourDropdown.value = String(newEventEndHour)
         endMinuteDropdown.value = String(newEventEndMinute)
         var dd = new Date(dayDate)
-        newEventStartDate = formatDateInput(dd)
-        newEventEndDate = formatDateInput(dd)
-        startDateField.text = newEventStartDate
-        endDateField.text = newEventEndDate
+        startDateField.setDate(dd)
+        endDateField.setDate(dd)
     }
 
     function dismissAddForm() {
@@ -304,10 +295,8 @@ Panel {
         newEventLocationField.text = ""
         newEventDescription = ""
         newEventDescriptionField.text = ""
-        newEventStartDate = ""
-        newEventEndDate = ""
-        startDateField.text = ""
-        endDateField.text = ""
+        startDateField.clear()
+        endDateField.clear()
         newEventStartHour = 9
         newEventStartMinute = 0
         newEventEndHour = 10
@@ -317,11 +306,9 @@ Panel {
         repeatDropdown.value = ""
         newEventEnds = "never"
         newEventCount = 5
-        newEventUntilDate = ""
         endsDropdown.value = "never"
         endsCountField.text = ""
-        untilDateField.text = ""
-        untilDateValid = true
+        untilDateField.clear()
         // Release the focused field so it stops holding keys (ESC etc.) after
         // the form is dismissed.
         keyCatcher.forceActiveFocus()
@@ -335,7 +322,7 @@ Panel {
         if (newEventEnds === "count") {
             rule += ";COUNT=" + Math.min(999, Math.max(1, Math.floor(newEventCount || 1)))
         } else if (newEventEnds === "until") {
-            var d = parseDateInput(newEventUntilDate)
+            var d = untilDateField.value
             if (!d) return null
             rule += ";UNTIL=" + untilStamp(d)
         }
@@ -363,8 +350,8 @@ Panel {
 
     function submitAddEvent() {
         if (!dayDate || !newEventSummary.trim()) return
-        var startDate = parseDateInput(newEventStartDate)
-        var endDate = parseDateInput(newEventEndDate)
+        var startDate = startDateField.value
+        var endDate = endDateField.value
         if (!startDate || !endDate) {
             error = "Invalid date"
             return
@@ -467,10 +454,8 @@ Panel {
             start = new Date(ev.start)
             end = ev.end ? new Date(ev.end) : new Date(start.getTime() + 3600000)
         }
-        newEventStartDate = formatDateInput(start)
-        newEventEndDate = formatDateInput(end)
-        startDateField.text = newEventStartDate
-        endDateField.text = newEventEndDate
+        startDateField.setDate(start)
+        endDateField.setDate(end)
         newEventStartHour = start.getHours()
         newEventStartMinute = start.getMinutes()
         newEventEndHour = end.getHours()
@@ -486,7 +471,7 @@ Panel {
         var unt = /UNTIL=(\d{8})/.exec(newEventRepeat)
         newEventEnds = cnt ? "count" : (unt ? "until" : "never")
         if (cnt) newEventCount = parseInt(cnt[1], 10)
-        if (unt) newEventUntilDate = unt[1].slice(4, 6) + "/" + unt[1].slice(6, 8) + "/" + unt[1].slice(0, 4)
+        if (unt) untilDateField.setDate(new Date(+unt[1].slice(0, 4), +unt[1].slice(4, 6) - 1, +unt[1].slice(6, 8)))
         startHourDropdown.value = String(newEventStartHour)
         startMinuteDropdown.value = String(newEventStartMinute)
         endHourDropdown.value = String(newEventEndHour)
@@ -720,22 +705,6 @@ Panel {
     }
 
     function pad2(v) { var n = Number(v); return (n < 10 ? "0" : "") + n }
-
-    function parseDateInput(text) {
-        var match = String(text || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
-        if (!match) return null
-        var m = parseInt(match[1], 10) - 1
-        var d = parseInt(match[2], 10)
-        var y = parseInt(match[3], 10)
-        var date = new Date(y, m, d)
-        if (date.getFullYear() !== y || date.getMonth() !== m || date.getDate() !== d) return null
-        return date
-    }
-
-    function formatDateInput(d) {
-        if (!d) return ""
-        return pad2(d.getMonth() + 1) + "/" + pad2(d.getDate()) + "/" + d.getFullYear()
-    }
 
     function eventsForDay(year, month, day) {
         var key = year + "-" + pad2(month + 1) + "-" + pad2(day)
@@ -1091,8 +1060,7 @@ Panel {
                                                 anchors.topMargin: 3
                                                 text: modelData.dayLabel
                                                 textFormat: Text.PlainText
-                                                horizontalAlignment: Text.AlignHCenter
-                                                font.family: root.contentFontFamily
+                                                            font.family: root.contentFontFamily
                                                 font.pixelSize: Style.font.body
                                                 font.bold: modelData.isToday
                                                 // Leading/trailing days get a legible dim:
@@ -1149,6 +1117,7 @@ Panel {
                             color: Qt.darker(root.contentForeground, 2.0)
                             opacity: 0.4
                         }
+
 
                         Column {
                             id: addEventForm
@@ -1323,7 +1292,17 @@ Panel {
                                     foreground: root.contentForeground
                                     fontFamily: root.contentFontFamily
                                     onChanged: root.newEventEnds = value
-                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
+                                    // When "On date" is chosen, auto-focus the date field so the
+                                    // user can type straight in. Defer until the popup closes and
+                                    // the field is laid out visible.
+                                    onPopupOpenChanged: {
+                                        if (!popupOpen) {
+                                            if (root.newEventEnds === "until")
+                                                Qt.callLater(function() { untilDateField.forceActiveFocus() })
+                                            else
+                                                keyCatcher.forceActiveFocus()
+                                        }
+                                    }
                                     anchors.right: parent.right
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
@@ -1367,30 +1346,13 @@ Panel {
                                     anchors.leftMargin: Style.space(34)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
-                                TextField {
+                                DateEntry {
                                     id: untilDateField
                                     visible: root.newEventEnds === "until"
                                     width: Style.space(120)
                                     height: Style.spacing.controlHeight
-                                    horizontalAlignment: Text.AlignHCenter
-                                    placeholderText: "MM/dd/yyyy"
-                                    inputMask: "00/00/0000"
-                                    foreground: root.untilDateValid ? root.contentForeground : Color.urgent
-                                    onTextChanged: {
-                                        root.newEventUntilDate = text
-                                        root.untilDateValid = root.parseDateInput(text) !== null
-                                    }
+                                    foreground: root.contentForeground
                                     onEditingFinished: keyCatcher.forceActiveFocus()
-
-                                    Keys.priority: Keys.BeforeItem
-                                    Keys.onPressed: function(event) {
-                                        var d = root.keypadDigitFor(event)
-                                        if (d) {
-                                            insert(cursorPosition, d)
-                                            cursorPosition += 1
-                                            event.accepted = true
-                                        }
-                                    }
                                     anchors.left: endsValueLabel.right
                                     anchors.leftMargin: Style.space(34)
                                     anchors.verticalCenter: parent.verticalCenter
@@ -1423,32 +1385,15 @@ Panel {
                                     anchors.left: parent.left
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
-                                TextField {
+                                DateEntry {
                                     id: startDateField
                                     width: root.newEventAllDay
                                         ? parent.width - Style.space(56) - Style.space(44)
                                         : Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
                                     height: Style.spacing.controlHeight
-                                    horizontalAlignment: Text.AlignHCenter
-                                    placeholderText: "MM/dd/yyyy"
-                                    inputMask: "00/00/0000"
-                                    foreground: startDateValid ? root.contentForeground : Color.urgent
-                                    onTextChanged: {
-                                        root.newEventStartDate = text
-                                        root.startDateValid = root.parseDateInput(text) !== null
-                                    }
+                                    foreground: root.contentForeground
                                     onEditingFinished: {
                                         keyCatcher.forceActiveFocus()
-                                    }
-
-                                    Keys.priority: Keys.BeforeItem
-                                    Keys.onPressed: function(event) {
-                                        var d = root.keypadDigitFor(event)
-                                        if (d) {
-                                            insert(cursorPosition, d)
-                                            cursorPosition += 1
-                                            event.accepted = true
-                                        }
                                     }
                                     anchors.left: startLabel.right
                                     anchors.leftMargin: Style.space(34)
@@ -1495,7 +1440,6 @@ Panel {
                                     color: root.contentForeground
                                     font.family: root.contentFontFamily
                                     font.pixelSize: Style.font.body
-                                    horizontalAlignment: Text.AlignHCenter
                                     verticalAlignment: Text.AlignVCenter
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
@@ -1515,32 +1459,15 @@ Panel {
                                     anchors.left: parent.left
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
-                                TextField {
+                                DateEntry {
                                     id: endDateField
                                     width: root.newEventAllDay
                                         ? parent.width - Style.space(56) - Style.space(44)
                                         : Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
                                     height: Style.spacing.controlHeight
-                                    horizontalAlignment: Text.AlignHCenter
-                                    placeholderText: "MM/dd/yyyy"
-                                    inputMask: "00/00/0000"
-                                    foreground: endDateValid ? root.contentForeground : Color.urgent
-                                    onTextChanged: {
-                                        root.newEventEndDate = text
-                                        root.endDateValid = root.parseDateInput(text) !== null
-                                    }
+                                    foreground: root.contentForeground
                                     onEditingFinished: {
                                         keyCatcher.forceActiveFocus()
-                                    }
-
-                                    Keys.priority: Keys.BeforeItem
-                                    Keys.onPressed: function(event) {
-                                        var d = root.keypadDigitFor(event)
-                                        if (d) {
-                                            insert(cursorPosition, d)
-                                            cursorPosition += 1
-                                            event.accepted = true
-                                        }
                                     }
                                     anchors.left: endLabel.right
                                     anchors.leftMargin: Style.space(34)
@@ -1587,7 +1514,6 @@ Panel {
                                     color: root.contentForeground
                                     font.family: root.contentFontFamily
                                     font.pixelSize: Style.font.body
-                                    horizontalAlignment: Text.AlignHCenter
                                     verticalAlignment: Text.AlignVCenter
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
