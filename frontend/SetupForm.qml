@@ -31,7 +31,7 @@ Column {
 
     Text {
         width: root.width
-        text: "Enter your CalDAV server details. Credentials are stored securely in the system keyring."
+        text: "Enter your server address (e.g. https://cloud.example.com) or a full CalDAV URL. We can figure out the rest. Credentials are stored securely in the system keyring."
         textFormat: Text.PlainText
         font.family: root.panel ? root.panel.contentFontFamily : Style.font.family
         font.pixelSize: Style.font.bodySmall
@@ -42,7 +42,7 @@ Column {
     // ---- Fields ----
     Repeater {
         model: [
-            { ph: "Server URL", key: "url", echo: TextInput.Normal, tip: "e.g. https://calendar.example.com/dav/" },
+            { ph: "Server URL", key: "url", echo: TextInput.Normal, tip: "e.g. https://cloud.example.com" },
             { ph: "Calendar name", key: "name", echo: TextInput.Normal, tip: "" },
             { ph: "Username", key: "user", echo: TextInput.Normal, tip: "" },
             { ph: "Password", key: "pass", echo: TextInput.Password, tip: "" },
