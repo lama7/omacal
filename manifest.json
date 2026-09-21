@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "omacal",
+  "name": "omacal Calendar",
+  "version": "0.2.0",
+  "author": "Gerry",
+  "license": "MIT",
+  "homepage": "",
+  "description": "CalDAV-backed calendar popup for the Omarchy bar clock. Shows events from your CalDAV calendars in a month grid and day view, with add/edit/delete, recurring events, and a first-run setup flow.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "frontend/BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "omacal Calendar",
+    "description": "Date/time label with a CalDAV calendar popup (month grid + day view, add/edit/delete, recurring events).",
+    "category": "Time",
+    "aliases": [
+      "calendar",
+      "caldav",
+      "cal",
+      "events",
+      "agenda"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "center"
+  }
+}
