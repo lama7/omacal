@@ -29,6 +29,10 @@ omarchy plugin add <repo-url> --enable
 #    plugin folder.
 cd ~/.config/omarchy/plugins/omacal
 ./install.sh
+#
+#    install.sh also asks whether to replace the stock omarchy.clock widget
+#    with omacal in the bar (Y/n). Answer yes to swap them; answer no to keep
+#    both and edit ~/.config/omarchy/shell.json yourself.
 
 # 3. Start the daemon (once; it is enabled to run on login)
 systemctl --user start omacal
@@ -52,6 +56,7 @@ omarchy plugin remove omacal    # removes the plugin itself
 | Piece | Installed by | Where |
 |-------|-------------|-------|
 | QML frontend (bar widget + panel) | `omarchy plugin add` | `~/.config/omarchy/plugins/omacal/` |
+| Bar swap (omacal replaces `omarchy.clock`) | `install.sh` (opt-in Y/n) | `~/.config/omarchy/shell.json` |
 | Python backend + sync daemon | `install.sh` | venv `~/.local/omacal/venv/`, API on `127.0.0.1:9876` |
 | systemd user service | `install.sh` | `~/.config/systemd/user/omacal.service` |
 | CalDAV config | first-run setup | `~/.config/omacal/config.json` (URL/username only; password in keyring) |
