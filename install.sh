@@ -1,53 +1,95 @@
 #!/usr/bin/env bash
-# omacal — install helper. Run from the project root or anywhere.
+# omacal — backend installer for the omacal Omarchy plugin.
+#
+# Run this from the plugin folder (the cloned repo), i.e.:
+#   omarchy plugin add <repo-url> --enable
+#   cd ~/.config/omarchy/plugins/omacal && ./install.sh
+#
+# It installs the Python backend for the plugin and leaves the QML frontend in
+# place (that is this repo — the shell loads it from here). Run it again to
+# reinstall/repair; pass --uninstall to remove the backend service.
 set -euo pipefail
 
-# install.sh lives at the project root, so this dir IS the project root.
-# ${BASH_SOURCE[0]} (not $0) survives being invoked via a PATH symlink.
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV="$PROJECT_ROOT/backend/.venv"
+# This script lives at the repo root, which IS the plugin folder when cloned by
+# `omarchy plugin add`. ${BASH_SOURCE[0]} (not $0) survives a PATH symlink.
+PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_DIR="$PLUGIN_DIR/backend"
+
+# Backend install locations — outside the plugin folder, because the plugin
+# folder is owned by `omarchy plugin update` and any venv inside it would be
+# wiped or left stale on the next update.
+VENV_DIR="$HOME/.local/omacal/venv"
 DEST="$HOME/.local/bin"
+SYSTEMD_USER="$HOME/.config/systemd/user"
+SERVICE="omacal.service"
 
-# Ensure venv exists and is installed
-if [ ! -f "$VENV/bin/omacal" ]; then
-    echo "==> Creating venv and installing deps..."
-    python3 -m venv "$VENV"
-    "$VENV/bin/pip" install -e "$PROJECT_ROOT/backend"
-fi
+UNINSTALL=0
 
-# Symlink CLI tools into ~/.local/bin
-mkdir -p "$DEST"
-for cmd in omacal omacal-api; do
-    ln -sf "$VENV/bin/$cmd" "$DEST/$cmd"
-    echo "  linked $DEST/$cmd"
+for arg in "$@"; do
+  case "$arg" in
+    --uninstall|-u) UNINSTALL=1 ;;
+    -h|--help)
+      echo "Usage: install.sh [--uninstall]"
+      echo "Installs (default) or removes the omacal Python backend."
+      exit 0
+      ;;
+    *) echo "install.sh: unknown option: $arg" >&2; exit 1 ;;
+  esac
 done
 
-# Install systemd user service
-SYSTEMD_USER="$HOME/.config/systemd/user"
+uninstall_backend() {
+  echo "==> Stopping and disabling omacal.service..."
+  systemctl --user stop omacal.service 2>/dev/null || true
+  systemctl --user disable omacal.service 2>/dev/null || true
+
+  echo "==> Removing symlinks..."
+  for cmd in omacal omacal-api; do
+    rm -f "$DEST/$cmd"
+  done
+
+  echo "==> Removing systemd unit $SYSTEMD_USER/$SERVICE..."
+  rm -f "$SYSTEMD_USER/$SERVICE"
+
+  echo "==> Removing venv $VENV_DIR..."
+  rm -rf "$VENV_DIR"
+
+  systemctl --user daemon-reload
+  echo "==> Backend uninstalled."
+  echo "     Remove the plugin itself with: omarchy plugin remove omacal"
+  exit 0
+}
+
+if (( UNINSTALL )); then
+  uninstall_backend
+fi
+
+echo "==> Ensuring backend source is present..."
+[[ -f "$BACKEND_DIR/pyproject.toml" ]] || {
+  echo "install.sh: backend/pyproject.toml not found — run this from the omacal plugin folder" >&2
+  exit 1
+}
+
+echo "==> Creating venv at $VENV_DIR..."
+python3 -m venv "$VENV_DIR"
+
+echo "==> Installing backend and dependencies..."
+"$VENV_DIR/bin/pip" install --quiet --upgrade pip
+"$VENV_DIR/bin/pip" install --quiet "$BACKEND_DIR"
+
+echo "==> Linking CLI tools into $DEST..."
+mkdir -p "$DEST"
+for cmd in omacal omacal-api; do
+  ln -sf "$VENV_DIR/bin/$cmd" "$DEST/$cmd"
+  echo "  linked $DEST/$cmd"
+done
+
+echo "==> Installing systemd user service..."
 mkdir -p "$SYSTEMD_USER"
-cp "$PROJECT_ROOT/systemd/omacal.service" "$SYSTEMD_USER/omacal.service"
-echo "  installed systemd user service"
-
-# Copy QML frontend files to the Omarchy plugin directory.
-# The panel (Panel.qml) imports SetupForm/AddEventForm/DeleteConfirmDialog,
-# which pull in DateEntry/FormLabel/KeypadTextField/DateEntryLogic.js — so ALL
-# of these must ship or a fresh install loads a plugin whose types can't resolve.
-PLUGIN_DIR="$HOME/.config/omarchy/plugins/gerry.clock"
-mkdir -p "$PLUGIN_DIR"
-cp "$PROJECT_ROOT/frontend/BarWidget.qml"       "$PLUGIN_DIR/BarWidget.qml"
-cp "$PROJECT_ROOT/frontend/omacal-panel.qml"    "$PLUGIN_DIR/Panel.qml"
-cp "$PROJECT_ROOT/frontend/SetupForm.qml"       "$PLUGIN_DIR/SetupForm.qml"
-cp "$PROJECT_ROOT/frontend/AddEventForm.qml"    "$PLUGIN_DIR/AddEventForm.qml"
-cp "$PROJECT_ROOT/frontend/DeleteConfirmDialog.qml" "$PLUGIN_DIR/DeleteConfirmDialog.qml"
-cp "$PROJECT_ROOT/frontend/DateEntry.qml"       "$PLUGIN_DIR/DateEntry.qml"
-cp "$PROJECT_ROOT/frontend/FormLabel.qml"       "$PLUGIN_DIR/FormLabel.qml"
-cp "$PROJECT_ROOT/frontend/KeypadTextField.qml" "$PLUGIN_DIR/KeypadTextField.qml"
-cp "$PROJECT_ROOT/frontend/Model.js"            "$PLUGIN_DIR/Model.js"
-cp "$PROJECT_ROOT/frontend/DateEntryLogic.js"   "$PLUGIN_DIR/DateEntryLogic.js"
-cp "$PROJECT_ROOT/frontend/manifest.json"       "$PLUGIN_DIR/manifest.json"
-echo "  installed QML frontend"
-
-# Reload systemd and enable
+cp "$PLUGIN_DIR/systemd/omacal.service" "$SYSTEMD_USER/$SERVICE"
 systemctl --user daemon-reload
-systemctl --user enable omacal.service 2>/dev/null || true
-echo "==> Done. Start with: systemctl --user start omacal"
+systemctl --user enable omacal.service
+
+echo "==> Done."
+echo "     QML frontend is already in place at $PLUGIN_DIR (the shell loads it)."
+echo "     Start the daemon with: systemctl --user start omacal"
+echo "     First run shows a 'Setup needed' popup — enter your CalDAV server once."

@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/home/gerry/Projects/omacal/backend/.venv/bin/omacal-api --config %h/.config/omacal/config.json --sync-first
+ExecStart=%h/.local/omacal/venv/bin/omacal-api --config %h/.config/omacal/config.json --sync-first
 Restart=on-failure
 RestartSec=30
 Environment=PYTHONUNBUFFERED=1
