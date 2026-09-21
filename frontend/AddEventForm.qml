@@ -35,6 +35,7 @@ Column {
     spacing: Style.space(8)
 
     KeypadTextField {
+        panel: panel
         id: newEventTitleField
         width: dayContent.width
         placeholderText: "Event title"
@@ -42,6 +43,7 @@ Column {
     }
 
     KeypadTextField {
+        panel: panel
         id: newEventLocationField
         width: dayContent.width
         placeholderText: "Location"
@@ -49,6 +51,7 @@ Column {
     }
 
     KeypadTextField {
+        panel: panel
         id: newEventDescriptionField
         width: dayContent.width
         placeholderText: "Notes"
@@ -179,6 +182,7 @@ Column {
             text: panel ? (panel.newEventEnds === "count" ? "Times" : "On") : ""
         }
         KeypadTextField {
+            panel: panel
             id: endsCountField
             visible: panel ? panel.newEventEnds === "count" : false
             width: Style.space(90)
