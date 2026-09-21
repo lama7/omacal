@@ -906,6 +906,7 @@ Panel {
                 else if (t === "]" || t === "}") root.shiftMonth(1)
                 else if (t === "t" || t === "T") root.goToToday()
                 else if (t === "w" || t === "W") root.toggleWeekStart()
+                else if (t === "+" || t === "=") { if (root.viewMode === "day" && root.dayDate) root.openAddForm() }
                 else if (t === "\b" || t === "\x7F") root.backToMonth()
             }
         }
