@@ -45,9 +45,10 @@ def _resolve_caldav_url(
     URLs and legacy servers that publish no discovery hints); if that finds no
     calendars, falls back to RFC 6764 automatic discovery (well-known URI,
     then DNS SRV/TXT). Returns ``(url, discovered)`` where ``url`` is the
-    address that actually worked (so the config/keyring key and the sync path
-    agree). Raises ValueError if neither the literal URL nor discovery finds a
-    working calendar.
+    *principal URL* resolved for the authenticated user — the address the
+    backend keys the keyring by and stores as ``principal_url``, so the config
+    key, keyring key and DB lookup all agree. Raises ValueError if neither the
+    literal URL nor discovery finds a working calendar.
     """
     import urllib.parse as up
 
@@ -62,7 +63,7 @@ def _resolve_caldav_url(
     try:
         discovered = _discover_calendars(url, username, password)
         if discovered:
-            return url, discovered
+            return _principal_url(url, discovered), discovered
     except Exception:
         pass
 
@@ -91,7 +92,22 @@ def _resolve_caldav_url(
         raise ValueError(
             f"Found a CalDAV server ({root}) but no calendars were returned."
         )
-    return root, discovered
+    return _principal_url(root, discovered), discovered
+
+
+def _principal_url(fallback: str, discovered: list[dict]) -> str:
+    """The principal URL from a discovery result, falling back to ``fallback``.
+
+    The backend stores each calendar's ``principal_url`` in the DB and keys the
+    keyring password by it — so the URL setup stores must be that principal
+    URL, not the service root discovery started from, or write-path lookup
+    misses the keyring entry.
+    """
+    for cal in discovered:
+        pu = cal.get("principal_url")
+        if pu:
+            return pu
+    return fallback
 
 
 class OmacalHandler(BaseHTTPRequestHandler):
