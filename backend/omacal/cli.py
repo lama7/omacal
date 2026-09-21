@@ -35,11 +35,14 @@ def cmd_syncconfig(args):
         "url": url,
         "display_name": display,
         "username": username,
-        "password": password,
         "enabled": True,
     }
     cfg.setdefault("calendars", []).append(cal)
     save_config(args.config, cfg)
+    # The password lives in the keyring, never config.json.
+    from omacal.keyring_store import store_password
+    if username and password:
+        store_password(url, username, password)
     print(f"Added {display}. Run 'omacal sync' to pull events.")
 
 

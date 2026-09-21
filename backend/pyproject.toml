@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "caldav>=3.3",
     "icalendar>=6.0",
+    "keyring>=25.0",
 ]
 
 [project.scripts]

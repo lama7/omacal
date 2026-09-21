@@ -42,5 +42,16 @@ def load_config(path: Path | None = None) -> dict:
 def save_config(path: Path | None = None, cfg: dict | None = None) -> None:
     path = path or DEFAULT_CONFIG_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Never persist the password in config.json — it lives in the keyring.
+    # Strip it from any calendar dicts before writing.
+    cfg = cfg if cfg is not None else load_config(path)
+    for cal in cfg.get("calendars", []):
+        cal.pop("password", None)
     with open(path, "w") as f:
-        json.dump(cfg if cfg is not None else load_config(path), f, indent=2)
+        json.dump(cfg, f, indent=2)
+
+
+def needs_setup(cfg: dict | None = None) -> bool:
+    """True when no enabled calendar is configured (fresh install)."""
+    cfg = cfg if cfg is not None else load_config()
+    return not any(c.get("enabled", True) for c in cfg.get("calendars", []))

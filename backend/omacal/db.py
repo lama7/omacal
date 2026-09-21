@@ -154,6 +154,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
         cur.execute("UPDATE calendars SET sync_token = NULL")
         cur.execute("INSERT INTO schema_version VALUES (6)")
 
+    if version < 7:
+        # Passwords no longer live in the DB — they moved to the system
+        # keyring. Wipe any plaintext password already cached so the secret
+        # exists in exactly one place. The column stays (dropping it would
+        # require a table rebuild) but is never written again.
+        cur.execute("UPDATE calendars SET password = NULL")
+        cur.execute("INSERT INTO schema_version VALUES (7)")
+
     conn.commit()
 
 
@@ -167,19 +175,21 @@ def add_calendar(
     color: str | None = None,
     principal_url: str | None = None,
 ) -> int:
+    # The password is never stored in the DB — it lives in the keyring. The
+    # column is kept for schema stability but always written as NULL.
     cur = conn.execute(
         """INSERT INTO calendars
            (uid, display_name, url, username, password, color, principal_url, last_sync, enabled)
-           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 1)
+           VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, 1)
         ON CONFLICT(uid) DO UPDATE SET
            display_name = excluded.display_name,
            url = excluded.url,
            username = excluded.username,
-           password = excluded.password,
+           password = NULL,
            color = excluded.color,
            principal_url = excluded.principal_url
         RETURNING id""",
-        (uid, display_name, url, username, password, color, principal_url),
+        (uid, display_name, url, username, color, principal_url),
     )
     row = cur.fetchone()
     conn.commit()

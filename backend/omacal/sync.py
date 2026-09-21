@@ -30,6 +30,26 @@ def _dav_client(url: str, username: str | None, password: str | None) -> caldav.
     """Build a DAVClient with a bounded timeout."""
     return caldav.DAVClient(url=url, username=username, password=password, timeout=_DAV_TIMEOUT)
 
+
+def _calendar_creds(conn, calendar_id: int) -> tuple[str, str | None, str | None]:
+    """Return (url, username, password) for a cached calendar.
+
+    The password is resolved from the system keyring, never from the DB.
+    """
+    from omacal.keyring_store import get_password
+
+    cur = conn.execute(
+        "SELECT url, username FROM calendars WHERE id = ?",
+        (calendar_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise ValueError(f"Calendar id={calendar_id} not found in local cache")
+    url = row["url"]
+    username = row["username"]
+    password = get_password(url, username) if username else None
+    return url, username, password
+
 _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$")
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -454,14 +474,8 @@ def create_event(
 
     from omacal.db import add_event
 
-    # Look up calendar URL and credentials from the local cache
-    cur = conn.execute(
-        "SELECT url, username, password FROM calendars WHERE id = ?",
-        (calendar_id,),
-    )
-    row = cur.fetchone()
-    if not row:
-        raise ValueError(f"Calendar id={calendar_id} not found in local cache")
+    # Look up calendar URL and credentials (password from the keyring)
+    url, username, password = _calendar_creds(conn, calendar_id)
 
     uid = str(uuid4())
 
@@ -487,8 +501,8 @@ def create_event(
         push_kwargs["rrule"] = rrule
 
     # Push to CalDAV server
-    client = _dav_client(row["url"], row["username"], row["password"])
-    cal_obj = client.calendar(url=row["url"])
+    client = _dav_client(url, username, password)
+    cal_obj = client.calendar(url=url)
     cal_obj.add_event(summary=summary, uid=uid, location=location, description=description, **push_kwargs)
 
     # Cache in local DB
@@ -526,15 +540,9 @@ def delete_event(
     from omacal.db import delete_event as db_delete_event, set_event_exdates
     from omacal.recur import parse_dt
 
-    cur = conn.execute(
-        "SELECT url, username, password FROM calendars WHERE id = ?",
-        (calendar_id,),
-    )
-    row = cur.fetchone()
-    if not row:
-        raise ValueError(f"Calendar id={calendar_id} not found in local cache")
+    url, username, password = _calendar_creds(conn, calendar_id)
 
-    client = _dav_client(row["url"], row["username"], row["password"])
+    client = _dav_client(url, username, password)
     cal_obj = client.calendar(url=row["url"])
     event = cal_obj.get_event_by_uid(uid)
 
@@ -606,15 +614,9 @@ def update_event(
     """
     from omacal.db import update_event as db_update_event
 
-    cur = conn.execute(
-        "SELECT url, username, password FROM calendars WHERE id = ?",
-        (calendar_id,),
-    )
-    row = cur.fetchone()
-    if not row:
-        raise ValueError(f"Calendar id={calendar_id} not found in local cache")
+    url, username, password = _calendar_creds(conn, calendar_id)
 
-    client = _dav_client(row["url"], row["username"], row["password"])
+    client = _dav_client(url, username, password)
     cal_obj = client.calendar(url=row["url"])
     try:
         event = cal_obj.get_event_by_uid(uid)
@@ -848,12 +850,17 @@ def _sync_all_locked(config_path: Path | None = None) -> dict[str, Any]:
         if not cal.get("enabled", True):
             continue
         name = cal.get("display_name", cal.get("url", "unknown"))
+        # Password comes from the keyring, never from config.json.
+        from omacal.keyring_store import get_password
+
+        username = cal.get("username")
+        password = get_password(cal["url"], username) if username else None
         try:
             n, urls, failed = sync_source(
                 conn,
                 cal["url"],
-                cal.get("username"),
-                cal.get("password"),
+                username,
+                password,
                 cal.get("calendar_uid"),
                 cal.get("display_name"),
                 cal.get("color"),

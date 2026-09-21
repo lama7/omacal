@@ -49,13 +49,21 @@ class OmacalHandler(BaseHTTPRequestHandler):
         qs = parse_qs(parsed.query)
 
         if path == "/api/health":
-            self._json(200, {"status": "ok", "version": "0.1.0"})
+            from omacal.config import needs_setup
+            self._json(200, {
+                "status": "ok",
+                "version": "0.1.0",
+                "needs_setup": needs_setup(),
+            })
             return
 
         if path == "/api/calendars":
+            from omacal.keyring_store import has_password
             calendars = db_get_calendars(self.db_conn)
             for c in calendars:
-                c["writable"] = bool(c.get("username") and c.get("password"))
+                # Writability = we hold a password for this calendar in the
+                # keyring. The DB never stores the password anymore.
+                c["writable"] = bool(c.get("username")) and has_password(c.get("url", ""), c.get("username"))
                 c.pop("password", None)
                 c.pop("username", None)
                 c.pop("sync_token", None)
@@ -137,6 +145,9 @@ class OmacalHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/api/setup":
+            self._handle_setup()
+            return
         if parsed.path == "/api/sync":
             # ?if-stale=N: skip the sync entirely when the cache is fresher than
             # N seconds (the on-demand path the panel uses on open). The lock
@@ -282,6 +293,77 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 self._json(500, {"error": str(e)})
             return
         self._json(404, {"error": "not found"})
+
+    def _handle_setup(self) -> None:
+        """Configure a single calendar from the setup form.
+
+        Stores the password in the keyring, writes config.json (no password),
+        then contacts the server to discover the calendar and does an initial
+        sync so the cache is live. On success returns {ok: true}; on failure
+        returns {ok: false, error: ...} so the frontend can stay on the form.
+        """
+        from omacal.config import save_config
+        from omacal.keyring_store import store_password
+        from omacal.sync import sync_all, _discover_calendars  # noqa: PLC2701
+
+        try:
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            data = json.loads(body)
+        except Exception as e:
+            self._json(400, {"ok": False, "error": f"Invalid request body: {e}"})
+            return
+
+        url = (data.get("url") or "").strip()
+        display_name = (data.get("display_name") or "").strip() or None
+        username = (data.get("username") or "").strip() or None
+        password = data.get("password")  # never echoed back, never persisted to disk
+
+        if not url:
+            self._json(400, {"ok": False, "error": "Server URL is required"})
+            return
+        if not username:
+            self._json(400, {"ok": False, "error": "Username is required"})
+            return
+        if not password:
+            self._json(400, {"ok": False, "error": "Password is required"})
+            return
+
+        # 1. Contact the server (validates URL + credentials before we commit).
+        try:
+            discovered = _discover_calendars(url, username, password)
+        except Exception as e:
+            self._json(200, {"ok": False, "error": f"Could not reach server at that URL: {e}"})
+            return
+        if not discovered:
+            self._json(200, {"ok": False, "error": "Server reachable but no calendars found at that URL"})
+            return
+
+        # 2. Store the password in the keyring.
+        if not store_password(url, username, password):
+            self._json(200, {"ok": False, "error": "Could not store credentials in the system keyring"})
+            return
+
+        # 3. Write config (username only — never the password).
+        cfg = load_config()
+        cfg["calendars"] = [{
+            "url": url,
+            "display_name": display_name or (discovered[0].get("display_name") or "Calendar"),
+            "username": username,
+            "enabled": True,
+        }]
+        save_config(cfg=cfg)
+        # Pick up the new config in the running server.
+        OmacalHandler.cfg_calendars = cfg["calendars"]
+
+        # 4. Initial sync so the cache/DB + API respond with live data.
+        try:
+            result = sync_all()
+        except Exception as e:
+            logger.error("Initial sync after setup failed: %s", e)
+            self._json(200, {"ok": True, "warning": f"Configured, but the initial sync failed: {e}"})
+            return
+
+        self._json(200, {"ok": True, "total_events": result.get("total_events", 0)})
 
     def _events_in_window(self, start: datetime, end: datetime, calendar_ids: list[int] | None) -> list[dict]:
         """Cached events plus expanded occurrences for [start, end).
