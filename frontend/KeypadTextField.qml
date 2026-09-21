@@ -24,4 +24,9 @@ TextField {
             event.accepted = true
         }
     }
+    // ENTER / Return submits the event. The panel's keyCatcher only sees keys
+    // when no field holds focus, so a field that has focus (after typing) must
+    // handle it itself — otherwise Enter is dead once you start typing.
+    Keys.onReturnPressed: { if (root.formPanel) root.formPanel.submitAddEvent() }
+    Keys.onEnterPressed: { if (root.formPanel) root.formPanel.submitAddEvent() }
 }

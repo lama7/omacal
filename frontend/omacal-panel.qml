@@ -274,6 +274,7 @@ Panel {
         var dd = new Date(dayDate)
         addEventForm.startDateField.setDate(dd)
         addEventForm.endDateField.setDate(dd)
+        root.focusEventTitle()
     }
 
     function dismissAddForm() {
@@ -306,6 +307,17 @@ Panel {
         // Release the focused field so it stops holding keys (ESC etc.) after
         // the form is dismissed.
         keyCatcher.forceActiveFocus()
+    }
+
+    // Put focus in the event title field once the form is visible. Deferred a
+    // tick because openAddForm()/editEvent() set showAddForm in the same call
+    // that invokes this — the form's visibility binding hasn't applied yet, so
+    // forceActiveFocus() on a still-hidden field is a silent no-op.
+    function focusEventTitle() {
+        Qt.callLater(function() {
+            addEventForm.newEventTitleField.forceActiveFocus()
+            addEventForm.newEventTitleField.selectAll()
+        })
     }
 
     // RRULE for the current form state: preset + end condition.
@@ -469,6 +481,7 @@ Panel {
         addEventForm.startMinuteDropdown.value = String(newEventStartMinute)
         addEventForm.endHourDropdown.value = String(newEventEndHour)
         addEventForm.endMinuteDropdown.value = String(newEventEndMinute)
+        root.focusEventTitle()
     }
 
     function openDeleteConfirm(ev) {
