@@ -18,6 +18,9 @@ Column {
     property var keyCatcher: null
     property bool busy: false
     property string error: ""
+    // setup = contacting server; syncing = first data pull
+    property string stage: ""
+    property var serverField: null // first TextField, focused on open
 
     Text {
         width: root.width
@@ -52,12 +55,22 @@ Column {
             width: root.width
             height: Style.spacing.controlHeight
             TextField {
+                id: fieldInput
                 width: parent.width
                 height: parent.height
                 placeholderText: modelData.ph
                 echoMode: modelData.echo
                 foreground: root.panel ? root.panel.contentForeground : Color.foreground
                 onTextChanged: root.setField(modelData.key, text)
+                // ENTER / Return anywhere on the form submits; the panel's
+                // keyCatcher only sees keys when no field holds focus, so the
+                // fields must handle it themselves.
+                Keys.onReturnPressed: root.submit()
+                Keys.onEnterPressed: root.submit()
+                Keys.onEscapePressed: { if (root.panel) root.panel.close() }
+                Component.onCompleted: {
+                    if (modelData.key === "url") root.serverField = fieldInput
+                }
             }
         }
     }
@@ -74,6 +87,20 @@ Column {
         color: "#e06060"
     }
 
+    // Progress feedback during the two-stage setup: once /api/setup confirms
+    // the server, we say so while /api/sync pulls the first data.
+    Text {
+        width: root.width
+        visible: root.stage === "syncing"
+        text: "Found CalDAV server\u2014syncing calendar data\u2026"
+        textFormat: Text.PlainText
+        wrapMode: Text.Wrap
+        font.family: root.panel ? root.panel.contentFontFamily : Style.font.family
+        font.pixelSize: Style.font.bodySmall
+        font.italic: true
+        color: root.panel ? root.panel.accent : Color.accent
+    }
+
     Row {
         width: root.width
         height: Style.spacing.controlHeight + 4
@@ -85,7 +112,7 @@ Column {
             onClicked: root.panel ? root.panel.close() : 0
         }
         Button {
-            text: root.busy ? "Setting up..." : "Set up"
+            text: root.busy ? (root.stage === "syncing" ? "Syncing..." : "Setting up...") : "Set up"
             width: (root.width - Style.space(8)) / 2
             enabled: !root.busy
             onClicked: root.submit()
@@ -98,27 +125,29 @@ Column {
         _fields[key] = value
     }
 
-    function submit() {
-        var u = String(_fields.url || "").trim()
-        var n = (String(_fields.name || "").trim()) || "Calendar"
-        var user = (String(_fields.user || "")).trim()
-        var pass = String(_fields.pass || "")
-        if (!u) { root.error = "Server URL is required."; return }
-        if (!user) { root.error = "Username is required."; return }
-        if (!pass) { root.error = "Password is required."; return }
-        root.error = ""
-        root.busy = true
+    function focusServerField() {
+        if (!root.serverField) return
+        // Defer a tick: open()/forceSetup() set viewMode="setup" in the same
+        // call that invokes this, and the field's parent Item is not visible /
+        // activeFocus-capable until that property binding has applied. Called
+        // synchronously, forceActiveFocus() on an item under a still-hidden
+        // parent is a silent no-op — hence the mouse needed to focus it.
+        Qt.callLater(function() {
+            root.serverField.forceActiveFocus()
+            root.serverField.selectAll()
+        })
+    }
 
+    // First data pull after setup commits: POST /api/sync, then hand off to
+    // the calendar view. Keeps the "syncing..." status visible while it runs.
+    function pullFirstData() {
         var xhr = new XMLHttpRequest()
-        xhr.open("POST", "http://127.0.0.1:9876/api/setup", true)
+        xhr.open("POST", "http://127.0.0.1:9876/api/sync", true)
         xhr.timeout = 45000
-        xhr.setRequestHeader("Content-Type", "application/json")
         xhr.onreadystatechange = function() {
             if (xhr.readyState !== XMLHttpRequest.DONE) return
             root.busy = false
-            var data = null
-            try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
-            if (xhr.status === 200 && data && data.ok) {
+            if (xhr.status === 200) {
                 // Success: switch to the calendar view, refresh, and hand
                 // keyboard focus back to the panel's key catcher — the field
                 // just focused (the password box) is gone once the form hides,
@@ -131,6 +160,52 @@ Column {
                     if (root.keyCatcher && root.keyCatcher.forceActiveFocus)
                         root.keyCatcher.forceActiveFocus()
                 }
+            } else {
+                root.error = "Configured, but the first sync failed (" + xhr.status + "). The panel will retry."
+                // Don't strand the user in a dead form: still go live; the
+                // periodic sync + open-refresh will catch up.
+                if (root.panel) {
+                    root.panel.needsSetup = false
+                    root.panel.viewMode = "month"
+                    root.panel.refresh()
+                    if (root.keyCatcher && root.keyCatcher.forceActiveFocus)
+                        root.keyCatcher.forceActiveFocus()
+                }
+            }
+        }
+        xhr.onerror = function() { root.busy = false; root.error = "First sync could not reach the backend." }
+        xhr.ontimeout = function() { root.busy = false; root.error = "First sync timed out." }
+        xhr.send()
+    }
+
+    function submit() {
+        if (root.busy) return
+        var u = String(_fields.url || "").trim()
+        var n = (String(_fields.name || "").trim()) || "Calendar"
+        var user = (String(_fields.user || "")).trim()
+        var pass = String(_fields.pass || "")
+        if (!u) { root.error = "Server URL is required."; return }
+        if (!user) { root.error = "Username is required."; return }
+        if (!pass) { root.error = "Password is required."; return }
+        root.error = ""
+        root.stage = "setup"
+        root.busy = true
+
+        var xhr = new XMLHttpRequest()
+        xhr.open("POST", "http://127.0.0.1:9876/api/setup", true)
+        xhr.timeout = 45000
+        xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            root.busy = false
+            var data = null
+            try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
+            if (xhr.status === 200 && data && data.ok) {
+                // Server resolved + config committed. Now pull the first data
+                // so the user sees honest two-stage feedback instead of one
+                // long silent wait ("Found server" here, "syncing" next).
+                root.stage = "syncing"
+                root.pullFirstData()
             } else {
                 root.error = (data && data.error) || "Setup failed: server returned status " + xhr.status
             }

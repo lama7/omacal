@@ -738,6 +738,7 @@ Panel {
     }
 
 
+
     function persistSettings(values) {
         var entry = { id: root.moduleName }
         for (var k in root.settings) if (k !== "id") entry[k] = root.settings[k]
@@ -774,11 +775,13 @@ Panel {
         root.opened = true
         root.controller.show()
         if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function") root.bar.setCenterHoverRevealSuppressed(true)
-        // First-run: show the setup form instead of the calendar.
+        // First-run: show the setup form instead of the calendar, and put
+        // focus straight into the server field so a new user can start typing.
         if (needsSetup) {
             viewMode = "setup"
             dayDate = null
             pendingDayDate = null
+            if (setupForm && setupForm.focusServerField) setupForm.focusServerField()
             return
         }
         viewMode = "month"
