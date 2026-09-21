@@ -8,6 +8,8 @@ __pycache__/
 
 # Config (user-specific, contains credentials)
 *.json
+!manifest.json
+!*/manifest.json
 
 # SQLite DB
 *.db
