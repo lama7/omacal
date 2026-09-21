@@ -15,6 +15,7 @@ Panel {
     property var hostWidget: null
     readonly property var barIdentity: hostWidget || root
     property bool opened: false // NOT readonly — must flip before controller toggles
+    property bool needsSetup: true  // fresh install until POST /api/setup succeeds
 
     readonly property color contentForeground: root.bar ? root.bar.foreground : Color.foreground
     readonly property string contentFontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -708,11 +709,32 @@ Panel {
         initView()
         initRange()
         rangeDaysArr = []
-        viewMode = "month"
         dayDate = null
         dayEvents = []
         pendingDayDate = null
         loadCalendars()
+        if (!needsSetup) viewMode = "month"
+    }
+
+    // Check whether the backend needs first-run setup. When it does, the
+    // panel shows the setup form instead of the calendar.
+    function fetchNeedsSetup(callback) {
+        var xhr = new XMLHttpRequest()
+        xhr.open("GET", apiBase + "/api/health", true)
+        xhr.timeout = 3000
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (xhr.status === 200) {
+                var data = null
+                try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
+                needsSetup = data ? !!(data.needs_setup) : true
+            } else {
+                needsSetup = true
+            }
+            if (callback) callback()
+        }
+        xhr.onerror = function() { needsSetup = true; if (callback) callback() }
+        xhr.send()
     }
 
     function persistSettings(values) {
@@ -751,6 +773,13 @@ Panel {
         root.opened = true
         root.controller.show()
         if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function") root.bar.setCenterHoverRevealSuppressed(true)
+        // First-run: show the setup form instead of the calendar.
+        if (needsSetup) {
+            viewMode = "setup"
+            dayDate = null
+            pendingDayDate = null
+            return
+        }
         viewMode = "month"
         dayDate = null
         pendingDayDate = null
@@ -804,6 +833,11 @@ Panel {
         else root.open()
     }
 
+    Component.onCompleted: {
+        // Resolve whether first-run setup is needed (fresh install).
+        fetchNeedsSetup()
+    }
+
     SystemClock {
         id: clock
         precision: SystemClock.Minutes
@@ -831,6 +865,7 @@ Panel {
             id: keyCatcher
             anchors.fill: parent
             onMoveRequested: function(dx, dy) {
+                if (root.viewMode === "setup") return
                 if (root.showDeleteConfirm) {
                     if (dx !== 0) deleteConfirm.handleKey({ key: dx < 0 ? Qt.Key_Left : Qt.Key_Right })
                     return
@@ -846,6 +881,7 @@ Panel {
             // ConfirmDialog.selectedIndex defaults to 0 (Cancel), so Enter/Return
             // cancels; you must click Delete (or arrow to it) to confirm.
             onActivateRequested: function() {
+                if (root.viewMode === "setup") { setupForm.submit(); return }
                 if (root.showDeleteConfirm) { deleteConfirm.handleKey({ key: Qt.Key_Return }); return }
                 if (root.showAddForm) root.submitAddEvent()
                 else root.close()
@@ -856,6 +892,7 @@ Panel {
                 root.switchPanel(direction)
             }
             onTextKey: function(t) {
+                if (root.viewMode === "setup") return
                 if (root.showDeleteConfirm) return
                 if (root.showAddForm) {
                     if (t === "\b" || t === "\x7F") root.dismissAddForm()
@@ -885,6 +922,7 @@ Panel {
                 spacing: Style.space(4)
 
                 Item {
+                    visible: root.viewMode !== "setup"
                     width: contentColumn.width
                     height: Style.space(30)
 
@@ -970,7 +1008,7 @@ Panel {
                 }
 
                 Row {
-                    visible: root.viewMode !== "day"
+                    visible: root.viewMode !== "day" && root.viewMode !== "setup"
                     width: contentColumn.width
                     spacing: Style.space(2)
                     height: Style.space(18)
@@ -988,6 +1026,17 @@ Panel {
                             font.bold: true
                             font.letterSpacing: 0.5
                         }
+                    }
+                }
+
+                Item {
+                    visible: root.viewMode === "setup"
+                    width: contentColumn.width
+                    height: setupForm.implicitHeight
+                    SetupForm {
+                        id: setupForm
+                        panel: root
+                        hostColumn: contentColumn
                     }
                 }
 
@@ -1222,6 +1271,7 @@ Panel {
                         width: contentColumn.width
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: (function() {
+                            if (root.viewMode === "setup") return ""
                             if (root.loadingCalendars || root.loadingEvents) return "Loading\u2026"
                             if (root.error) return root.error
                             if (root.calendars.length === 0) return "No calendars configured"

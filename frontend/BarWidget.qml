@@ -138,7 +138,11 @@ BarWidget {
   property var calendarNames: []
   property var todayEvents: []
   property string configuredCalendarName: ""
+  // Mirrors the loaded panel's first-run status so the tooltip can advertise
+  // setup instead of pretending nothing is configured.
+  property bool panelNeedsSetup: panelLoader.item ? panelLoader.item.needsSetup : true
   readonly property string tooltipText: {
+    if (panelNeedsSetup) return "Calendar needs setup — click to open the setup form"
     var name = configuredCalendarName || (calendarNames.length > 0 ? calendarNames[0] : "")
     if (name === "") return "omacal"
     if (todayEvents.length === 0) return name + " — No events today"
