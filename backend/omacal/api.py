@@ -127,9 +127,10 @@ class OmacalHandler(BaseHTTPRequestHandler):
 
         if path == "/api/health":
             from omacal.config import needs_setup
+            from omacal import __version__
             self._json(200, {
                 "status": "ok",
-                "version": "0.1.0",
+                "version": __version__,
                 "needs_setup": needs_setup(),
             })
             return
