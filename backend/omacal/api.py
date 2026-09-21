@@ -33,6 +33,67 @@ from omacal.recur import expand_events
 logger = logging.getLogger("omacal.api")
 
 
+def _resolve_caldav_url(
+    url: str,
+    username: str | None,
+    password: str | None,
+) -> tuple[str, list[dict]]:
+    """Resolve what a user typed into a working CalDAV URL.
+
+    Accepts either a bare server / domain (``cloud.lamafam.org``) or a full
+    DAV URL. Tries the literal address first (covers direct calendar/principal
+    URLs and legacy servers that publish no discovery hints); if that finds no
+    calendars, falls back to RFC 6764 automatic discovery (well-known URI,
+    then DNS SRV/TXT). Returns ``(url, discovered)`` where ``url`` is the
+    address that actually worked (so the config/keyring key and the sync path
+    agree). Raises ValueError if neither the literal URL nor discovery finds a
+    working calendar.
+    """
+    import urllib.parse as up
+
+    from caldav.discovery import discover_caldav
+
+    from omacal.sync import _discover_calendars  # noqa: PLC2701
+
+    if not up.urlparse(url).scheme:
+        url = "https://" + url
+
+    # 1. Try the address as typed.
+    try:
+        discovered = _discover_calendars(url, username, password)
+        if discovered:
+            return url, discovered
+    except Exception:
+        pass
+
+    # 2. Fall back to RFC 6764 discovery (well-known, then SRV/TXT).
+    try:
+        info = discover_caldav(url, timeout=10, require_tls=True)
+    except Exception as e:
+        raise ValueError(
+            f"Could not discover a CalDAV server for {url!r}: {e}"
+        ) from e
+    if not info or not info.url:
+        raise ValueError(
+            f"Could not reach a calendar server at {url!r}. Tried the address "
+            "directly and automatic CalDAV discovery; neither found a working "
+            "calendar. Check the URL and try again."
+        )
+    root = info.url
+    try:
+        discovered = _discover_calendars(root, username, password)
+    except Exception as e:
+        raise ValueError(
+            f"Found a CalDAV server ({root}) but could not load your "
+            f"calendars with that username/password: {e}"
+        ) from e
+    if not discovered:
+        raise ValueError(
+            f"Found a CalDAV server ({root}) but no calendars were returned."
+        )
+    return root, discovered
+
+
 class OmacalHandler(BaseHTTPRequestHandler):
     """Single-connection HTTP handler backed by a shared SQLite connection."""
 
@@ -307,7 +368,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
         """
         from omacal.config import save_config
         from omacal.keyring_store import store_password
-        from omacal.sync import sync_all, _discover_calendars  # noqa: PLC2701
+        from omacal.sync import sync_all
 
         try:
             body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -331,17 +392,16 @@ class OmacalHandler(BaseHTTPRequestHandler):
             self._json(400, {"ok": False, "error": "Password is required"})
             return
 
-        # 1. Contact the server (validates URL + credentials before we commit).
+        # 1. Resolve the URL (literal, else RFC 6764 discovery) and contact
+        #    the server — this validates the URL + credentials before we
+        #    commit anything to disk or the keyring.
         try:
-            discovered = _discover_calendars(url, username, password)
-        except Exception as e:
-            self._json(200, {"ok": False, "error": f"Could not reach server at that URL: {e}"})
-            return
-        if not discovered:
-            self._json(200, {"ok": False, "error": "Server reachable but no calendars found at that URL"})
+            url, discovered = _resolve_caldav_url(url, username, password)
+        except ValueError as e:
+            self._json(200, {"ok": False, "error": str(e)})
             return
 
-        # 2. Store the password in the keyring.
+        # 2. Store the password in the keyring, keyed by the URL that worked.
         if not store_password(url, username, password):
             self._json(200, {"ok": False, "error": "Could not store credentials in the system keyring"})
             return
