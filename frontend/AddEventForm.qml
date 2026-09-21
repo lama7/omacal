@@ -29,9 +29,13 @@ Column {
     property alias endHourDropdown: endHourDropdown
     property alias endMinuteDropdown: endMinuteDropdown
 
+        visible: panel.showAddForm
+        width: dayContent.width
+        height: visible ? implicitHeight : 0
+        spacing: Style.space(8)
 
-                            TextField {
-                                id: newEventTitleField
+        TextField {
+                    id: newEventTitleField
                                 width: dayContent.width
                                 placeholderText: "Event title"
                                 foreground: panel.contentForeground
