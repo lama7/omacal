@@ -233,6 +233,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
             # N seconds (the on-demand path the panel uses on open). The lock
             # means a concurrent run (the periodic timer) is reported rather
             # than double-fetching every calendar. No body is read.
+            from omacal.sync import sync_all
             qs = parse_qs(parsed.query)
             if_stale = qs.get("if-stale", [None])[0]
             if if_stale is not None:
@@ -246,7 +247,6 @@ class OmacalHandler(BaseHTTPRequestHandler):
                     self._json(200, {"status": "fresh", "synced": False})
                     return
             try:
-                from omacal.sync import sync_all
                 result = sync_all(raise_if_busy=True)
                 self._json(200, result)
             except RuntimeError as e:
@@ -378,13 +378,14 @@ class OmacalHandler(BaseHTTPRequestHandler):
         """Configure a single calendar from the setup form.
 
         Stores the password in the keyring, writes config.json (no password),
-        then contacts the server to discover the calendar and does an initial
-        sync so the cache is live. On success returns {ok: true}; on failure
-        returns {ok: false, error: ...} so the frontend can stay on the form.
+        then contacts the server to discover the calendar. Returns {ok: true}
+        once the config is committed and the server resolved; the frontend
+        follows up with POST /api/sync for the first data pull so it can show
+        "found server — syncing" feedback. On failure returns
+        {ok: false, error: ...} so the frontend can stay on the form.
         """
         from omacal.config import save_config
         from omacal.keyring_store import store_password
-        from omacal.sync import sync_all
 
         try:
             body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -434,15 +435,11 @@ class OmacalHandler(BaseHTTPRequestHandler):
         # Pick up the new config in the running server.
         OmacalHandler.cfg_calendars = cfg["calendars"]
 
-        # 4. Initial sync so the cache/DB + API respond with live data.
-        try:
-            result = sync_all()
-        except Exception as e:
-            logger.error("Initial sync after setup failed: %s", e)
-            self._json(200, {"ok": True, "warning": f"Configured, but the initial sync failed: {e}"})
-            return
-
-        self._json(200, {"ok": True, "total_events": result.get("total_events", 0)})
+        # 4. Return OK immediately. The initial sync is deliberately NOT run
+        #    here: the frontend shows "Found server — syncing…" and then calls
+        #    POST /api/sync itself, so the user gets honest two-stage feedback
+        #    (discovery done / data syncing) instead of one long silent wait.
+        self._json(200, {"ok": True})
 
     def _events_in_window(self, start: datetime, end: datetime, calendar_ids: list[int] | None) -> list[dict]:
         """Cached events plus expanded occurrences for [start, end).
