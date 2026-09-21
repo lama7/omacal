@@ -92,7 +92,6 @@ Panel {
 
     // Edit/delete state
     property string editingUid: ""
-    property int editingCalendarId: 0
     property string editingOccurrence: ""   // recurrence_id of the occurrence being edited (recurring only)
     property bool editingIsRecurring: false
     property bool editThisOccurrence: true  // scope toggle: true = this occurrence, false = whole series
@@ -115,11 +114,6 @@ Panel {
     function initRange() {
         rangeStartJs = new Date(viewYear, viewMonth, 1)
         rangeStartLabelStr = Qt.formatDate(rangeStartJs, "MMMM yyyy")
-    }
-
-    function getRangeStart() {
-        if (!rangeStartJs) initRange()
-        return rangeStartJs
     }
 
     // First cell of the month grid. It is often a day from the previous month,
@@ -177,8 +171,6 @@ Panel {
         }
         weekRows = rows
     }
-
-    property double lastShiftMonthTime: 0
     function shiftMonth(delta) {
         var next = Model.stepMonth(viewYear, viewMonth, delta)
         viewYear = next.year
@@ -427,7 +419,6 @@ Panel {
 
     function editEvent(ev) {
         editingUid = ev.uid
-        editingCalendarId = ev.calendar_id
         editingOccurrence = ev.recurrence_id || ev.start || ""
         editingIsRecurring = !!ev.is_recurring
         editThisOccurrence = true
@@ -1677,16 +1668,5 @@ Panel {
             onConfirmed: root.deleteEvent()
             onScopeToggled: root.deleteWholeSeries = checked
         }
-    }
-
-    IpcHandler {
-        target: "gerry.clock"
-        function refresh(): void { root.refresh() }
-        function open(): void { root.open() }
-        function close(): void { root.close() }
-        function show(): void { root.open() }
-        function hide(): void { root.close() }
-        function toggle(): void { root.toggle() }
-        function toggleWeekStart(): void { root.toggleWeekStart() }
     }
 }

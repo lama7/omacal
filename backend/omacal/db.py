@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from datetime import datetime, date, time, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -340,13 +340,6 @@ def get_overrides(conn: sqlite3.Connection, calendar_ids: list[int] | None = Non
         cur = conn.execute("SELECT * FROM event_overrides")
     return [dict(r) for r in cur.fetchall()]
 
-
-def clear_calendar_events(conn: sqlite3.Connection, calendar_id: int) -> None:
-    conn.execute("DELETE FROM events WHERE calendar_id=?", (calendar_id,))
-    conn.execute("DELETE FROM event_overrides WHERE calendar_id=?", (calendar_id,))
-    conn.commit()
-
-
 def add_event(
     conn: sqlite3.Connection,
     calendar_id: int,
@@ -437,19 +430,6 @@ def get_events(
         [end.isoformat(), start.isoformat()] + params,
     )
     return [dict(r) for r in cur.fetchall()]
-
-
-def get_today_events(conn: sqlite3.Connection, calendar_ids: list[int] | None = None) -> list[dict[str, Any]]:
-    """Return events for today (midnight to midnight LOCAL).
-
-    The boundaries are resolved through the system zone per instant, so a DST
-    day is 23 or 25 hours rather than a wrong-length UTC day. (This used to use
-    UTC midnight while the docstring claimed local.)
-    """
-    today = date.today()
-    start = datetime.combine(today, time.min).astimezone(timezone.utc)
-    end = datetime.combine(today + timedelta(days=1), time.min).astimezone(timezone.utc)
-    return get_events(conn, start, end, calendar_ids)
 
 
 def delete_event(conn: sqlite3.Connection, calendar_id: int, uid: str) -> None:
