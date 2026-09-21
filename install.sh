@@ -31,11 +31,93 @@ for arg in "$@"; do
     -h|--help)
       echo "Usage: install.sh [--uninstall]"
       echo "Installs (default) or removes the omacal Python backend."
+      echo "On install it also offers to replace the stock omarchy.clock in the bar."
       exit 0
       ;;
     *) echo "install.sh: unknown option: $arg" >&2; exit 1 ;;
   esac
 done
+
+replace_stock_clock() {
+  local shell_json="$HOME/.config/omarchy/shell.json"
+  if [[ ! -f "$shell_json" ]]; then
+    echo "==> No $shell_json found — skipping bar replacement."
+    return 0
+  fi
+
+  # Only act if the stock clock is actually present in the bar.
+  if ! grep -q '"omarchy.clock"' "$shell_json"; then
+    echo "==> omarchy.clock not present in $shell_json — nothing to replace."
+    return 0
+  fi
+
+  echo
+  read -r -p "Replace stock omarchy.clock with omacal in the bar? [Y/n] " -n 1 reply
+  echo
+  case "${reply:-Y}" in
+    Y|y) ;;
+    *) echo "==> Leaving omarchy.clock in place. Keep omacal by editing shell.json yourself."; return 0 ;;
+  esac
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "installation requires python3 — skipping bar replacement" >&2
+    return 0
+  fi
+
+  python3 - "$shell_json" <<'PY'
+import json, sys, shutil
+path = sys.argv[1]
+with open(path) as f:
+    data = json.load(f)
+
+# Find omarchy.clock in the center layout.
+center = data.get("bar", {}).get("layout", {}).get("center", [])
+idx = next((i for i, w in enumerate(center)
+            if isinstance(w, dict) and w.get("id") == "omarchy.clock"), None)
+if idx is None:
+    raise SystemExit(0)  # not present; nothing to do
+
+# Reveal the omacal widget at the same position, only if not already there
+# (plugin add --enable may have already appended omacal elsewhere).
+omacal_pos = next((i for i, w in enumerate(center)
+                   if isinstance(w, dict) and w.get("id") == "omacal"), None)
+clock_widget = center[idx]
+
+if omacal_pos is None:
+    # Replace the stock clock entry with omacal in place.
+    if "format" in clock_widget or "weekStartDay" in clock_widget:
+        # Carry over the user's clock formatting onto the omacal widget.
+        center[idx] = {"id": "omacal", **{k: v for k, v in clock_widget.items()
+                                          if k not in ("id", "formatAlt", "verticalFormat")}}
+    else:
+        center[idx] = {"id": "omacal"}
+else:
+    # omacal already present (appended by plugin add). Drop the stock clock;
+    # keep omacal's existing entry. Preserve order by replacing the clock's
+    # slot with omacal if omacal sits at a later index (moves it to clock's slot).
+    if omacal_pos > idx:
+        clock_props = {k: v for k, v in clock_widget.items() if k != "id"}
+        omacal_widget = center[omacal_pos]
+        if clock_props and not any(k in omacal_widget for k in ("format", "weekStartDay")):
+            omacal_widget = {"id": "omacal", **clock_props}
+        center[idx] = omacal_widget
+        center.pop(omacal_pos)
+    else:
+        center.pop(idx)
+
+# Point the anchor at omacal if it pointed at the stock clock.
+if data.get("bar", {}).get("centerAnchor") == "omarchy.clock":
+    data["bar"]["centerAnchor"] = "omacal"
+
+# Back up then write.
+bak = path + ".postinstall.bak"
+shutil.copy2(path, bak)
+with open(path, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+print(f"==> Replaced omarchy.clock with omacal in {path} (backup: {bak})")
+PY
+}
 
 uninstall_backend() {
   echo "==> Stopping and disabling omacal.service..."
@@ -88,6 +170,8 @@ mkdir -p "$SYSTEMD_USER"
 cp "$PLUGIN_DIR/systemd/omacal.service" "$SYSTEMD_USER/$SERVICE"
 systemctl --user daemon-reload
 systemctl --user enable omacal.service
+
+replace_stock_clock
 
 echo "==> Done."
 echo "     QML frontend is already in place at $PLUGIN_DIR (the shell loads it)."
