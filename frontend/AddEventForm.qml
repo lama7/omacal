@@ -35,7 +35,7 @@ Column {
     spacing: Style.space(8)
 
     KeypadTextField {
-        panel: panel
+        formPanel: panel
         id: newEventTitleField
         width: dayContent.width
         placeholderText: "Event title"
@@ -43,7 +43,7 @@ Column {
     }
 
     KeypadTextField {
-        panel: panel
+        formPanel: panel
         id: newEventLocationField
         width: dayContent.width
         placeholderText: "Location"
@@ -51,7 +51,7 @@ Column {
     }
 
     KeypadTextField {
-        panel: panel
+        formPanel: panel
         id: newEventDescriptionField
         width: dayContent.width
         placeholderText: "Notes"
@@ -62,7 +62,7 @@ Column {
         width: dayContent.width
         height: Style.spacing.controlHeight
         FormLabel {
-            panel: panel
+            formPanel: panel
             text: "Calendar"
         }
         Dropdown {
@@ -118,7 +118,7 @@ Column {
         // rule, so editing it here would be a lie.
         visible: panel.editingUid === ""
         FormLabel {
-            panel: panel
+            formPanel: panel
             text: "Repeat"
         }
         Dropdown {
@@ -142,7 +142,7 @@ Column {
         height: Style.spacing.controlHeight
         visible: panel.editingUid === "" && panel.newEventRepeat !== ""
         FormLabel {
-            panel: panel
+            formPanel: panel
             text: "Ends"
         }
         Dropdown {
@@ -178,11 +178,11 @@ Column {
         && panel.newEventEnds !== "never"
         FormLabel {
             id: endsValueLabel
-            panel: panel
+            formPanel: panel
             text: panel ? (panel.newEventEnds === "count" ? "Times" : "On") : ""
         }
         KeypadTextField {
-            panel: panel
+            formPanel: panel
             id: endsCountField
             visible: panel ? panel.newEventEnds === "count" : false
             width: Style.space(90)
@@ -224,7 +224,7 @@ Column {
         height: Style.spacing.controlHeight
         FormLabel {
             id: startLabel
-            panel: panel
+            formPanel: panel
             text: "Start"
         }
         DateEntry {
@@ -292,7 +292,7 @@ Column {
         height: Style.spacing.controlHeight
         FormLabel {
             id: endLabel
-            panel: panel
+            formPanel: panel
             text: "End"
         }
         DateEntry {

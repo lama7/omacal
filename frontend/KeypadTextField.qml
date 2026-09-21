@@ -13,11 +13,11 @@ import qs.Ui
 // being null at bind time (it's set after creation).
 TextField {
     id: root
-    property var panel: null
-    foreground: panel ? panel.contentForeground : Color.foreground
+    property var formPanel: null
+    foreground: formPanel ? formPanel.contentForeground : Color.foreground
     Keys.priority: Keys.BeforeItem
     Keys.onPressed: function(event) {
-        var d = root.panel.keypadDigitFor(event)
+        var d = root.formPanel.keypadDigitFor(event)
         if (d) {
             insert(cursorPosition, d)
             cursorPosition += 1

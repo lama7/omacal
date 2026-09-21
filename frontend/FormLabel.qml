@@ -8,10 +8,10 @@ import qs.Ui
 // guard against panel being null at bind time (it's set after creation).
 Text {
     id: root
-    property var panel: null
+    property var formPanel: null
     width: Style.space(56)
-    color: panel ? Qt.darker(panel.contentForeground, 1.5) : Color.foreground
-    font.family: panel ? panel.contentFontFamily : Style.font.family
+    color: formPanel ? Qt.darker(formPanel.contentForeground, 1.5) : Color.foreground
+    font.family: formPanel ? formPanel.contentFontFamily : Style.font.family
     font.pixelSize: Style.font.bodySmall
     verticalAlignment: Text.AlignVCenter
     anchors.left: parent.left
