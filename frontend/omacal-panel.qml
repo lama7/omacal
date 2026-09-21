@@ -241,37 +241,37 @@ Panel {
         editingUid = ""
         error = ""
         newEventSummary = ""
-        newEventTitleField.text = ""
+        addEventForm.newEventTitleField.text = ""
         newEventLocation = ""
-        newEventLocationField.text = ""
+        addEventForm.newEventLocationField.text = ""
         newEventDescription = ""
-        newEventDescriptionField.text = ""
+        addEventForm.newEventDescriptionField.text = ""
         newEventStartHour = 9
         newEventStartMinute = 0
         newEventEndHour = 10
         newEventEndMinute = 0
         newEventAllDay = false
         newEventRepeat = ""
-        repeatDropdown.value = ""
+        addEventForm.repeatDropdown.value = ""
         newEventEnds = "never"
         newEventCount = 5
-        endsDropdown.value = "never"
-        endsCountField.text = ""
-        untilDateField.clear()
+        addEventForm.endsDropdown.value = "never"
+        addEventForm.endsCountField.text = ""
+        addEventForm.untilDateField.clear()
         // Default calendar: prefer "Dad's Calendar", then first writable
         var writable = calendars.filter(function(c) { return c.writable })
         var dadCal = writable.find(function(c) { return c.display_name === "Dad's Calendar" })
         newEventCalendarId = dadCal ? dadCal.id : (writable.length > 0 ? writable[0].id : 0)
         // Sync dropdown initial values — Dropdowns use direct assignment
         // (selectCurrent does root.value = v), so bindings can't be used.
-        calendarDropdown.value = String(newEventCalendarId)
-        startHourDropdown.value = String(newEventStartHour)
-        startMinuteDropdown.value = String(newEventStartMinute)
-        endHourDropdown.value = String(newEventEndHour)
-        endMinuteDropdown.value = String(newEventEndMinute)
+        addEventForm.calendarDropdown.value = String(newEventCalendarId)
+        addEventForm.startHourDropdown.value = String(newEventStartHour)
+        addEventForm.startMinuteDropdown.value = String(newEventStartMinute)
+        addEventForm.endHourDropdown.value = String(newEventEndHour)
+        addEventForm.endMinuteDropdown.value = String(newEventEndMinute)
         var dd = new Date(dayDate)
-        startDateField.setDate(dd)
-        endDateField.setDate(dd)
+        addEventForm.startDateField.setDate(dd)
+        addEventForm.endDateField.setDate(dd)
     }
 
     function dismissAddForm() {
@@ -282,25 +282,25 @@ Panel {
         editThisOccurrence = true
         error = ""
         newEventSummary = ""
-        newEventTitleField.text = ""
+        addEventForm.newEventTitleField.text = ""
         newEventLocation = ""
-        newEventLocationField.text = ""
+        addEventForm.newEventLocationField.text = ""
         newEventDescription = ""
-        newEventDescriptionField.text = ""
-        startDateField.clear()
-        endDateField.clear()
+        addEventForm.newEventDescriptionField.text = ""
+        addEventForm.startDateField.clear()
+        addEventForm.endDateField.clear()
         newEventStartHour = 9
         newEventStartMinute = 0
         newEventEndHour = 10
         newEventEndMinute = 0
         newEventAllDay = false
         newEventRepeat = ""
-        repeatDropdown.value = ""
+        addEventForm.repeatDropdown.value = ""
         newEventEnds = "never"
         newEventCount = 5
-        endsDropdown.value = "never"
-        endsCountField.text = ""
-        untilDateField.clear()
+        addEventForm.endsDropdown.value = "never"
+        addEventForm.endsCountField.text = ""
+        addEventForm.untilDateField.clear()
         // Release the focused field so it stops holding keys (ESC etc.) after
         // the form is dismissed.
         keyCatcher.forceActiveFocus()
@@ -314,7 +314,7 @@ Panel {
         if (newEventEnds === "count") {
             rule += ";COUNT=" + Math.min(999, Math.max(1, Math.floor(newEventCount || 1)))
         } else if (newEventEnds === "until") {
-            var d = untilDateField.value
+            var d = addEventForm.untilDateField.value
             if (!d) return null
             rule += ";UNTIL=" + untilStamp(d)
         }
@@ -342,8 +342,8 @@ Panel {
 
     function submitAddEvent() {
         if (!dayDate || !newEventSummary.trim()) return
-        var startDate = startDateField.value
-        var endDate = endDateField.value
+        var startDate = addEventForm.startDateField.value
+        var endDate = addEventForm.endDateField.value
         if (!startDate || !endDate) {
             error = "Invalid date"
             return
@@ -425,11 +425,11 @@ Panel {
         showAddForm = true
         error = ""
         newEventSummary = ev.summary || ""
-        newEventTitleField.text = ev.summary || ""
+        addEventForm.newEventTitleField.text = ev.summary || ""
         newEventLocation = ev.location || ""
-        newEventLocationField.text = ev.location || ""
+        addEventForm.newEventLocationField.text = ev.location || ""
         newEventDescription = ev.description || ""
-        newEventDescriptionField.text = ev.description || ""
+        addEventForm.newEventDescriptionField.text = ev.description || ""
         // All-day rows are cached at UTC midnight with an exclusive DTEND, so
         // read the DATE part of the ISO string (new Date() reads the previous
         // day west of UTC, and a save then PUTs the shifted dates) and turn the
@@ -445,28 +445,28 @@ Panel {
             start = new Date(ev.start)
             end = ev.end ? new Date(ev.end) : new Date(start.getTime() + 3600000)
         }
-        startDateField.setDate(start)
-        endDateField.setDate(end)
+        addEventForm.startDateField.setDate(start)
+        addEventForm.endDateField.setDate(end)
         newEventStartHour = start.getHours()
         newEventStartMinute = start.getMinutes()
         newEventEndHour = end.getHours()
         newEventEndMinute = end.getMinutes()
         newEventCalendarId = ev.calendar_id
-        calendarDropdown.value = String(ev.calendar_id)
+        addEventForm.calendarDropdown.value = String(ev.calendar_id)
         newEventAllDay = !!ev.all_day
         newEventRepeat = ev.rrule || ""
-        repeatDropdown.value = newEventRepeat
+        addEventForm.repeatDropdown.value = newEventRepeat
         // Feed the read-only summary on an existing event (the Repeat/Ends
         // controls stay hidden while editing).
         var cnt = /COUNT=(\d+)/.exec(newEventRepeat)
         var unt = /UNTIL=(\d{8})/.exec(newEventRepeat)
         newEventEnds = cnt ? "count" : (unt ? "until" : "never")
         if (cnt) newEventCount = parseInt(cnt[1], 10)
-        if (unt) untilDateField.setDate(new Date(+unt[1].slice(0, 4), +unt[1].slice(4, 6) - 1, +unt[1].slice(6, 8)))
-        startHourDropdown.value = String(newEventStartHour)
-        startMinuteDropdown.value = String(newEventStartMinute)
-        endHourDropdown.value = String(newEventEndHour)
-        endMinuteDropdown.value = String(newEventEndMinute)
+        if (unt) addEventForm.untilDateField.setDate(new Date(+unt[1].slice(0, 4), +unt[1].slice(4, 6) - 1, +unt[1].slice(6, 8)))
+        addEventForm.startHourDropdown.value = String(newEventStartHour)
+        addEventForm.startMinuteDropdown.value = String(newEventStartMinute)
+        addEventForm.endHourDropdown.value = String(newEventEndHour)
+        addEventForm.endMinuteDropdown.value = String(newEventEndMinute)
     }
 
     function openDeleteConfirm(ev) {
@@ -1110,423 +1110,11 @@ Panel {
                         }
 
 
-                        Column {
+                        AddEventForm {
                             id: addEventForm
-                            visible: root.showAddForm
-                            width: contentColumn.width
-                            height: visible ? implicitHeight : 0
-                            spacing: Style.space(8)
-
-                            TextField {
-                                id: newEventTitleField
-                                width: dayContent.width
-                                placeholderText: "Event title"
-                                foreground: root.contentForeground
-                                onTextChanged: root.newEventSummary = text
-                                    Keys.priority: Keys.BeforeItem
-                                    Keys.onPressed: function(event) {
-                                        var d = root.keypadDigitFor(event)
-                                        if (d) {
-                                            insert(cursorPosition, d)
-                                            cursorPosition += 1
-                                            event.accepted = true
-                                        }
-                                    }
-                            }
-
-                            TextField {
-                                id: newEventLocationField
-                                width: dayContent.width
-                                placeholderText: "Location"
-                                foreground: root.contentForeground
-                                onTextChanged: root.newEventLocation = text
-                                    Keys.priority: Keys.BeforeItem
-                                    Keys.onPressed: function(event) {
-                                        var d = root.keypadDigitFor(event)
-                                        if (d) {
-                                            insert(cursorPosition, d)
-                                            cursorPosition += 1
-                                            event.accepted = true
-                                        }
-                                    }
-                            }
-
-                            TextField {
-                                id: newEventDescriptionField
-                                width: dayContent.width
-                                placeholderText: "Notes"
-                                foreground: root.contentForeground
-                                onTextChanged: root.newEventDescription = text
-                                    Keys.priority: Keys.BeforeItem
-                                    Keys.onPressed: function(event) {
-                                        var d = root.keypadDigitFor(event)
-                                        if (d) {
-                                            insert(cursorPosition, d)
-                                            cursorPosition += 1
-                                            event.accepted = true
-                                        }
-                                    }
-                            }
-
-                            Item {
-                                width: dayContent.width
-                                height: Style.spacing.controlHeight
-                                Text {
-                                    text: "Calendar"
-                                    width: Style.space(56)
-                                    color: Qt.darker(root.contentForeground, 1.5)
-                                    font.family: root.contentFontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    verticalAlignment: Text.AlignVCenter
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Dropdown {
-                                    id: calendarDropdown
-                                    width: Style.space(240)
-                                    height: Style.spacing.controlHeight
-                                    showLabel: false
-                                    value: ""
-                                    options: root.calendars.filter(function(c) { return c.writable }).map(function(c) {
-                                        return { value: String(c.id), label: c.display_name }
-                                    })
-                                    foreground: root.contentForeground
-                                    fontFamily: root.contentFontFamily
-                                    onChanged: root.newEventCalendarId = parseInt(value, 10)
-                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
-                                    anchors.right: parent.right
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
-
-                            Toggle {
-                                id: allDayToggle
-                                width: dayContent.width
-                                label: "All day"
-                                description: "Date-only event, no start/end time"
-                                checked: root.newEventAllDay
-                                foreground: root.contentForeground
-                                accent: (root.bar && root.bar.accent) ? root.bar.accent : Color.accent
-                                fontFamily: root.contentFontFamily
-                                onClicked: root.newEventAllDay = !root.newEventAllDay
-                            }
-
-                            Toggle {
-                                id: editScopeToggle
-                                width: dayContent.width
-                                // Only when editing a recurring event: choose whether the
-                                // change applies to just this occurrence (detached override)
-                                // or the whole series. One-off events have no scope question.
-                                visible: root.editingUid !== "" && root.editingIsRecurring
-                                label: "This occurrence only"
-                                description: "Edit just this occurrence; the rest of the series is unchanged"
-                                checked: root.editThisOccurrence
-                                foreground: root.contentForeground
-                                accent: (root.bar && root.bar.accent) ? root.bar.accent : Color.accent
-                                fontFamily: root.contentFontFamily
-                                onClicked: root.editThisOccurrence = !root.editThisOccurrence
-                            }
-
-                            Item {
-                                width: dayContent.width
-                                height: Style.spacing.controlHeight
-                                // Only when creating: update_event() preserves the stored
-                                // rule, so editing it here would be a lie.
-                                visible: root.editingUid === ""
-                                Text {
-                                    text: "Repeat"
-                                    width: Style.space(56)
-                                    color: Qt.darker(root.contentForeground, 1.5)
-                                    font.family: root.contentFontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    verticalAlignment: Text.AlignVCenter
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Dropdown {
-                                    id: repeatDropdown
-                                    width: Style.space(240)
-                                    height: Style.spacing.controlHeight
-                                    showLabel: false
-                                    value: ""
-                                    options: root.repeatPresets
-                                    foreground: root.contentForeground
-                                    fontFamily: root.contentFontFamily
-                                    onChanged: root.newEventRepeat = value
-                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
-                                    anchors.right: parent.right
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
-
-                            Item {
-                                width: dayContent.width
-                                height: Style.spacing.controlHeight
-                                visible: root.editingUid === "" && root.newEventRepeat !== ""
-                                Text {
-                                    text: "Ends"
-                                    width: Style.space(56)
-                                    color: Qt.darker(root.contentForeground, 1.5)
-                                    font.family: root.contentFontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    verticalAlignment: Text.AlignVCenter
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Dropdown {
-                                    id: endsDropdown
-                                    width: Style.space(240)
-                                    height: Style.spacing.controlHeight
-                                    showLabel: false
-                                    value: ""
-                                    options: root.endsOptions
-                                    foreground: root.contentForeground
-                                    fontFamily: root.contentFontFamily
-                                    onChanged: root.newEventEnds = value
-                                    // When "On date" is chosen, auto-focus the date field so the
-                                    // user can type straight in. Defer until the popup closes and
-                                    // the field is laid out visible.
-                                    onPopupOpenChanged: {
-                                        if (!popupOpen) {
-                                            if (root.newEventEnds === "until")
-                                                Qt.callLater(function() { untilDateField.forceActiveFocus() })
-                                            else
-                                                keyCatcher.forceActiveFocus()
-                                        }
-                                    }
-                                    anchors.right: parent.right
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
-
-                            Item {
-                                width: dayContent.width
-                                height: Style.spacing.controlHeight
-                                visible: root.editingUid === "" && root.newEventRepeat !== ""
-                                         && root.newEventEnds !== "never"
-                                Text {
-                                    id: endsValueLabel
-                                    text: root.newEventEnds === "count" ? "Times" : "On"
-                                    width: Style.space(56)
-                                    color: Qt.darker(root.contentForeground, 1.5)
-                                    font.family: root.contentFontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    verticalAlignment: Text.AlignVCenter
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                TextField {
-                                    id: endsCountField
-                                    visible: root.newEventEnds === "count"
-                                    width: Style.space(90)
-                                    height: Style.spacing.controlHeight
-                                    horizontalAlignment: Text.AlignHCenter
-                                    placeholderText: "COUNT"
-                                    foreground: root.contentForeground
-                                    onTextChanged: root.newEventCount = parseInt(text, 10)
-                                        Keys.priority: Keys.BeforeItem
-                                        Keys.onPressed: function(event) {
-                                            var d = root.keypadDigitFor(event)
-                                            if (d) {
-                                                insert(cursorPosition, d)
-                                                cursorPosition += 1
-                                                event.accepted = true
-                                            }
-                                        }
-                                    anchors.left: endsValueLabel.right
-                                    anchors.leftMargin: Style.space(34)
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                DateEntry {
-                                    id: untilDateField
-                                    visible: root.newEventEnds === "until"
-                                    width: Style.space(120)
-                                    height: Style.spacing.controlHeight
-                                    foreground: root.contentForeground
-                                    onEditingFinished: keyCatcher.forceActiveFocus()
-                                    anchors.left: endsValueLabel.right
-                                    anchors.leftMargin: Style.space(34)
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
-
-                            Text {
-                                width: dayContent.width
-                                visible: root.editingUid !== "" && root.newEventRepeat !== ""
-                                text: "Repeats: " + root.repeatSummary() + " \u2014 not editable here"
-                                textFormat: Text.PlainText
-                                wrapMode: Text.Wrap
-                                color: Qt.darker(root.contentForeground, 1.5)
-                                font.family: root.contentFontFamily
-                                font.pixelSize: Style.font.bodySmall
-                                font.italic: true
-                            }
-
-                            Item {
-                                width: dayContent.width
-                                height: Style.spacing.controlHeight
-                                Text {
-                                    id: startLabel
-                                    text: "Start"
-                                    width: Style.space(56)
-                                    color: Qt.darker(root.contentForeground, 1.5)
-                                    font.family: root.contentFontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    verticalAlignment: Text.AlignVCenter
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                DateEntry {
-                                    id: startDateField
-                                    width: root.newEventAllDay
-                                        ? parent.width - Style.space(56) - Style.space(44)
-                                        : Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
-                                    height: Style.spacing.controlHeight
-                                    foreground: root.contentForeground
-                                    onEditingFinished: {
-                                        keyCatcher.forceActiveFocus()
-                                    }
-                                    anchors.left: startLabel.right
-                                    anchors.leftMargin: Style.space(34)
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Dropdown {
-                                    id: startMinuteDropdown
-                                    visible: !root.newEventAllDay
-                                    width: Style.space(50)
-                                    height: Style.spacing.controlHeight
-                                    showLabel: false
-                                    value: ""
-                                    options: root.minuteOptions
-                                    foreground: root.contentForeground
-                                    fontFamily: root.contentFontFamily
-                                    onChanged: root.newEventStartMinute = parseInt(value, 10)
-                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
-                                    anchors.right: parent.right
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Dropdown {
-                                    id: startHourDropdown
-                                    visible: !root.newEventAllDay
-                                    width: Style.space(50)
-                                    height: Style.spacing.controlHeight
-                                    showLabel: false
-                                    value: ""
-                                    options: root.hourOptions
-                                    foreground: root.contentForeground
-                                    fontFamily: root.contentFontFamily
-                                    onChanged: root.newEventStartHour = parseInt(value, 10)
-                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
-                                    anchors.right: startColon.left
-                                    anchors.rightMargin: Style.space(2)
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Text {
-                                    id: startColon
-                                    visible: !root.newEventAllDay
-                                    anchors.right: startMinuteDropdown.left
-                                    anchors.rightMargin: Style.space(2)
-                                    text: ":"
-                                    width: Style.space(6)
-                                    color: root.contentForeground
-                                    font.family: root.contentFontFamily
-                                    font.pixelSize: Style.font.body
-                                    verticalAlignment: Text.AlignVCenter
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
-
-                            Item {
-                                width: dayContent.width
-                                height: Style.spacing.controlHeight
-                                Text {
-                                    id: endLabel
-                                    text: "End"
-                                    width: Style.space(56)
-                                    color: Qt.darker(root.contentForeground, 1.5)
-                                    font.family: root.contentFontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    verticalAlignment: Text.AlignVCenter
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                DateEntry {
-                                    id: endDateField
-                                    width: root.newEventAllDay
-                                        ? parent.width - Style.space(56) - Style.space(44)
-                                        : Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
-                                    height: Style.spacing.controlHeight
-                                    foreground: root.contentForeground
-                                    onEditingFinished: {
-                                        keyCatcher.forceActiveFocus()
-                                    }
-                                    anchors.left: endLabel.right
-                                    anchors.leftMargin: Style.space(34)
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Dropdown {
-                                    id: endMinuteDropdown
-                                    visible: !root.newEventAllDay
-                                    width: Style.space(50)
-                                    height: Style.spacing.controlHeight
-                                    showLabel: false
-                                    value: ""
-                                    options: root.minuteOptions
-                                    foreground: root.contentForeground
-                                    fontFamily: root.contentFontFamily
-                                    onChanged: root.newEventEndMinute = parseInt(value, 10)
-                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
-                                    anchors.right: parent.right
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Dropdown {
-                                    id: endHourDropdown
-                                    visible: !root.newEventAllDay
-                                    width: Style.space(50)
-                                    height: Style.spacing.controlHeight
-                                    showLabel: false
-                                    value: ""
-                                    options: root.hourOptions
-                                    foreground: root.contentForeground
-                                    fontFamily: root.contentFontFamily
-                                    onChanged: root.newEventEndHour = parseInt(value, 10)
-                                    onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
-                                    anchors.right: endColon.left
-                                    anchors.rightMargin: Style.space(2)
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Text {
-                                    id: endColon
-                                    visible: !root.newEventAllDay
-                                    anchors.right: endMinuteDropdown.left
-                                    anchors.rightMargin: Style.space(2)
-                                    text: ":"
-                                    width: Style.space(6)
-                                    color: root.contentForeground
-                                    font.family: root.contentFontFamily
-                                    font.pixelSize: Style.font.body
-                                    verticalAlignment: Text.AlignVCenter
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
-
-                            Row {
-                                width: dayContent.width
-                                height: Math.max(Style.spacing.controlHeight, Style.font.body + Style.spacing.controlPaddingY * 2) + 2
-                                spacing: Style.space(4)
-
-                                Button {
-                                    text: "Cancel"
-                                    width: (dayContent.width - Style.space(4)) / 2
-                                    onClicked: root.dismissAddForm()
-                                }
-
-                                Button {
-                                    text: "Save"
-                                    width: (dayContent.width - Style.space(4)) / 2
-                                    onClicked: root.submitAddEvent()
-                                }
-                            }
+                            panel: root
+                            keyCatcher: keyCatcher
+                            dayContent: dayContent
                         }
 
                         Column {
