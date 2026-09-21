@@ -3,7 +3,6 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
-import "Model.js" as Model
 
 // The add/edit event form, extracted from omacal-panel.qml.
 // A self-contained Column that binds to the panel root via the `panel`
