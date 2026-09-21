@@ -62,8 +62,11 @@ class OmacalHandler(BaseHTTPRequestHandler):
             calendars = db_get_calendars(self.db_conn)
             for c in calendars:
                 # Writability = we hold a password for this calendar in the
-                # keyring. The DB never stores the password anymore.
-                c["writable"] = bool(c.get("username")) and has_password(c.get("url", ""), c.get("username"))
+                # keyring. The password is keyed by the principal URL (the
+                # configured URL); fall back to the calendar URL.
+                from omacal.keyring_store import has_password
+                key = c.get("principal_url") or c.get("url", "")
+                c["writable"] = bool(c.get("username")) and has_password(key, c.get("username"))
                 c.pop("password", None)
                 c.pop("username", None)
                 c.pop("sync_token", None)

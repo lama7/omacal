@@ -34,12 +34,15 @@ def _dav_client(url: str, username: str | None, password: str | None) -> caldav.
 def _calendar_creds(conn, calendar_id: int) -> tuple[str, str | None, str | None]:
     """Return (url, username, password) for a cached calendar.
 
-    The password is resolved from the system keyring, never from the DB.
+    The password is resolved from the system keyring, never from the DB. It is
+    stored keyed by the principal URL (the URL the user configured, e.g.
+    .../principals/users/<name>/), so look it up by principal_url and fall back
+    to the calendar URL for a directly-configured calendar.
     """
     from omacal.keyring_store import get_password
 
     cur = conn.execute(
-        "SELECT url, username FROM calendars WHERE id = ?",
+        "SELECT url, principal_url, username FROM calendars WHERE id = ?",
         (calendar_id,),
     )
     row = cur.fetchone()
@@ -47,7 +50,8 @@ def _calendar_creds(conn, calendar_id: int) -> tuple[str, str | None, str | None
         raise ValueError(f"Calendar id={calendar_id} not found in local cache")
     url = row["url"]
     username = row["username"]
-    password = get_password(url, username) if username else None
+    key = row["principal_url"] or url
+    password = get_password(key, username) if username else None
     return url, username, password
 
 _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$")
@@ -543,7 +547,7 @@ def delete_event(
     url, username, password = _calendar_creds(conn, calendar_id)
 
     client = _dav_client(url, username, password)
-    cal_obj = client.calendar(url=row["url"])
+    cal_obj = client.calendar(url=url)
     event = cal_obj.get_event_by_uid(uid)
 
     comp = Calendar.from_ical(event.data)
@@ -617,7 +621,7 @@ def update_event(
     url, username, password = _calendar_creds(conn, calendar_id)
 
     client = _dav_client(url, username, password)
-    cal_obj = client.calendar(url=row["url"])
+    cal_obj = client.calendar(url=url)
     try:
         event = cal_obj.get_event_by_uid(uid)
     except caldav.error.NotFoundError:
