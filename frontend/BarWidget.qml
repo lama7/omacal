@@ -113,7 +113,7 @@ BarWidget {
   Loader {
     id: panelLoader
     active: true
-    source: Qt.resolvedUrl("Panel.qml")
+    source: Qt.resolvedUrl("omacal-panel.qml")
     visible: false
     onLoaded: {
       root.injectPanel()
