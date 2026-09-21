@@ -2,7 +2,9 @@
 # omacal — install helper. Run from the project root or anywhere.
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# install.sh lives at the project root, so this dir IS the project root.
+# ${BASH_SOURCE[0]} (not $0) survives being invoked via a PATH symlink.
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="$PROJECT_ROOT/backend/.venv"
 DEST="$HOME/.local/bin"
 
