@@ -12,7 +12,7 @@ import "Model.js" as Model
 // middle click opens the timezone picker.
 BarWidget {
   id: root
-  moduleName: "gerry.clock"
+  moduleName: "omacal"
 
   property date displayDate: clock.date
 
@@ -122,7 +122,7 @@ BarWidget {
   }
 
   IpcHandler {
-    target: "gerry.clock"
+    target: "omacal"
 
     function refresh(): void { root.broadcast("refresh") }
     function cycleFormat(): void { root.cycleFormat() }

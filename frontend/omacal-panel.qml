@@ -7,8 +7,8 @@ import "Model.js" as Model
 
 Panel {
     id: root
-    moduleName: "gerry.clock"
-    ipcTarget: "gerry.clock"
+    moduleName: "omacal"
+    ipcTarget: "omacal"
     manageIpc: false
 
     property var anchorItem: null
