@@ -737,6 +737,7 @@ Panel {
         xhr.send()
     }
 
+
     function persistSettings(values) {
         var entry = { id: root.moduleName }
         for (var k in root.settings) if (k !== "id") entry[k] = root.settings[k]
@@ -1036,6 +1037,7 @@ Panel {
                     SetupForm {
                         id: setupForm
                         panel: root
+                        keyCatcher: keyCatcher
                         hostColumn: contentColumn
                     }
                 }

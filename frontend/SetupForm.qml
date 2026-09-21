@@ -15,6 +15,7 @@ Column {
 
     property var panel: null
     property var hostColumn: null
+    property var keyCatcher: null
     property bool busy: false
     property string error: ""
 
@@ -118,11 +119,17 @@ Column {
             var data = null
             try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
             if (xhr.status === 200 && data && data.ok) {
-                // Success: switch to the calendar view and refresh.
+                // Success: switch to the calendar view, refresh, and hand
+                // keyboard focus back to the panel's key catcher — the field
+                // just focused (the password box) is gone once the form hides,
+                // so every key handler (arrows, [ / ], t, ESC, Enter) would
+                // otherwise be dead until the user clicks somewhere.
                 if (root.panel) {
                     root.panel.needsSetup = false
                     root.panel.viewMode = "month"
                     root.panel.refresh()
+                    if (root.keyCatcher && root.keyCatcher.forceActiveFocus)
+                        root.keyCatcher.forceActiveFocus()
                 }
             } else {
                 root.error = (data && data.error) || "Setup failed: server returned status " + xhr.status

@@ -132,6 +132,7 @@ BarWidget {
     function show(): void { root.open() }
     function hide(): void { root.close() }
     function toggle(): void { root.togglePanel() }
+
   }
 
   // Calendar names + today's events for the hover tooltip, fetched from the omacal API.
