@@ -18,6 +18,7 @@ Panel {
 
     readonly property color contentForeground: root.bar ? root.bar.foreground : Color.foreground
     readonly property string contentFontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+    readonly property color accent: (root.bar && root.bar.accent) ? root.bar.accent : Color.accent
 
     property date today: new Date()
     readonly property string todayKey: Model.keyForDate(today)

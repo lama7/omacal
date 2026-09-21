@@ -88,16 +88,10 @@ Column {
                             Item {
                                 width: dayContent.width
                                 height: Style.spacing.controlHeight
-                                Text {
-                                    text: "Calendar"
-                                    width: Style.space(56)
-                                    color: Qt.darker(panel.contentForeground, 1.5)
-                                    font.family: panel.contentFontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    verticalAlignment: Text.AlignVCenter
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
+                                        FormLabel {
+            panel: panel
+            text: "Calendar"
+        }
                                 Dropdown {
                                     id: calendarDropdown
                                     width: Style.space(240)
@@ -123,7 +117,7 @@ Column {
                                 description: "Date-only event, no start/end time"
                                 checked: panel.newEventAllDay
                                 foreground: panel.contentForeground
-                                accent: (panel.bar && panel.bar.accent) ? panel.bar.accent : Color.accent
+                                accent: panel.accent
                                 fontFamily: panel.contentFontFamily
                                 onClicked: panel.newEventAllDay = !panel.newEventAllDay
                             }
@@ -139,7 +133,7 @@ Column {
                                 description: "Edit just this occurrence; the rest of the series is unchanged"
                                 checked: panel.editThisOccurrence
                                 foreground: panel.contentForeground
-                                accent: (panel.bar && panel.bar.accent) ? panel.bar.accent : Color.accent
+                                accent: panel.accent
                                 fontFamily: panel.contentFontFamily
                                 onClicked: panel.editThisOccurrence = !panel.editThisOccurrence
                             }
@@ -150,16 +144,10 @@ Column {
                                 // Only when creating: update_event() preserves the stored
                                 // rule, so editing it here would be a lie.
                                 visible: panel.editingUid === ""
-                                Text {
-                                    text: "Repeat"
-                                    width: Style.space(56)
-                                    color: Qt.darker(panel.contentForeground, 1.5)
-                                    font.family: panel.contentFontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    verticalAlignment: Text.AlignVCenter
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
+                                        FormLabel {
+            panel: panel
+            text: "Repeat"
+        }
                                 Dropdown {
                                     id: repeatDropdown
                                     width: Style.space(240)
@@ -180,16 +168,10 @@ Column {
                                 width: dayContent.width
                                 height: Style.spacing.controlHeight
                                 visible: panel.editingUid === "" && panel.newEventRepeat !== ""
-                                Text {
-                                    text: "Ends"
-                                    width: Style.space(56)
-                                    color: Qt.darker(panel.contentForeground, 1.5)
-                                    font.family: panel.contentFontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    verticalAlignment: Text.AlignVCenter
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
+                                        FormLabel {
+            panel: panel
+            text: "Ends"
+        }
                                 Dropdown {
                                     id: endsDropdown
                                     width: Style.space(240)
@@ -221,16 +203,10 @@ Column {
                                 height: Style.spacing.controlHeight
                                 visible: panel.editingUid === "" && panel.newEventRepeat !== ""
                                          && panel.newEventEnds !== "never"
-                                Text {
+                                FormLabel {
                                     id: endsValueLabel
-                                    text: panel.newEventEnds === "count" ? "Times" : "On"
-                                    width: Style.space(56)
-                                    color: Qt.darker(panel.contentForeground, 1.5)
-                                    font.family: panel.contentFontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    verticalAlignment: Text.AlignVCenter
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
+                                    panel: panel
+                                    text: panel ? (panel.newEventEnds === "count" ? "Times" : "On") : ""
                                 }
                                 TextField {
                                     id: endsCountField
@@ -282,17 +258,11 @@ Column {
                             Item {
                                 width: dayContent.width
                                 height: Style.spacing.controlHeight
-                                Text {
-                                    id: startLabel
-                                    text: "Start"
-                                    width: Style.space(56)
-                                    color: Qt.darker(panel.contentForeground, 1.5)
-                                    font.family: panel.contentFontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    verticalAlignment: Text.AlignVCenter
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
+                                        FormLabel {
+        id: startLabel
+            panel: panel
+            text: "Start"
+        }
                                 DateEntry {
                                     id: startDateField
                                     width: panel.newEventAllDay
@@ -356,17 +326,11 @@ Column {
                             Item {
                                 width: dayContent.width
                                 height: Style.spacing.controlHeight
-                                Text {
-                                    id: endLabel
-                                    text: "End"
-                                    width: Style.space(56)
-                                    color: Qt.darker(panel.contentForeground, 1.5)
-                                    font.family: panel.contentFontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    verticalAlignment: Text.AlignVCenter
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
+                                        FormLabel {
+        id: endLabel
+            panel: panel
+            text: "End"
+        }
                                 DateEntry {
                                     id: endDateField
                                     width: panel.newEventAllDay
