@@ -1069,11 +1069,8 @@ Panel {
                         width: contentColumn.width
                         spacing: Style.space(2)
 
-                        Rectangle {
+                        PanelSeparator {
                             width: contentColumn.width
-                            height: 1
-                            color: Qt.darker(root.contentForeground, 2.0)
-                            opacity: 0.4
                         }
 
                         Repeater {
@@ -1171,11 +1168,8 @@ Panel {
                         width: contentColumn.width
                         spacing: Style.space(4)
 
-                        Rectangle {
+                        PanelSeparator {
                             width: contentColumn.width
-                            height: 1
-                            color: Qt.darker(root.contentForeground, 2.0)
-                            opacity: 0.4
                         }
 
 
