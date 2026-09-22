@@ -5,7 +5,7 @@
   "version": "0.3.0",
   "author": "Gerry",
   "license": "MIT",
-  "homepage": "",
+  "homepage": "https://github.com/lama7/omacal",
   "description": "CalDAV-backed calendar popup for the Omarchy bar clock. Shows events from your CalDAV calendars in a month grid and day view, with add/edit/delete, recurring events, and a first-run setup flow.",
   "kinds": [
     "bar-widget"
