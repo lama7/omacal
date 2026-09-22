@@ -37,6 +37,7 @@ Column {
     KeypadTextField {
         formPanel: panel
         id: newEventTitleField
+        font.pixelSize: Style.font.subtitle
         width: dayContent.width
         placeholderText: "Event title"
         onTextChanged: panel.newEventSummary = text
@@ -45,6 +46,7 @@ Column {
     KeypadTextField {
         formPanel: panel
         id: newEventLocationField
+        font.pixelSize: Style.font.subtitle
         width: dayContent.width
         placeholderText: "Location"
         onTextChanged: panel.newEventLocation = text
@@ -53,6 +55,7 @@ Column {
     KeypadTextField {
         formPanel: panel
         id: newEventDescriptionField
+        font.pixelSize: Style.font.subtitle
         width: dayContent.width
         placeholderText: "Notes"
         onTextChanged: panel.newEventDescription = text
@@ -118,12 +121,13 @@ Column {
         // rule, so editing it here would be a lie.
         visible: panel.editingUid === ""
         FormLabel {
+            id: repeatLabel
             formPanel: panel
             text: "Repeat"
         }
         Dropdown {
             id: repeatDropdown
-            width: Style.space(240)
+            width: Style.space(200)
             height: Style.spacing.controlHeight
             showLabel: false
             value: ""
@@ -132,7 +136,8 @@ Column {
             fontFamily: panel.contentFontFamily
             onChanged: panel.newEventRepeat = value
             onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
-            anchors.right: parent.right
+            anchors.left: repeatLabel.right
+            anchors.leftMargin: Style.space(34)
             anchors.verticalCenter: parent.verticalCenter
         }
     }
@@ -142,12 +147,13 @@ Column {
         height: Style.spacing.controlHeight
         visible: panel.editingUid === "" && panel.newEventRepeat !== ""
         FormLabel {
+            id: endsLabel
             formPanel: panel
             text: "Ends"
         }
         Dropdown {
             id: endsDropdown
-            width: Style.space(240)
+            width: Style.space(200)
             height: Style.spacing.controlHeight
             showLabel: false
             value: ""
@@ -166,7 +172,8 @@ Column {
                     keyCatcher.forceActiveFocus()
                 }
             }
-            anchors.right: parent.right
+            anchors.left: endsLabel.right
+            anchors.leftMargin: Style.space(34)
             anchors.verticalCenter: parent.verticalCenter
         }
     }
@@ -184,9 +191,10 @@ Column {
         KeypadTextField {
             formPanel: panel
             id: endsCountField
+        font.pixelSize: Style.font.subtitle
             visible: panel ? panel.newEventEnds === "count" : false
             width: Style.space(90)
-            height: Style.spacing.controlHeight
+            height: implicitHeight
             horizontalAlignment: Text.AlignHCenter
             placeholderText: "COUNT"
             onTextChanged: panel.newEventCount = parseInt(text, 10)
@@ -196,9 +204,12 @@ Column {
         }
         DateEntry {
             id: untilDateField
+        font.pixelSize: Style.font.subtitle
             visible: panel ? panel.newEventEnds === "until" : false
-            width: Style.space(120)
-            height: Style.spacing.controlHeight
+            width: panel.newEventAllDay
+            ? parent.width - Style.space(56) - Style.space(44)
+            : Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
+            height: implicitHeight
             foreground: panel.contentForeground
             onEditingFinished: keyCatcher.forceActiveFocus()
             anchors.left: endsValueLabel.right
@@ -229,10 +240,11 @@ Column {
         }
         DateEntry {
             id: startDateField
+        font.pixelSize: Style.font.subtitle
             width: panel.newEventAllDay
             ? parent.width - Style.space(56) - Style.space(44)
             : Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
-            height: Style.spacing.controlHeight
+            height: implicitHeight
             foreground: panel.contentForeground
             onEditingFinished: {
                 keyCatcher.forceActiveFocus()
@@ -297,10 +309,11 @@ Column {
         }
         DateEntry {
             id: endDateField
+        font.pixelSize: Style.font.subtitle
             width: panel.newEventAllDay
             ? parent.width - Style.space(56) - Style.space(44)
             : Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
-            height: Style.spacing.controlHeight
+            height: implicitHeight
             foreground: panel.contentForeground
             onEditingFinished: {
                 keyCatcher.forceActiveFocus()

@@ -986,7 +986,7 @@ Panel {
                             anchors.verticalCenter: parent.verticalCenter
                             horizontalAlignment: Text.AlignHCenter
                             font.family: root.contentFontFamily
-                            font.pixelSize: Style.font.body
+                            font.pixelSize: (root.viewMode === "day" && root.dayDate) ? 16 : 28
                             font.bold: true
                             font.letterSpacing: 0.5
                             color: Qt.darker(root.contentForeground, 1.3)
@@ -994,7 +994,7 @@ Panel {
                                 if (root.viewMode === "day" && root.dayDate) {
                                     return Qt.formatDate(root.dayDate, "dddd, d MMM yyyy")
                                 }
-                                return Qt.formatDate(new Date(root.viewYear, root.viewMonth, 1), "MMMM yyyy").toUpperCase()
+                                return Qt.formatDate(new Date(root.viewYear, root.viewMonth, 1), "MMMM yyyy")
                             })()
                         }
 
