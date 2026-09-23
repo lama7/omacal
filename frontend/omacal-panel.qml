@@ -57,6 +57,16 @@ Panel {
     property string viewMode: "month"
     property var dayDate: null
     property var dayEvents: []
+
+    // Day-preview pane (month view): the pane to the left of the month grid
+    // that shows the currently hovered day's events.
+    property int previewPaneWidth: 210
+    property int monthGridWidth: 360
+    property int previewMaxEvents: 4
+    property var hoveredDate: null
+    readonly property var hoveredDateEvents: hoveredDate
+        ? (monthEvents[Model.keyForDate(hoveredDate)] || [])
+        : []
     property var pendingDayDate: null
 
     // Add-event form state
@@ -175,6 +185,7 @@ Panel {
     }
     function shiftMonth(delta) {
         var next = Model.stepMonth(viewYear, viewMonth, delta)
+        hoveredDate = null
         viewYear = next.year
         viewMonth = next.month
         rangeDaysArr = []
@@ -182,6 +193,7 @@ Panel {
     }
 
     function goToToday() {
+        hoveredDate = null
         viewYear = today.getFullYear()
         viewMonth = today.getMonth()
         viewMode = "month"
@@ -215,6 +227,7 @@ Panel {
         viewMode = "month"
         showAddForm = false
         error = ""
+        hoveredDate = null
         dayDate = null
         dayEvents = []
         pendingDayDate = null
@@ -875,7 +888,7 @@ Panel {
         open: root.opened
         centerOnBar: false
         focusTarget: keyCatcher
-        contentWidth: panel.fittedContentWidth(360)
+        contentWidth: panel.fittedContentWidth(root.previewPaneWidth + root.monthGridWidth + Style.space(2) * 2 + 1)
         contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight)
 
         PanelKeyCatcher {
@@ -986,7 +999,7 @@ Panel {
                             anchors.verticalCenter: parent.verticalCenter
                             horizontalAlignment: Text.AlignHCenter
                             font.family: root.contentFontFamily
-                            font.pixelSize: (root.viewMode === "day" && root.dayDate) ? 16 : 28
+                            font.pixelSize: (root.viewMode === "day" && root.dayDate) ? 22 : 28
                             font.bold: true
                             font.letterSpacing: 0.5
                             color: Qt.darker(root.contentForeground, 1.3)
@@ -1025,28 +1038,6 @@ Panel {
                     }
                 }
 
-                Row {
-                    visible: root.viewMode !== "day" && root.viewMode !== "setup"
-                    width: contentColumn.width
-                    spacing: Style.space(2)
-                    height: Style.space(18)
-                    Repeater {
-                        model: root.weekdays
-                        Text {
-                            text: root.weekdayLabel(modelData)
-                            width: Math.floor((contentColumn.width - Style.space(2) * 6) / 7)
-                            textFormat: Text.PlainText
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            color: Qt.darker(root.contentForeground, 1.8)
-                            font.family: root.contentFontFamily
-                            font.pixelSize: Style.font.caption
-                            font.bold: true
-                            font.letterSpacing: 0.5
-                        }
-                    }
-                }
-
                 Item {
                     visible: root.viewMode === "setup"
                     width: contentColumn.width
@@ -1073,81 +1064,222 @@ Panel {
                             width: contentColumn.width
                         }
 
-                        Repeater {
-                            id: weekRowRepeater
-                            model: root.weekRows
+                        Row {
+                            id: monthRow
+                            width: contentColumn.width
+                            spacing: Style.space(2)
 
+                            // Day-preview pane (left): read-only preview of the
+                            // currently hovered day's events. Spans the grid column height.
                             Item {
-                                width: contentColumn.width
-                                height: weekGrid.implicitHeight + 2
+                                id: previewPane
+                                width: root.previewPaneWidth
+                                height: monthGridColumn.implicitHeight
 
-                                Grid {
-                                    id: weekGrid
-                                    columns: 7
-                                    width: contentColumn.width
-                                    rowSpacing: 2
-                                    columnSpacing: 2
+                                Column {
+                                    id: previewContent
+                                    anchors.top: parent.top
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.topMargin: 2
+                                    spacing: Style.space(2)
 
-                                    property real dayCellWidth: Math.floor((width - columnSpacing * (columns - 1)) / columns)
+                                    Text {
+                                        id: previewHeader
+                                        width: previewContent.width
+                                        text: root.hoveredDate
+                                            ? Qt.formatDate(root.hoveredDate, "dddd, d MMM")
+                                            : "Day preview"
+                                        textFormat: Text.PlainText
+                                        wrapMode: Text.WordWrap
+                                        font.family: root.contentFontFamily
+                                        font.pixelSize: Style.font.subtitle
+                                        font.bold: true
+                                        color: root.contentForeground
+                                    }
+
+                                    // Horizontal separator under the header.
+                                    Rectangle {
+                                        width: previewContent.width
+                                        height: 1
+                                        color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.12)
+                                    }
 
                                     Repeater {
-                                        model: modelData.days
+                                        model: root.hoveredDateEvents.slice(0, root.previewMaxEvents)
 
                                         Item {
-                                            width: weekGrid.dayCellWidth
-                                            height: 50
-                                            property bool isLeadingOrTrailing: !modelData.isCurrentMonth
-                                            // Today keeps full strength even when it lands on a
-                                            // leading/trailing day (viewing a month other than today's).
-                                            property bool isDimmed: isLeadingOrTrailing && !modelData.isToday
+                                            width: previewContent.width
+                                            height: previewEventText.implicitHeight
 
                                             Rectangle {
-                                                anchors.fill: parent
-                                                radius: 6
-                                                // Spill days carry no fill: the dimming lives in
-                                                // the number colour. A darker(fg, 2.8) box put
-                                                // the number (#434444) nearly on top of its own
-                                                // background (#484949).
-                                                color: modelData.isToday ? Color.accent : "transparent"
+                                                anchors.left: parent.left
+                                                anchors.top: previewEventText.top
+                                                anchors.topMargin: 5
+                                                width: 6
+                                                height: 6
+                                                radius: 3
+                                                color: (function() {
+                                                    var cal = root.calendars.find(function(c) { return c.id === modelData.calendar_id })
+                                                    return cal ? (cal.color || "#888888") : "#888888"
+                                                })()
                                             }
 
                                             Text {
+                                                id: previewEventText
+                                                anchors.left: parent.left
+                                                anchors.leftMargin: 10
+                                                anchors.right: parent.right
                                                 anchors.top: parent.top
-                                                anchors.horizontalCenter: parent.horizontalCenter
-                                                anchors.topMargin: 3
-                                                text: modelData.dayLabel
+                                                text: root.eventTimeStr(modelData) + " \u2014 " + modelData.summary
                                                 textFormat: Text.PlainText
-                                                            font.family: root.contentFontFamily
-                                                font.pixelSize: Style.font.body
-                                                font.bold: modelData.isToday
-                                                // Leading/trailing days get a legible dim:
-                                                // darker(fg, 3.0) was ~#434444, invisible on a
-                                                // dark panel; 1.9 reads clearly as de-emphasised.
-                                                color: modelData.isToday ? "#FFFFFF"
-                                                    : (isDimmed
-                                                        ? Qt.darker(root.contentForeground, 1.9)
-                                                        : root.contentForeground)
+                                                wrapMode: Text.WordWrap
+                                                font.family: root.contentFontFamily
+                                                font.pixelSize: Style.font.subtitle
+                                                color: root.contentForeground
                                             }
+                                        }
+                                    }
 
-                                            Row {
-                                                anchors.bottom: parent.bottom
-                                                anchors.horizontalCenter: parent.horizontalCenter
-                                                anchors.bottomMargin: 3
-                                                spacing: 2
-                                                Repeater {
-                                                    model: modelData.dayEvents
+                                    Text {
+                                        id: previewMore
+                                        visible: root.hoveredDateEvents.length > root.previewMaxEvents
+                                        width: previewContent.width
+                                        text: "+" + (root.hoveredDateEvents.length - root.previewMaxEvents) + " more"
+                                        textFormat: Text.PlainText
+                                        font.family: root.contentFontFamily
+                                        font.pixelSize: Style.font.bodySmall
+                                        font.italic: true
+                                        color: Qt.darker(root.contentForeground, 1.5)
+                                    }
+
+                                    Text {
+                                        id: previewHint
+                                        visible: root.hoveredDateEvents.length === 0
+                                        width: previewContent.width
+                                        text: root.hoveredDate ? "No events" : "Hover a day to preview"
+                                        textFormat: Text.PlainText
+                                        wrapMode: Text.WordWrap
+                                        font.family: root.contentFontFamily
+                                        font.pixelSize: Style.font.subtitle
+                                        font.italic: true
+                                        color: Qt.darker(root.contentForeground, 1.5)
+                                    }
+                                }
+                            }
+
+                            // Vertical separator between the preview and the grid.
+                            Rectangle {
+                                width: 1
+                                height: monthGridColumn.implicitHeight
+                                color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.12)
+                            }
+
+                            // Month grid (right).
+                            Column {
+                                id: monthGridColumn
+                                width: contentColumn.width - root.previewPaneWidth - 1 - Style.space(2) * 2
+                                spacing: Style.space(2)
+
+                                Row {
+                                    width: monthGridColumn.width
+                                    spacing: Style.space(2)
+                                    height: Style.space(18)
+                                    Repeater {
+                                        model: root.weekdays
+                                        Text {
+                                            text: root.weekdayLabel(modelData)
+                                            width: Math.floor((monthGridColumn.width - Style.space(2) * 6) / 7)
+                                            textFormat: Text.PlainText
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                            color: Qt.darker(root.contentForeground, 1.8)
+                                            font.family: root.contentFontFamily
+                                            font.pixelSize: Style.font.caption
+                                            font.bold: true
+                                            font.letterSpacing: 0.5
+                                        }
+                                    }
+                                }
+
+                                Repeater {
+                                    id: weekRowRepeater
+                                    model: root.weekRows
+
+                                    Item {
+                                        width: monthGridColumn.width
+                                        height: weekGrid.implicitHeight + 2
+
+                                        Grid {
+                                            id: weekGrid
+                                            columns: 7
+                                            width: monthGridColumn.width
+                                            rowSpacing: 2
+                                            columnSpacing: 2
+
+                                            property real dayCellWidth: Math.floor((width - columnSpacing * (columns - 1)) / columns)
+
+                                            Repeater {
+                                                model: modelData.days
+
+                                                Item {
+                                                    width: weekGrid.dayCellWidth
+                                                    height: 50
+                                                    property bool isLeadingOrTrailing: !modelData.isCurrentMonth
+                                                    property bool isDimmed: isLeadingOrTrailing && !modelData.isToday
+                                                    property bool isHovered: root.hoveredDate
+                                                        && root.hoveredDate.getFullYear() === modelData.year
+                                                        && root.hoveredDate.getMonth() === modelData.month
+                                                        && root.hoveredDate.getDate() === modelData.date
+
                                                     Rectangle {
-                                                        width: 5
-                                                        height: 5
-                                                        radius: 2
-                                                        color: root.eventDotColor(modelData, isDimmed)
+                                                        anchors.fill: parent
+                                                        radius: 6
+                                                        color: modelData.isToday ? Color.accent
+                                                            : isHovered ? Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.09)
+                                                            : "transparent"
+                                                    }
+
+                                                    Text {
+                                                        anchors.top: parent.top
+                                                        anchors.horizontalCenter: parent.horizontalCenter
+                                                        anchors.topMargin: 3
+                                                        text: modelData.dayLabel
+                                                        textFormat: Text.PlainText
+                                                        font.family: root.contentFontFamily
+                                                        font.pixelSize: Style.font.body
+                                                        font.bold: modelData.isToday
+                                                        color: modelData.isToday ? "#FFFFFF"
+                                                            : (isDimmed
+                                                                ? Qt.darker(root.contentForeground, 1.9)
+                                                                : root.contentForeground)
+                                                    }
+
+                                                    Row {
+                                                        anchors.bottom: parent.bottom
+                                                        anchors.horizontalCenter: parent.horizontalCenter
+                                                        anchors.bottomMargin: 3
+                                                        spacing: 2
+                                                        Repeater {
+                                                            model: modelData.dayEvents
+                                                            Rectangle {
+                                                                width: 5
+                                                                height: 5
+                                                                radius: 2
+                                                                color: root.eventDotColor(modelData, isDimmed)
+                                                            }
+                                                        }
+                                                    }
+
+                                                    MouseArea {
+                                                        anchors.fill: parent
+                                                        hoverEnabled: true
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: root.gotoDay(new Date(modelData.year, modelData.month, modelData.date))
+                                                        onEntered: root.hoveredDate = new Date(modelData.year, modelData.month, modelData.date)
+                                                        onExited: root.hoveredDate = null
                                                     }
                                                 }
-                                            }
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: root.gotoDay(new Date(modelData.year, modelData.month, modelData.date))
                                             }
                                         }
                                     }
@@ -1156,7 +1288,6 @@ Panel {
                         }
                     }
                 }
-
                 Item {
                     id: dayView
                     visible: root.viewMode === "day" && root.dayDate
@@ -1235,7 +1366,8 @@ Panel {
                                         wrapMode: Text.WordWrap
                                         horizontalAlignment: Text.AlignLeft
                                         font.family: root.contentFontFamily
-                                        font.pixelSize: Style.font.bodySmall
+                                        // Match the month-view day-preview pane (subtitle/13px).
+                                        font.pixelSize: Style.font.subtitle
                                         color: root.contentForeground
                                     }
 

@@ -65,6 +65,7 @@ Column {
         width: dayContent.width
         height: Style.spacing.controlHeight
         FormLabel {
+            id: calendarLabel
             formPanel: panel
             text: "Calendar"
         }
@@ -81,7 +82,8 @@ Column {
             fontFamily: panel.contentFontFamily
             onChanged: panel.newEventCalendarId = parseInt(value, 10)
             onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
-            anchors.right: parent.right
+            anchors.left: calendarLabel.right
+            anchors.leftMargin: Style.space(34)
             anchors.verticalCenter: parent.verticalCenter
         }
     }
@@ -205,10 +207,9 @@ Column {
         DateEntry {
             id: untilDateField
         font.pixelSize: Style.font.subtitle
+            formPanel: panel
             visible: panel ? panel.newEventEnds === "until" : false
-            width: panel.newEventAllDay
-            ? parent.width - Style.space(56) - Style.space(44)
-            : Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
+            width: Style.space(120)
             height: implicitHeight
             foreground: panel.contentForeground
             onEditingFinished: keyCatcher.forceActiveFocus()
@@ -241,9 +242,8 @@ Column {
         DateEntry {
             id: startDateField
         font.pixelSize: Style.font.subtitle
-            width: panel.newEventAllDay
-            ? parent.width - Style.space(56) - Style.space(44)
-            : Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
+            formPanel: panel
+            width: Style.space(120)
             height: implicitHeight
             foreground: panel.contentForeground
             onEditingFinished: {
@@ -265,7 +265,8 @@ Column {
             fontFamily: panel.contentFontFamily
             onChanged: panel.newEventStartMinute = parseInt(value, 10)
             onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
-            anchors.right: parent.right
+            anchors.left: startColon.right
+            anchors.leftMargin: Style.space(2)
             anchors.verticalCenter: parent.verticalCenter
         }
         Dropdown {
@@ -280,15 +281,15 @@ Column {
             fontFamily: panel.contentFontFamily
             onChanged: panel.newEventStartHour = parseInt(value, 10)
             onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
-            anchors.right: startColon.left
-            anchors.rightMargin: Style.space(2)
+            anchors.left: startDateField.right
+            anchors.leftMargin: Style.space(8)
             anchors.verticalCenter: parent.verticalCenter
         }
         Text {
             id: startColon
             visible: !panel.newEventAllDay
-            anchors.right: startMinuteDropdown.left
-            anchors.rightMargin: Style.space(2)
+            anchors.left: startHourDropdown.right
+            anchors.leftMargin: Style.space(2)
             text: ":"
             width: Style.space(6)
             color: panel.contentForeground
@@ -310,9 +311,8 @@ Column {
         DateEntry {
             id: endDateField
         font.pixelSize: Style.font.subtitle
-            width: panel.newEventAllDay
-            ? parent.width - Style.space(56) - Style.space(44)
-            : Style.space(110) + (parent.width - Style.space(280)) / 2 - Style.space(30)
+            formPanel: panel
+            width: Style.space(120)
             height: implicitHeight
             foreground: panel.contentForeground
             onEditingFinished: {
@@ -334,7 +334,8 @@ Column {
             fontFamily: panel.contentFontFamily
             onChanged: panel.newEventEndMinute = parseInt(value, 10)
             onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
-            anchors.right: parent.right
+            anchors.left: endColon.right
+            anchors.leftMargin: Style.space(2)
             anchors.verticalCenter: parent.verticalCenter
         }
         Dropdown {
@@ -349,15 +350,15 @@ Column {
             fontFamily: panel.contentFontFamily
             onChanged: panel.newEventEndHour = parseInt(value, 10)
             onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
-            anchors.right: endColon.left
-            anchors.rightMargin: Style.space(2)
+            anchors.left: endDateField.right
+            anchors.leftMargin: Style.space(8)
             anchors.verticalCenter: parent.verticalCenter
         }
         Text {
             id: endColon
             visible: !panel.newEventAllDay
-            anchors.right: endMinuteDropdown.left
-            anchors.rightMargin: Style.space(2)
+            anchors.left: endHourDropdown.right
+            anchors.leftMargin: Style.space(2)
             text: ":"
             width: Style.space(6)
             color: panel.contentForeground

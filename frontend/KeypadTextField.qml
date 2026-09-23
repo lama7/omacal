@@ -29,4 +29,8 @@ TextField {
     // handle it itself — otherwise Enter is dead once you start typing.
     Keys.onReturnPressed: { if (root.formPanel) root.formPanel.submitAddEvent() }
     Keys.onEnterPressed: { if (root.formPanel) root.formPanel.submitAddEvent() }
+    // ESC cancels the form. Same story as Enter: once a field holds focus the
+    // keyCatcher (a sibling of the form, not an ancestor) never sees the key,
+    // so a focused field must dismiss the form itself.
+    Keys.onEscapePressed: { if (root.formPanel) root.formPanel.dismissAddForm() }
 }

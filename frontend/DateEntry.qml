@@ -26,6 +26,9 @@ TextField {
     // --- Public API ---
     property var value: null          // JS Date | null (a QML `date` can't hold null)
     property bool dateValid: false
+    // The form that owns the field (set to the AddEventForm root when used in
+    // the add/edit form), so ESC can cancel the form while this field has focus.
+    property var formPanel: null
 
     // --- Internal state ---
     property int currentYear: new Date().getFullYear() // year preloaded on day->year entry
@@ -56,6 +59,10 @@ TextField {
         var handled = root._handleKey(event)
         if (handled) event.accepted = true
     }
+    // ESC cancels the add/edit form. The keyCatcher is a sibling of the form,
+    // not an ancestor, so while this field has focus the catcher never sees the
+    // key — the field must dismiss the form itself (same pattern as Enter).
+    Keys.onEscapePressed: { if (root.formPanel) root.formPanel.dismissAddForm() }
 
     function _handleKey(event) {
         // Backspace: delete rightmost char, un-commit segment if it was a slash.
