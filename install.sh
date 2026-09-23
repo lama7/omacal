@@ -154,9 +154,16 @@ echo "==> Ensuring backend source is present..."
 echo "==> Creating venv at $VENV_DIR..."
 python3 -m venv "$VENV_DIR"
 
-echo "==> Installing backend and dependencies..."
-"$VENV_DIR/bin/pip" install --quiet --upgrade pip
-"$VENV_DIR/bin/pip" install --quiet "$BACKEND_DIR"
+echo "==> Installing backend and dependencies (locked + hash-verified)..."
+# Install every dependency from the committed, pinned, hash-locked
+# requirements.lock with --require-hashes. There is no live `pip upgrade` and
+# no unverified resolution: pip only accepts the exact versions/hashes this
+# commit pins, so a later install cannot fetch different dependency bytes.
+"$VENV_DIR/bin/pip" install --require-hashes --quiet -r "$BACKEND_DIR/requirements.lock"
+# Install the local package with --no-deps (its deps are already installed
+# above) and --no-build-isolation (use the pinned setuptools/wheel from the
+# lock), so building it does not fetch the build backend from the index either.
+"$VENV_DIR/bin/pip" install --quiet --no-deps --no-build-isolation "$BACKEND_DIR"
 
 echo "==> Linking CLI tools into $DEST..."
 mkdir -p "$DEST"
