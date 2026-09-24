@@ -17,6 +17,21 @@ any CalDAV server (Nextcloud, Fastmail, iCloud, your own, …).
 └──────────────┘
 ```
 
+## Screenshots
+
+Month view, with the hovered-day preview pane on the left showing that day's
+events as you move across the grid:
+
+![Month view](screenshots/month-view-day-preview.png)
+
+Month view showing the preview pane's empty state ("Hover a day to preview"):
+
+![Month view](screenshots/month-view.png)
+
+Day view, showing a day's events with add/edit/delete via click or keyboard:
+
+![Day view](screenshots/day-view.png)
+
 ## Install
 
 Two steps: install the plugin, then install its backend daemon.
