@@ -1300,7 +1300,15 @@ Panel {
                             Item {
                                 id: previewPane
                                 width: root.previewPaneWidth
-                                height: monthGridColumn.implicitHeight
+                                // At least as tall as its own content. Without this,
+                                // while the month grid is still empty (initial
+                                // load/sync) monthGridColumn.implicitHeight is just
+                                // the weekday header, the preview content (header +
+                                // "Hover a day to preview") overflows previewPane's
+                                // bottom, and the hint text collides with the
+                                // "Loading..." status line below the row.
+                                height: Math.max(monthGridColumn.implicitHeight,
+                                                 previewContent.implicitHeight + 4)
 
                                 Column {
                                     id: previewContent
