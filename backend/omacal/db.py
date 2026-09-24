@@ -162,6 +162,62 @@ def _migrate(conn: sqlite3.Connection) -> None:
         cur.execute("UPDATE calendars SET password = NULL")
         cur.execute("INSERT INTO schema_version VALUES (7)")
 
+    if version < 8:
+        # Reminder support. A reminder is a CalDAV VTODO: it has a DUE date
+        # (when it fires / needs doing) rather than an event's DTEND, plus
+        # status and priority. Recurrence is carried by rrule/exdates exactly
+        # like events and expanded from DUE. Detached RECURRENCE-ID VTODOs
+        # share their master's UID, so they live in a separate table (same
+        # reason as event_overrides) keyed by (calendar_id, uid, recurrence_id).
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+                uid TEXT NOT NULL,
+                summary TEXT,
+                description TEXT,
+                location TEXT,
+                start TIMESTAMP,           -- DTSTART (may be NULL)
+                due TIMESTAMP,             -- DUE: the display / fire date
+                all_day INTEGER NOT NULL DEFAULT 0,
+                status TEXT,
+                priority INTEGER,
+                rrule TEXT,
+                exdates TEXT,              -- JSON array of ISO datetimes
+                href TEXT,
+                tzid TEXT,
+                UNIQUE(calendar_id, uid)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS reminder_overrides (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+                uid TEXT NOT NULL,
+                recurrence_id TIMESTAMP NOT NULL,
+                summary TEXT,
+                description TEXT,
+                location TEXT,
+                start TIMESTAMP,
+                due TIMESTAMP,
+                all_day INTEGER NOT NULL DEFAULT 0,
+                status TEXT,
+                priority INTEGER,
+                href TEXT,
+                tzid TEXT,
+                UNIQUE(calendar_id, uid, recurrence_id)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_reminders_due
+                ON reminders(due)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_reminder_overrides_uid
+                ON reminder_overrides(calendar_id, uid)
+        """)
+        cur.execute("INSERT INTO schema_version VALUES (8)")
+
     conn.commit()
 
 
@@ -349,6 +405,196 @@ def get_overrides(conn: sqlite3.Connection, calendar_ids: list[int] | None = Non
     else:
         cur = conn.execute("SELECT * FROM event_overrides")
     return [dict(r) for r in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Reminders (CalDAV VTODO)
+# ---------------------------------------------------------------------------
+
+_reminder_cols = (
+    "(calendar_id, uid, summary, description, location, start, due, all_day, "
+    "status, priority, rrule, exdates, href, tzid)"
+)
+
+
+def upsert_reminders(conn: sqlite3.Connection, calendar_id: int, reminders: list[dict], commit: bool = True) -> int:
+    """Insert or replace reminders for a calendar. commit=False for replace_calendar_reminders."""
+    cur = conn.cursor()
+    for rm in reminders:
+        cur.execute(
+            f"""INSERT INTO reminders {_reminder_cols}
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(calendar_id, uid) DO UPDATE SET
+                summary=excluded.summary,
+                description=excluded.description,
+                location=excluded.location,
+                start=excluded.start,
+                due=excluded.due,
+                all_day=excluded.all_day,
+                status=excluded.status,
+                priority=excluded.priority,
+                rrule=excluded.rrule,
+                exdates=excluded.exdates,
+                href=excluded.href,
+                tzid=excluded.tzid
+            """,
+            (
+                calendar_id,
+                rm["uid"],
+                rm.get("summary"),
+                rm.get("description"),
+                rm.get("location"),
+                rm.get("start"),
+                rm.get("due"),
+                rm.get("all_day", 0),
+                rm.get("status"),
+                rm.get("priority"),
+                rm.get("rrule"),
+                rm.get("exdates"),
+                rm.get("href"),
+                rm.get("tzid"),
+            ),
+        )
+    if commit:
+        conn.commit()
+    return cur.rowcount
+
+
+def upsert_reminder_overrides(conn: sqlite3.Connection, calendar_id: int, overrides: list[dict], commit: bool = True) -> int:
+    """Insert or replace detached RECURRENCE-ID reminder overrides."""
+    cur = conn.cursor()
+    for ov in overrides:
+        cur.execute(
+            """INSERT INTO reminder_overrides
+               (calendar_id, uid, recurrence_id, summary, description, location,
+                start, due, all_day, status, priority, href, tzid)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
+               summary=excluded.summary,
+               description=excluded.description,
+               location=excluded.location,
+               start=excluded.start,
+               due=excluded.due,
+               all_day=excluded.all_day,
+               status=excluded.status,
+               priority=excluded.priority,
+               href=excluded.href,
+               tzid=excluded.tzid
+            """,
+            (
+                calendar_id,
+                ov["uid"],
+                ov["recurrence_id"],
+                ov.get("summary"),
+                ov.get("description"),
+                ov.get("location"),
+                ov.get("start"),
+                ov.get("due"),
+                ov.get("all_day", 0),
+                ov.get("status"),
+                ov.get("priority"),
+                ov.get("href"),
+                ov.get("tzid"),
+            ),
+        )
+    if commit:
+        conn.commit()
+    return cur.rowcount
+
+
+def replace_calendar_reminders(
+    conn: sqlite3.Connection,
+    calendar_id: int,
+    reminders: list[dict],
+    overrides: list[dict] | None = None,
+) -> int:
+    """Atomically swap a calendar's cached reminders for a freshly fetched set."""
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM reminders WHERE calendar_id=?", (calendar_id,))
+        cur.execute("DELETE FROM reminder_overrides WHERE calendar_id=?", (calendar_id,))
+        if reminders:
+            upsert_reminders(conn, calendar_id, reminders, commit=False)
+        if overrides:
+            upsert_reminder_overrides(conn, calendar_id, overrides, commit=False)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return len(reminders)
+
+
+def get_reminder_overrides(conn: sqlite3.Connection, calendar_ids: list[int] | None = None) -> list[dict[str, Any]]:
+    """All detached reminder overrides (used when expanding recurring reminders)."""
+    if calendar_ids:
+        placeholders = ",".join("?" for _ in calendar_ids)
+        cur = conn.execute(
+            f"SELECT * FROM reminder_overrides WHERE calendar_id IN ({placeholders})",
+            list(calendar_ids),
+        )
+    else:
+        cur = conn.execute("SELECT * FROM reminder_overrides")
+    return [dict(r) for r in cur.fetchall()]
+
+
+def get_reminders_for_window(
+    conn: sqlite3.Connection,
+    start: datetime,
+    end: datetime,
+    calendar_ids: list[int] | None = None,
+) -> list[dict[str, Any]]:
+    """Rows the API needs to answer a reminders [start, end) query.
+
+    Non-recurring reminders must have a DUE inside the window. Recurring masters
+    are returned regardless (their DUE may be years old) -- the window filter for
+    those is applied by expand_reminders, not SQL, exactly like events.
+    """
+    placeholders = ",".join("?" for _ in (calendar_ids or []))
+    where = f" AND r.calendar_id IN ({placeholders})" if calendar_ids else ""
+    params = list(calendar_ids) if calendar_ids else []
+    cur = conn.execute(
+        f"""SELECT r.*, c.display_name, c.color
+            FROM reminders r
+            JOIN calendars c ON c.id = r.calendar_id
+            WHERE (r.due IS NOT NULL AND r.due >= ? AND r.due < ? OR r.rrule IS NOT NULL)
+            {where}
+            ORDER BY r.due""",
+        [start, end] + params,
+    )
+    return [dict(r) for r in cur.fetchall()]
+
+
+def add_reminder(
+    conn: sqlite3.Connection,
+    calendar_id: int,
+    uid: str,
+    summary: str,
+    due: str | None = None,
+    start: str | None = None,
+    all_day: int = 0,
+    location: str | None = None,
+    description: str | None = None,
+    status: str = "NEEDS-ACTION",
+    priority: int | None = None,
+    rrule: str | None = None,
+    exdates: str | None = None,
+    href: str | None = None,
+    tzid: str | None = None,
+) -> dict[str, Any]:
+    """Insert a single reminder into the local cache. Returns the row as a dict."""
+    cur = conn.execute(
+        f"""INSERT OR REPLACE INTO reminders {_reminder_cols}
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        RETURNING id, calendar_id, uid, summary, description, location,
+                  start, due, all_day, status, priority, rrule, exdates, href, tzid""",
+        (calendar_id, uid, summary, description, location, start, due, all_day,
+         status, priority, rrule, exdates, href, tzid),
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.commit()
+    return dict(row)
+
 
 def add_event(
     conn: sqlite3.Connection,

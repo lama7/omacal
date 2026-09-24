@@ -27,8 +27,10 @@ from omacal.db import (
     get_events as db_get_events,
     get_overrides as db_get_overrides,
     get_events_for_window as db_get_window,
+    get_reminder_overrides as db_get_reminder_overrides,
+    get_reminders_for_window as db_get_reminders_for_window,
 )
-from omacal.recur import expand_events
+from omacal.recur import expand_events, expand_reminders
 
 logger = logging.getLogger("omacal.api")
 
@@ -198,6 +200,35 @@ class OmacalHandler(BaseHTTPRequestHandler):
 
             events = self._events_in_window(start, end, cal_ids)
             self._json(200, events)
+            return
+
+        if path == "/api/reminders":
+            start_str = qs.get("start", [None])[0]
+            end_str = qs.get("end", [None])[0]
+            cal_ids_raw = qs.get("calendars", [None])[0]
+
+            if start_str and end_str:
+                try:
+                    start = datetime.fromisoformat(start_str)
+                    end = datetime.fromisoformat(end_str)
+                except ValueError:
+                    self._json(400, {"error": "invalid start/end format, use ISO 8601"})
+                    return
+            else:
+                # Default: the next 7 days from local midnight (same as events).
+                start = datetime.combine(datetime.now().date(), time.min).astimezone(timezone.utc)
+                end = start + timedelta(days=7)
+
+            cal_ids = None
+            if cal_ids_raw:
+                try:
+                    cal_ids = [int(x) for x in cal_ids_raw.split(",")]
+                except ValueError:
+                    self._json(400, {"error": "invalid calendar ids"})
+                    return
+
+            reminders = self._reminders_in_window(start, end, cal_ids)
+            self._json(200, reminders)
             return
 
         self._json(404, {"error": "not found"})
@@ -461,6 +492,26 @@ class OmacalHandler(BaseHTTPRequestHandler):
             return rows                      # nothing recurring in this window
         overrides = db_get_overrides(self.db_conn, calendar_ids)
         return expand_events(rows, overrides, start, end)
+
+    def _reminders_in_window(self, start: datetime, end: datetime, calendar_ids: list[int] | None) -> list[dict]:
+        """Cached reminders plus expanded DUE occurrences for [start, end).
+
+        Recurring reminders expand from their DUE anchor at read time, exactly
+        like events. Each occurrence carries the date it was expanded from in
+        `recurrence_id`.
+        """
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+
+        rows = db_get_reminders_for_window(self.db_conn, start, end, calendar_ids)
+        if not rows:
+            return []
+        if not any(r.get("rrule") for r in rows):
+            return rows                     # nothing recurring in this window
+        overrides = db_get_reminder_overrides(self.db_conn, calendar_ids)
+        return expand_reminders(rows, overrides, start, end)
 
     def _json(self, code: int, data: object) -> None:
         payload = json.dumps(data, default=str).encode("utf-8")

@@ -206,3 +206,75 @@ def expand_events(
 
     out.sort(key=lambda e: str(e.get("start") or ""))
     return out
+
+
+def expand_reminders(
+    masters: list[dict],
+    overrides: list[dict],
+    window_start: datetime,
+    window_end: datetime,
+) -> list[dict]:
+    """Expand cached reminders into per-occurrence rows for [window_start, window_end).
+
+    A reminder's recurrence anchors on DUE (or DTSTART when there is no DUE, as
+    VTODOs sometimes carry only one). Each occurrence's DUE is shifted from the
+    master's DUE by the same offset its DTSTART shifted by, so a task due 2 days
+    after it starts stays due 2 days after the occurrence start. Detached
+    RECURRENCE-ID overrides replace or (when CANCELLED) remove their occurrence.
+    """
+    by_key: dict[tuple, dict] = {}
+    for ov in overrides:
+        by_key[(ov.get("calendar_id"), ov.get("uid"), _ts(ov.get("recurrence_id"), ov.get("tzid")))] = ov
+
+    out: list[dict] = []
+    for rm in masters:
+        rrule = rm.get("rrule")
+        if not rrule:
+            out.append(rm)
+            continue
+        if str(rm.get("status") or "").upper() == "CANCELLED":
+            continue
+
+        tzid = rm.get("tzid")
+        due_dt = parse_dt(rm.get("due"), tzid)
+        start_dt = parse_dt(rm.get("start"), tzid)
+        # Anchor the recurrence on DUE, falling back to DTSTART when a VTODO
+        # carries only a start. iCalendar recurrence steps from DTSTART/DUE as a
+        # rule's anchor; real task clients set both to the same instant.
+        anchor = due_dt or start_dt
+        if anchor is None:
+            continue
+        # An occurrence's DUE keeps the master's offset from DTSTART (0 for the
+        # common due==start case), so a task due N hours/days after it starts
+        # stays due N hours/days after the occurrence's start.
+        due_delta = (start_dt - due_dt) if (due_dt and start_dt) else None
+
+        duration = timedelta(days=1) if rm.get("all_day") else timedelta(hours=1)
+        for occ, _ in occurrences_between(
+            rrule, anchor, window_start, window_end, duration, _load_exdates(rm.get("exdates")), tzid
+        ):
+            row = dict(rm)
+            if start_dt:
+                row["start"] = occ.isoformat()
+            row["due"] = (occ + due_delta).isoformat() if due_delta else occ.isoformat()
+            row["recurrence_id"] = occ.isoformat()
+            row["is_recurring"] = 1
+
+            ov = by_key.get((rm.get("calendar_id"), rm.get("uid"), _ts(occ)))
+            if ov is not None:
+                if str(ov.get("status") or "").upper() == "CANCELLED":
+                    continue
+                for field in ("summary", "description", "location", "all_day", "priority"):
+                    if ov.get(field) not in (None, ""):
+                        row[field] = ov[field]
+                ov_due = parse_dt(ov.get("due"), ov.get("tzid"))
+                if ov_due is not None:
+                    row["due"] = ov_due.isoformat()
+                ov_start = parse_dt(ov.get("start"), ov.get("tzid"))
+                if ov_start is not None:
+                    row["start"] = ov_start.isoformat()
+                row["is_override"] = 1
+            out.append(row)
+
+    out.sort(key=lambda e: str(e.get("due") or e.get("start") or ""))
+    return out

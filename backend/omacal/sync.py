@@ -15,7 +15,8 @@ import caldav
 from icalendar import Calendar
 
 from omacal.config import load_config
-from omacal.db import add_calendar, replace_calendar_events, upsert_events, upsert_overrides
+from omacal.db import (add_calendar, replace_calendar_events, replace_calendar_reminders,
+                       upsert_events, upsert_overrides, upsert_reminders, upsert_reminder_overrides)
 from omacal.recur import has_occurrence_after
 
 logger = logging.getLogger("omacal.sync")
@@ -241,6 +242,113 @@ def _parse_ical_events(cal_data: bytes, calendar_id: int, cutoff: datetime, href
     return {"events": events, "overrides": overrides}
 
 
+def _parse_ical_reminders(cal_data: bytes, calendar_id: int, cutoff: datetime, href: str | None = None) -> dict[str, list[dict[str, Any]]]:
+    """Parse raw iCalendar bytes into {"reminders": [...], "overrides": [...]}.
+
+    A reminder is a CalDAV VTODO: its DUE date is when it fires / needs doing.
+    Masters are kept when the series still has occurrences overlapping
+    [cutoff, cutoff+90d) (judged by the occurrences, not by a possibly-old
+    DUE/DTSTART). Detached RECURRENCE-ID VTODOs come back as overrides.
+    A VTODO that is definitely done (STATUS:COMPLETED/CANCELLED) is dropped.
+    """
+    calendar = Calendar.from_ical(cal_data)
+    reminders: list[dict[str, Any]] = []
+    overrides: list[dict[str, Any]] = []
+    window_end = cutoff + timedelta(days=90)
+
+    for component in calendar.walk():
+        if component.name != "VTODO":
+            continue
+
+        uid = str(component.get("UID", ""))
+        summary = str(component.get("SUMMARY", "")) if component.get("SUMMARY") else ""
+        description = str(component.get("DESCRIPTION", "")) if component.get("DESCRIPTION") else ""
+        location = str(component.get("LOCATION", "")) if component.get("LOCATION") else ""
+
+        status = str(component.get("STATUS", ""))
+        if status.upper() in ("COMPLETED", "CANCELLED"):
+            continue
+
+        priority = component.get("PRIORITY")
+        priority_int = int(priority) if priority is not None and str(priority).isdigit() else None
+
+        due_prop = component.get("DUE")
+        start_prop = component.get("DTSTART")
+        due_dt = _unwrap_dt(due_prop.dt if due_prop is not None and hasattr(due_prop, "dt") else due_prop) if due_prop is not None else None
+        start_dt = _unwrap_dt(start_prop.dt if start_prop is not None and hasattr(start_prop, "dt") else start_prop) if start_prop is not None else None
+
+        if due_dt is None and start_dt is None:
+            continue
+
+        # IANA zone name carried by DUE, else DTSTART.
+        tzid = _tzid_of(due_prop if due_prop is not None else start_prop,
+                        due_dt if due_dt is not None else start_dt)
+
+        def _normalise(dt):
+            if dt is None:
+                return None
+            if isinstance(dt, datetime):
+                return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+            if isinstance(dt, date_type):
+                return datetime(dt.year, dt.month, dt.day, tzinfo=timezone.utc)
+            return None
+
+        due_dt = _normalise(due_dt)
+        start_dt = _normalise(start_dt)
+        # datetime is a subclass of date, so a TZID timed VALUE is a datetime
+        # and must NOT count as all-day. All-day means a bare date (VALUE=DATE).
+        all_day = (
+            (due_prop is not None
+                and isinstance(getattr(due_prop, "dt", None), date_type)
+                and not isinstance(getattr(due_prop, "dt", None), datetime))
+            or (start_prop is not None
+                and isinstance(getattr(start_prop, "dt", None), date_type)
+                and not isinstance(getattr(start_prop, "dt", None), datetime))
+        )
+
+        # Recurrence anchor: DUE preferred, else DTSTART.
+        anchor = due_dt or start_dt
+        rrule_str = None
+        rrule_prop = component.get("RRULE")
+        if rrule_prop is not None:
+            rrule_str = rrule_prop.to_ical().decode()
+            if has_occurrence_after(rrule_str, anchor, cutoff - timedelta(seconds=1)) is False:
+                continue
+        elif anchor is not None and (anchor >= window_end or anchor < cutoff):
+            # one-off reminder outside the window
+            continue
+
+        rid = None
+        rid_prop = component.get("RECURRENCE-ID")
+        if rid_prop is not None:
+            rid = _unwrap_dt(rid_prop.dt if hasattr(rid_prop, "dt") else rid_prop)
+            if rid is not None and isinstance(rid, datetime) and rid.tzinfo is None:
+                rid = rid.replace(tzinfo=timezone.utc)
+
+        rec = {
+            "uid": uid,
+            "summary": summary,
+            "description": description,
+            "location": location,
+            "start": start_dt.isoformat() if start_dt else None,
+            "due": due_dt.isoformat() if due_dt else None,
+            "all_day": 1 if all_day else 0,
+            "status": status,
+            "priority": priority_int,
+            "rrule": rrule_str,
+            "exdates": json.dumps(_exdate_values(component)) if rrule_str else None,
+            "href": href,
+            "tzid": tzid,
+        }
+        if rid is not None:
+            rec["recurrence_id"] = rid.isoformat()
+            overrides.append(rec)
+        else:
+            reminders.append(rec)
+
+    return {"reminders": reminders, "overrides": overrides}
+
+
 def _check_writable(client: Any, cal_url: str) -> bool:
     """Check if the current user has write privileges on a CalDAV calendar.
 
@@ -295,10 +403,13 @@ def _discover_calendars(
         try:
             cal_url = str(cal.url)
             props = cal.get_properties()
-            # Skip task-only calendars — they don't have VEVENTs
+            # Only skip a calendar we cannot use at all -- one whose supported
+            # component set advertises neither VEVENT (events) nor VTODO
+            # (reminders). Task calendars (VTODO-only) must be included now that
+            # the sync pulls reminders from them.
             comp_set = props.get("{urn:ietf:params:xml:ns:caldav}supported-calendar-component-set")
-            if comp_set and "VEVENT" not in comp_set:
-                logger.info("Skipping non-event calendar: %s (%s)", cal_url, comp_set)
+            if comp_set and "VEVENT" not in comp_set and "VTODO" not in comp_set:
+                logger.info("Skipping unsupported calendar: %s (%s)", cal_url, comp_set)
                 continue
             result.append({
                 "uid": cal_url.rsplit("/", 1)[-1] or cal_url,
@@ -343,38 +454,50 @@ def _sync_calendar_incremental(
 
     events = []
     overrides = []
+    reminders = []
+    reminder_overrides = []
     for ch in res.changed:
         if not ch.calendar_data:
             continue
+        data = ch.calendar_data.encode("utf-8")
         try:
-            parsed = _parse_ical_events(ch.calendar_data.encode("utf-8"), cal_id, cutoff, href=ch.href)
-            events.extend(parsed["events"])
-            overrides.extend(parsed["overrides"])
+            # Events and reminders (VTODO) live in the same change stream; a
+            # resource is one component type, so each parser sees its own.
+            ep = _parse_ical_events(data, cal_id, cutoff, href=ch.href)
+            events.extend(ep["events"])
+            overrides.extend(ep["overrides"])
         except Exception as e:
             logger.warning("Skipping changed event in %s: %s", display, e)
+        try:
+            rp = _parse_ical_reminders(data, cal_id, cutoff, href=ch.href)
+            reminders.extend(rp["reminders"])
+            reminder_overrides.extend(rp["overrides"])
+        except Exception as e:
+            logger.warning("Skipping changed reminder in %s: %s", display, e)
 
     cur = conn.cursor()
     try:
         if token is None:
             # First sync (or a lost token): the server returned everything but
-            # no deletion history, so do a full replace -- otherwise events
+            # no deletion history, so do a full replace -- otherwise rows
             # deleted before this token existed would linger in the cache.
-            cur.execute("DELETE FROM events WHERE calendar_id=?", (cal_id,))
-            cur.execute("DELETE FROM event_overrides WHERE calendar_id=?", (cal_id,))
+            for tbl in ("events", "event_overrides", "reminders", "reminder_overrides"):
+                cur.execute(f"DELETE FROM {tbl} WHERE calendar_id=?", (cal_id,))
         elif res.deleted:
             placeholders = ",".join("?" for _ in res.deleted)
-            cur.execute(
-                f"DELETE FROM events WHERE calendar_id=? AND href IN ({placeholders})",
-                [cal_id] + res.deleted,
-            )
-            cur.execute(
-                f"DELETE FROM event_overrides WHERE calendar_id=? AND href IN ({placeholders})",
-                [cal_id] + res.deleted,
-            )
+            for tbl in ("events", "event_overrides", "reminders", "reminder_overrides"):
+                cur.execute(
+                    f"DELETE FROM {tbl} WHERE calendar_id=? AND href IN ({placeholders})",
+                    [cal_id] + res.deleted,
+                )
         if events:
             upsert_events(conn, cal_id, events, commit=False)
         if overrides:
             upsert_overrides(conn, cal_id, overrides, commit=False)
+        if reminders:
+            upsert_reminders(conn, cal_id, reminders, commit=False)
+        if reminder_overrides:
+            upsert_reminder_overrides(conn, cal_id, reminder_overrides, commit=False)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -382,7 +505,7 @@ def _sync_calendar_incremental(
 
     set_sync_token(conn, cal_id, res.sync_token)
     set_last_sync(conn, cal_id)
-    return len(events), len(res.deleted)
+    return len(events) + len(reminders), len(res.deleted)
 
 
 def sync_source(
