@@ -5,18 +5,6 @@ the clock label with a proper calendar: month grid, day view, event
 add/edit/delete, recurring events, and a first-run setup flow — pulling from
 any CalDAV server (Nextcloud, Fastmail, iCloud, your own, …).
 
-```
-┌──────────────┐
-│  September 2026  │   ← click the clock in the bar
-│ Mo Tu We Th Fr Sa Su │
-│    1  2  3  4  5  6 │   · dots mark days with events
-│  7  · 9 10 11 12 13 │
-│ 14 15 16 17 18 19 20 │
-│ 21 22 23 24 25 26 27 │
-│ 28 29 30             │
-└──────────────┘
-```
-
 ## Screenshots
 
 Month view, with the hovered-day preview pane on the left showing that day's
