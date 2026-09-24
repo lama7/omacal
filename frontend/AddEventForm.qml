@@ -44,23 +44,35 @@ Column {
             formPanel: panel
             text: "Type"
         }
-        Dropdown {
-            id: typeDropdown
-            width: Style.space(200)
-            height: Style.spacing.controlHeight
-            showLabel: false
-            value: panel.newEventIsReminder ? "reminder" : "event"
-            options: [
-                { value: "event", label: "Event" },
-                { value: "reminder", label: "Reminder" }
-            ]
-            foreground: panel.contentForeground
-            fontFamily: panel.contentFontFamily
-            onChanged: panel.newEventIsReminder = (value === "reminder")
-            onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
+        // Segmented two-button control. The low-level Button's `selected`
+        // state is a pure display binding (fill/border/bold from the pressed
+        // state) -- clicking only emits clicked(), it never writes a selection
+        // back. So the active highlight is bound directly to the panel
+        // property and can never desync from it, unlike a Dropdown (which
+        // self-stores `value` and severs the binding on first use: picking
+        // Reminder then cancelling left the dropdown stuck on Reminder while
+        // the form was back on Event).
+        Row {
             anchors.left: typeLabel.right
             anchors.leftMargin: Style.space(34)
             anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+            Button {
+                text: "Event"
+                selected: !panel.newEventIsReminder
+                foreground: panel.contentForeground
+                accent: panel.accent
+                fontFamily: panel.contentFontFamily
+                onClicked: panel.newEventIsReminder = false
+            }
+            Button {
+                text: "Reminder"
+                selected: panel.newEventIsReminder
+                foreground: panel.contentForeground
+                accent: panel.accent
+                fontFamily: panel.contentFontFamily
+                onClicked: panel.newEventIsReminder = true
+            }
         }
     }
 
