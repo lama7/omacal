@@ -35,6 +35,19 @@ Panel {
     property bool loadingEvents: false
     property string error: ""
 
+    // Backend-update detection: `omarchy plugin update` only syncs the plugin
+    // files, never the ~/.local/omacal/venv. The panel compares the installed
+    // backend version (via scripts/backend-runtime.py status) to the pin in
+    // backend-version and offers to reinstall when they drift.
+    property string backendInstalledVersion: ""
+    property string backendRequiredVersion: ""
+    property bool backendNeedsUpdate: false
+    property bool backendChecking: false
+    property bool backendUpdating: false
+    property string backendMessage: ""
+    readonly property string pluginDir: decodeURIComponent(String(Qt.resolvedUrl("..")))
+
+
     property var weekRows: []
 
     readonly property int weekStart: Model.normalizedWeekStart(setting("weekStartDay", null), Qt.locale().firstDayOfWeek)
@@ -819,6 +832,8 @@ Panel {
         // Ask the backend to refresh if its cache is stale; the panel already
         // rendered from cache, so this never blocks the open.
         requestSync()
+        // Detect a stale backend and offer to reinstall (see backend-runtime.py).
+        checkBackend()
     }
 
     // Fire-and-forget on-demand refresh. The backend skips the sync entirely
@@ -838,6 +853,57 @@ Panel {
             loadRangeEvents(false)
         }
         xhr.send()
+    }
+
+    // Parse a JSON object returned by backend-runtime.py, or null.
+    function parseBackendResponse(text) {
+        try { var o = JSON.parse(text); return o && typeof o === "object" ? o : null } catch (e) { return null }
+    }
+
+    // Poll backend-runtime.py status and update the drift flags. Called on every
+    // open; cheap (reads one version string or the venv).
+    function checkBackend() {
+        if (root.backendChecking || root.backendUpdating) return
+        root.backendChecking = true
+        var args = [root.pluginDir + "/scripts/backend-runtime.py", "status"]
+        backendProc.command = args
+        backendProc.running = true
+    }
+
+    // Reinstall the backend (install.sh + service restart), then re-check.
+    function updateBackend() {
+        if (root.backendUpdating) return
+        root.backendUpdating = true
+        root.backendMessage = "Updating backend\u2026"
+        root.error = ""
+        var args = [root.pluginDir + "/scripts/backend-runtime.py", "install"]
+        backendProc.command = args
+        backendProc.running = true
+    }
+
+    // Route backend-runtime.py stdout/exit into the state properties.
+    function applyBackendResult(exitCode) {
+        var text = backendProc.stdoutText
+        var o = root.parseBackendResponse(text)
+        var finishedUpdate = root.backendUpdating
+        root.backendChecking = false
+        root.backendUpdating = false
+        if (!o) {
+            if (finishedUpdate) root.backendMessage = "Backend update failed (no response)"
+            return
+        }
+        if (o.error) {
+            if (finishedUpdate) root.backendMessage = "Backend update failed: " + o.error
+            return
+        }
+        root.backendInstalledVersion = o.installed ? String(o.installed) : ""
+        root.backendRequiredVersion = o.required ? String(o.required) : ""
+        root.backendNeedsUpdate = !!o.needsUpdate || !!o.needsInstall
+        if (finishedUpdate) {
+            root.backendMessage = root.backendNeedsUpdate
+                ? "Backend update did not take effect"
+                : "Backend updated to " + (o.installed || "\u2026")
+        }
     }
 
     function close() {
@@ -877,6 +943,23 @@ Panel {
                 today = date
                 root.goToToday()
             }
+        }
+    }
+
+    // Backend-runtime subprocess (see scripts/backend-runtime.py). Accumulates
+    // stdout and fires applyBackendResult on exit; on failure the result stays in
+    // backendMessage.
+    Process {
+        id: backendProc
+        readonly property string stdoutText: backendStdout.text
+        stdout: SplitParser {
+            id: backendStdout
+            property string text: ""
+            onRead: data => { backendStdout.text += data }
+        }
+        onExited: function(exitCode) {
+            var text = backendStdout.text
+            root.applyBackendResult(exitCode)
         }
     }
 
@@ -1408,7 +1491,40 @@ Panel {
                 Item {
                     width: contentColumn.width
                     anchors.horizontalCenter: parent.horizontalCenter
-                    height: statusText.visible ? statusText.implicitHeight + Style.space(4) : 0
+                    height: (backendBanner.visible ? backendBanner.implicitHeight + Style.space(4) : 0)
+                        + (statusText.visible ? statusText.implicitHeight + Style.space(4) : 0)
+
+                    // Backend-update banner: appears in month view when the
+                    // installed backend version no longer matches the pin.
+                    Row {
+                        id: backendBanner
+                        visible: root.backendUpdating || root.backendNeedsUpdate || root.backendMessage !== ""
+                        width: contentColumn.width
+                        spacing: Style.space(8)
+                        Text {
+                            width: parent.width - updateBackendButton.width - parent.spacing
+                            anchors.verticalCenter: parent.verticalCenter
+                            wrapMode: Text.WordWrap
+                            text: root.backendUpdating ? "Updating backend\u2026"
+                                : root.backendMessage !== "" ? root.backendMessage
+                                : "Backend needs update (v" + (root.backendInstalledVersion || "\u2026")
+                                    + " \u2192 v" + (root.backendRequiredVersion || "\u2026") + ")"
+                            color: root.backendMessage && root.backendMessage.indexOf("failed") !== 1
+                                ? Qt.rgba(1, 0.3, 0.3, 1)
+                                : (root.backendNeedsUpdate ? root.accent : Qt.darker(root.contentForeground, 1.5))
+                            font.family: root.contentFontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.italic: root.backendMessage !== ""
+                        }
+                        Button {
+                            id: updateBackendButton
+                            visible: root.backendNeedsUpdate && !root.backendUpdating
+                            text: root.backendMessage !== "" ? "Retry" : "Update"
+                            accent: root.accent
+                            fontFamily: root.contentFontFamily
+                            onClicked: root.updateBackend()
+                        }
+                    }
 
                     Text {
                         id: statusText
