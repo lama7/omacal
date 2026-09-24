@@ -34,18 +34,49 @@ Column {
     height: visible ? implicitHeight : 0
     spacing: Style.space(8)
 
+    // Event vs Reminder toggle. A reminder (VTODO) carries a single DUE
+    // date/time -- no end, no location -- so this switches the field set.
+    Item {
+        width: dayContent.width
+        height: Style.spacing.controlHeight
+        FormLabel {
+            id: typeLabel
+            formPanel: panel
+            text: "Type"
+        }
+        Dropdown {
+            id: typeDropdown
+            width: Style.space(200)
+            height: Style.spacing.controlHeight
+            showLabel: false
+            value: panel.newEventIsReminder ? "reminder" : "event"
+            options: [
+                { value: "event", label: "Event" },
+                { value: "reminder", label: "Reminder" }
+            ]
+            foreground: panel.contentForeground
+            fontFamily: panel.contentFontFamily
+            onChanged: panel.newEventIsReminder = (value === "reminder")
+            onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
+            anchors.left: typeLabel.right
+            anchors.leftMargin: Style.space(34)
+            anchors.verticalCenter: parent.verticalCenter
+        }
+    }
+
     KeypadTextField {
         formPanel: panel
         id: newEventTitleField
         font.pixelSize: Style.font.subtitle
         width: dayContent.width
-        placeholderText: "Event title"
+        placeholderText: panel.newEventIsReminder ? "Reminder title" : "Event title"
         onTextChanged: panel.newEventSummary = text
     }
 
     KeypadTextField {
         formPanel: panel
         id: newEventLocationField
+        visible: !panel.newEventIsReminder
         font.pixelSize: Style.font.subtitle
         width: dayContent.width
         placeholderText: "Location"
@@ -106,7 +137,9 @@ Column {
         // Only when editing a recurring event: choose whether the
         // change applies to just this occurrence (detached override)
         // or the whole series. One-off events have no scope question.
-        visible: panel.editingUid !== "" && panel.editingIsRecurring
+        // Not for reminders -- occurrence-level edit is a later step, and
+        // editing a reminder here is always the whole (recurring) task.
+        visible: panel.editingUid !== "" && panel.editingIsRecurring && !panel.newEventIsReminder
         label: "This occurrence only"
         description: "Edit just this occurrence; the rest of the series is unchanged"
         checked: panel.editThisOccurrence
@@ -237,7 +270,7 @@ Column {
         FormLabel {
             id: startLabel
             formPanel: panel
-            text: "Start"
+            text: panel.newEventIsReminder ? "Due" : "Start"
         }
         DateEntry {
             id: startDateField
@@ -301,6 +334,7 @@ Column {
     }
 
     Item {
+        visible: !panel.newEventIsReminder
         width: dayContent.width
         height: Style.spacing.controlHeight
         FormLabel {

@@ -94,6 +94,7 @@ Panel {
     property string newEventLocation: ""
     property string newEventDescription: ""
     property bool newEventAllDay: false
+    property bool newEventIsReminder: false   // Event vs Reminder toggle
     property string newEventRepeat: ""
     // RRULE presets. "Every 2 weeks" anchors on the weekday of the event's own
     // start date, which is what users expect from a repeat dropdown.
@@ -280,6 +281,7 @@ Panel {
         newEventEndHour = 10
         newEventEndMinute = 0
         newEventAllDay = false
+        newEventIsReminder = false
         newEventRepeat = ""
         addEventForm.repeatDropdown.value = ""
         newEventEnds = "never"
@@ -324,6 +326,7 @@ Panel {
         newEventEndHour = 10
         newEventEndMinute = 0
         newEventAllDay = false
+        newEventIsReminder = false
         newEventRepeat = ""
         addEventForm.repeatDropdown.value = ""
         newEventEnds = "never"
@@ -396,6 +399,49 @@ Panel {
             error = "Invalid repeat end date"
             return
         }
+        if (newEventIsReminder) {
+            var due
+            if (newEventAllDay) {
+                due = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0)
+            } else {
+                due = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(),
+                               newEventStartHour, newEventStartMinute)
+            }
+            var calId = newEventCalendarId
+            var xhr = new XMLHttpRequest()
+            var method, url
+            if (editingUid) {
+                method = "PUT"
+                url = apiBase + "/api/reminders?uid=" + encodeURIComponent(editingUid)
+            } else {
+                method = "POST"
+                url = apiBase + "/api/reminders"
+            }
+            xhr.open(method, url, true)
+            xhr.setRequestHeader("Content-Type", "application/json")
+            xhr.timeout = 30000
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === XMLHttpRequest.DONE) {
+                    if (xhr.status === 200) {
+                        editingUid = ""
+                        dismissAddForm()
+                        loadRangeEvents(true)
+                    } else {
+                        error = xhr.status === 0 ? "No response from omacal API" : "Failed to save reminder (" + xhr.status + ")"
+                    }
+                }
+            }
+            var rpayload = {
+                summary: newEventSummary,
+                due: due.toISOString(),
+                all_day: newEventAllDay,
+                calendar_id: calId,
+                description: newEventDescription
+            }
+            if (rrule) rpayload.rrule = rrule
+            xhr.send(JSON.stringify(rpayload))
+            return
+        }
         var start, end
         if (newEventAllDay) {
             // All-day: midnight of the chosen dates. The form's End Date is the
@@ -460,11 +506,12 @@ Panel {
 
     function editEvent(ev) {
         editingUid = ev.uid
-        editingOccurrence = ev.recurrence_id || ev.start || ""
+        editingOccurrence = ev.recurrence_id || ev.start || ev.due || ""
         editingIsRecurring = !!ev.is_recurring
         editThisOccurrence = true
         showAddForm = true
         error = ""
+        newEventIsReminder = !!ev.isReminder
         newEventSummary = ev.summary || ""
         addEventForm.newEventTitleField.text = ev.summary || ""
         newEventLocation = ev.location || ""
@@ -477,7 +524,12 @@ Panel {
         // exclusive end back into the last day the form edits.
         var allDay = !!ev.all_day
         var start, end
-        if (allDay) {
+        if (newEventIsReminder) {
+            // A reminder has a single DUE instant; the form's Start field shows it.
+            var due = allDay ? dateFromIso(ev.due || ev.start) : new Date(ev.due)
+            start = due
+            end = due
+        } else if (allDay) {
             start = dateFromIso(ev.start)
             end = dateFromIso(ev.end || ev.start)
             end = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 1)
@@ -526,7 +578,8 @@ Panel {
     function deleteEvent() {
         if (!pendingDeleteEvent) return
         var ev = pendingDeleteEvent
-        var url = apiBase + "/api/events?uid=" + encodeURIComponent(ev.uid) + "&calendar_id=" + ev.calendar_id
+        var removeHref = ev.isReminder ? "/api/reminders" : "/api/events"
+        var url = apiBase + removeHref + "?uid=" + encodeURIComponent(ev.uid) + "&calendar_id=" + ev.calendar_id
         // A repeating event is deleted one occurrence at a time: pass the
         // occurrence date the user right-clicked so the backend excludes just
         // that day (EXDATE) instead of removing the series.
@@ -557,6 +610,7 @@ Panel {
     function deleteConfirmText() {
         var ev = pendingDeleteEvent
         if (!ev) return "Delete this event?"
+        if (ev.isReminder) return "Delete the reminder \"" + ev.summary + "\"?"
         if (!ev.is_recurring) return "Delete \"" + ev.summary + "\"?"
         if (deleteWholeSeries) return "Delete the whole series \"" + ev.summary + "\"?"
         return "Delete \"" + ev.summary + "\" on " + Qt.formatDateTime(new Date(ev.start), "MMM d") + "?"
@@ -1504,9 +1558,6 @@ Panel {
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         cursorShape: root.calendarWritable(modelData) ? Qt.PointingHandCursor : Qt.ArrowCursor
                                         onClicked: {
-                                            // Reminder add/edit/delete is a later step; for now a
-                                            // reminder row is display-only.
-                                            if (modelData.isReminder) return
                                             // Read-only shared calendars (a spouse's, e.g.) reject
                                             // writes server-side, so don't offer edit/delete on them.
                                             if (!root.calendarWritable(modelData)) {
@@ -1654,7 +1705,7 @@ Panel {
             confirmText: "Delete"
             cancelText: "Cancel"
             selectedIndex: 0
-            showScope: root.pendingDeleteEvent && root.pendingDeleteEvent.is_recurring
+            showScope: root.pendingDeleteEvent && root.pendingDeleteEvent.is_recurring && !root.pendingDeleteEvent.isReminder
             scopeChecked: root.deleteWholeSeries
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
