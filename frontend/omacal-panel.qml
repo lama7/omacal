@@ -736,9 +736,14 @@ Panel {
     // Colour for an event's month-grid dot, darkened when the cell is
     // de-emphasised so the dots dim along with the day number.
     function eventDotColor(ev, dim) {
-        var cal = calendars.find(function(c) { return c.id === ev.calendar_id })
-        var base = (cal && cal.color) ? cal.color : "#888888"
+        var base = calColor(ev)
         return dim ? Qt.darker(base, 1.9) : base
+    }
+
+    // The calendar accent for an event/reminder (falls back to grey).
+    function calColor(ev) {
+        var cal = calendars.find(function(c) { return c.id === ev.calendar_id })
+        return (cal && cal.color) ? cal.color : "#888888"
     }
 
     // Day object from the DATE part of an ISO string, with no timezone shift.
@@ -1286,10 +1291,9 @@ Panel {
                                                 width: 6
                                                 height: 6
                                                 radius: 3
-                                                color: (function() {
-                                                    var cal = root.calendars.find(function(c) { return c.id === modelData.calendar_id })
-                                                    return cal ? (cal.color || "#888888") : "#888888"
-                                                })()
+                                                color: modelData.isReminder ? "transparent" : root.calColor(modelData)
+                                                border.width: modelData.isReminder ? 1 : 0
+                                                border.color: modelData.isReminder ? root.calColor(modelData) : "transparent"
                                             }
 
                                             Text {
@@ -1523,10 +1527,9 @@ Panel {
                                         width: 6
                                         height: 6
                                         radius: 3
-                                        color: (function() {
-                                            var cal = root.calendars.find(function(c) { return c.id === modelData.calendar_id })
-                                            return cal ? (cal.color || "#888888") : "#888888"
-                                        })()
+                                        color: modelData.isReminder ? "transparent" : root.calColor(modelData)
+                                        border.width: modelData.isReminder ? 1 : 0
+                                        border.color: modelData.isReminder ? root.calColor(modelData) : "transparent"
                                     }
 
                                     Text {
