@@ -319,6 +319,38 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 logger.error("POST /api/events failed: %s", e)
                 self._json(500, {"error": str(e)})
             return
+        if parsed.path == "/api/reminders":
+            try:
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                data = json.loads(body)
+                summary = data.get("summary", "")
+                calendar_id = int(data.get("calendar_id"))
+                due_str = data["due"]
+                start_str = data.get("start")
+                all_day = data.get("all_day", False)
+                location = data.get("location", "")
+                description = data.get("description", "")
+                rrule = (data.get("rrule") or "").strip() or None
+
+                due_dt = datetime.fromisoformat(due_str)
+                if due_dt.tzinfo is None:
+                    due_dt = due_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+                start_dt = None
+                if start_str:
+                    start_dt = datetime.fromisoformat(start_str)
+                    if start_dt.tzinfo is None:
+                        start_dt = start_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+
+                from omacal.sync import create_reminder
+                result = create_reminder(self.db_conn, calendar_id, summary, due_dt,
+                                         start_dt, all_day, location, description, rrule=rrule)
+                self._json(200, result)
+            except (ValueError, KeyError) as e:
+                self._json(400, {"error": str(e)})
+            except Exception as e:
+                logger.error("POST /api/reminders failed: %s", e)
+                self._json(500, {"error": str(e)})
+            return
         self._json(404, {"error": "not found"})
 
     def do_DELETE(self) -> None:
@@ -354,6 +386,24 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(e)})
             except Exception as e:
                 logger.error("DELETE failed: %s", e)
+                self._json(500, {"error": str(e)})
+            return
+        if parsed.path == "/api/reminders":
+            query = parse_qs(parsed.query)
+            uid = query.get("uid", [None])[0]
+            calendar_id_raw = query.get("calendar_id", [None])[0]
+            if not uid or not calendar_id_raw:
+                self._json(400, {"error": "uid and calendar_id query parameters required"})
+                return
+            try:
+                calendar_id = int(calendar_id_raw)
+                from omacal.sync import delete_reminder
+                result = delete_reminder(self.db_conn, calendar_id, uid)
+                self._json(200, result)
+            except ValueError as e:
+                self._json(400, {"error": str(e)})
+            except Exception as e:
+                logger.error("DELETE /api/reminders failed: %s", e)
                 self._json(500, {"error": str(e)})
             return
         self._json(404, {"error": "not found"})
@@ -402,6 +452,41 @@ class OmacalHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 import traceback
                 logger.error("PUT failed: %s\n%s", e, traceback.format_exc())
+                self._json(500, {"error": str(e)})
+            return
+        if parsed.path == "/api/reminders":
+            query = parse_qs(parsed.query)
+            uid = query.get("uid", [None])[0]
+            if not uid:
+                self._json(400, {"error": "uid query parameter required"})
+                return
+            try:
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                data = json.loads(body)
+                summary = data.get("summary", "")
+                calendar_id = int(data.get("calendar_id"))
+                due_str = data["due"]
+                start_str = data.get("start")
+                all_day = data.get("all_day", False)
+                location = data.get("location", "")
+                description = data.get("description", "")
+
+                due_dt = datetime.fromisoformat(due_str)
+                if due_dt.tzinfo is None:
+                    due_dt = due_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+                start_dt = None
+                if start_str:
+                    start_dt = datetime.fromisoformat(start_str)
+                    if start_dt.tzinfo is None:
+                        start_dt = start_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+
+                from omacal.sync import update_reminder
+                result = update_reminder(self.db_conn, calendar_id, uid, summary, due_dt,
+                                         start_dt, all_day, location, description)
+                self._json(200, result)
+            except Exception as e:
+                import traceback
+                logger.error("PUT /api/reminders failed: %s\n%s", e, traceback.format_exc())
                 self._json(500, {"error": str(e)})
             return
         self._json(404, {"error": "not found"})

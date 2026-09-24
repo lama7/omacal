@@ -926,6 +926,195 @@ def update_event(
     )
 
 
+def _todo_due_value(due: datetime, all_day: bool):
+    """The DUE value to push to the server: DATE for all-day, datetime otherwise."""
+    if all_day:
+        return due.date() if isinstance(due, datetime) else due
+    return due
+
+
+def create_reminder(
+    conn: Any,
+    calendar_id: int,
+    summary: str,
+    due: datetime,
+    start: datetime | None = None,
+    all_day: bool = False,
+    location: str | None = None,
+    description: str | None = None,
+    rrule: str | None = None,
+) -> dict[str, Any]:
+    """Create a reminder (VTODO) on the CalDAV server and cache it locally.
+
+    DUE is the fire/display date (a reminder has no DTEND). DTSTART is optional
+    and defaults to DUE, matching how iOS writes tasks (both set to the same
+    instant). all_day stores DATE-valued DUE/DTSTART. Pushes first; only caches
+    if the server accepts it. Returns the cached row as a dict.
+    """
+    from uuid import uuid4
+
+    from omacal.db import add_reminder
+
+    url, username, password = _calendar_creds(conn, calendar_id)
+
+    uid = str(uuid4())
+    push_kwargs: dict[str, Any] = {
+        "uid": uid,
+        "summary": summary,
+        "due": _todo_due_value(due, all_day),
+        "status": "NEEDS-ACTION",
+    }
+    if start is not None:
+        push_kwargs["dtstart"] = _todo_due_value(start, all_day)
+    else:
+        push_kwargs["dtstart"] = _todo_due_value(due, all_day)
+    if location:
+        push_kwargs["location"] = location
+    if description:
+        push_kwargs["description"] = description
+    if rrule:
+        push_kwargs["rrule"] = rrule
+
+    client = _dav_client(url, username, password)
+    cal_obj = client.calendar(url=url)
+    cal_obj.add_todo(**push_kwargs)
+
+    due_iso = due.replace(tzinfo=timezone.utc).isoformat() if all_day and isinstance(due, datetime) else due.isoformat()
+    start_iso = None
+    if start is not None:
+        start_iso = start.replace(tzinfo=timezone.utc).isoformat() if all_day and isinstance(start, datetime) else start.isoformat()
+
+    cached = add_reminder(
+        conn, calendar_id, uid, summary,
+        due=due_iso, start=start_iso,
+        all_day=1 if all_day else 0,
+        location=location, description=description,
+        status="NEEDS-ACTION",
+        rrule=rrule,
+        tzid=_tzid_of(due, due),
+    )
+    return cached
+
+
+def delete_reminder(conn: Any, calendar_id: int, uid: str) -> dict[str, Any]:
+    """Delete a reminder (VTODO) from the CalDAV server and local cache.
+
+    Whole-reminder delete (the task, and its series, is removed) -- matches how
+    you delete a task. Per-occurrence delete can be added later if needed.
+    """
+    from omacal.db import delete_reminder as db_delete_reminder
+
+    url, username, password = _calendar_creds(conn, calendar_id)
+    client = _dav_client(url, username, password)
+    cal_obj = client.calendar(url=url)
+
+    todo = None
+    try:
+        todo = cal_obj.get_todo_by_uid(uid)
+    except caldav.error.NotFoundError:
+        pass
+    if todo is None:
+        # Search every calendar on this server, mirroring update_event's move.
+        principal = client.principal()
+        for cal in principal.calendars():
+            try:
+                todo = cal.get_todo_by_uid(uid)
+                break
+            except caldav.error.NotFoundError:
+                continue
+    if todo is None:
+        raise ValueError(f"Reminder uid={uid} not found on any calendar")
+
+    todo.delete()
+    db_delete_reminder(conn, calendar_id, uid)
+    return {"status": "deleted", "uid": uid, "scope": "reminder"}
+
+
+def update_reminder(
+    conn: Any,
+    calendar_id: int,
+    uid: str,
+    summary: str,
+    due: datetime,
+    start: datetime | None = None,
+    all_day: bool = False,
+    location: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Update an existing reminder (VTODO) on the server and local cache.
+
+    Whole-reminder edit this pass (per-occurrence via RECURRENCE-ID can follow
+    later). The resource keeps its RRULE/EXDATE, so the cached row does too.
+    """
+    from omacal.db import add_reminder as db_add_reminder
+
+    url, username, password = _calendar_creds(conn, calendar_id)
+    client = _dav_client(url, username, password)
+    cal_obj = client.calendar(url=url)
+
+    try:
+        todo = cal_obj.get_todo_by_uid(uid)
+    except caldav.error.NotFoundError:
+        raise ValueError(f"Reminder uid={uid} not found on calendar")
+
+    comp = todo.icalendar_component
+    comp["summary"] = summary
+    if description:
+        comp["description"] = description
+    else:
+        comp.pop("description", None)
+    if location:
+        comp["location"] = location
+    else:
+        comp.pop("location", None)
+
+    from icalendar import vDatetime, vDate
+    comp.pop("DTSTART", None)
+    comp.pop("DUE", None)
+    if all_day:
+        due_date = due.date() if isinstance(due, datetime) else due
+        comp.add("due", vDate(due_date), parameters={"VALUE": "DATE"})
+        if start is not None:
+            start_date = start.date() if isinstance(start, datetime) else start
+            comp.add("dtstart", vDate(start_date), parameters={"VALUE": "DATE"})
+        else:
+            comp.add("dtstart", vDate(due_date), parameters={"VALUE": "DATE"})
+    else:
+        comp.add("due", vDatetime(due))
+        if start is not None:
+            comp.add("dtstart", vDatetime(start))
+        else:
+            comp.add("dtstart", vDatetime(due))
+    # STATUS must stay NEEDS-ACTION while it's still a live reminder.
+    comp.pop("STATUS", None)
+    comp["status"] = "NEEDS-ACTION"
+    todo.data = comp.to_ical().decode()
+    todo.save()
+
+    prev = conn.execute(
+        "SELECT rrule, exdates FROM reminders WHERE uid = ? ORDER BY due DESC LIMIT 1", (uid,)
+    ).fetchone()
+    prev_rrule = prev["rrule"] if prev else None
+    prev_exdates = prev["exdates"] if prev else None
+    conn.execute("DELETE FROM reminders WHERE uid = ?", (uid,))
+    conn.commit()
+
+    due_iso = due.replace(tzinfo=timezone.utc).isoformat() if all_day and isinstance(due, datetime) else due.isoformat()
+    start_iso = None
+    if start is not None:
+        start_iso = start.replace(tzinfo=timezone.utc).isoformat() if all_day and isinstance(start, datetime) else start.isoformat()
+
+    return db_add_reminder(
+        conn, calendar_id, uid, summary,
+        due=due_iso, start=start_iso,
+        all_day=1 if all_day else 0,
+        location=location, description=description,
+        status="NEEDS-ACTION",
+        rrule=prev_rrule, exdates=prev_exdates,
+        tzid=_tzid_of(due, due),
+    )
+
+
 _sync_lock = threading.Lock()
 
 

@@ -596,6 +596,20 @@ def add_reminder(
     return dict(row)
 
 
+def delete_reminder(conn: sqlite3.Connection, calendar_id: int, uid: str) -> bool:
+    """Remove a reminder (and any detached overrides) for a calendar. Returns True if a row was removed."""
+    cur = conn.execute("DELETE FROM reminders WHERE calendar_id=? AND uid=?", (calendar_id, uid))
+    cur.execute("DELETE FROM reminder_overrides WHERE calendar_id=? AND uid=?", (calendar_id, uid))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def set_reminder_href(conn: sqlite3.Connection, calendar_id: int, uid: str, href: str) -> None:
+    """Record the server resource path for a reminder (needed for incremental-sync deletions)."""
+    conn.execute("UPDATE reminders SET href=? WHERE calendar_id=? AND uid=?", (href, calendar_id, uid))
+    conn.commit()
+
+
 def add_event(
     conn: sqlite3.Connection,
     calendar_id: int,
