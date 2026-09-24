@@ -27,6 +27,7 @@ Panel {
     readonly property string apiBase: "http://127.0.0.1:9876"
     readonly property string calendarsUrl: apiBase + "/api/calendars"
     readonly property string eventsUrl: apiBase + "/api/events"
+    readonly property string remindersUrl: apiBase + "/api/reminders"
 
     property var calendars: []
     property var events: []
@@ -575,6 +576,22 @@ Panel {
         return Qt.formatTime(start, "HH:mm")
     }
 
+    // A reminder's relevant instant is DUE, not start/end. All-day reminders
+    // read "All day"; timed ones show the due time.
+    function reminderTimeStr(ev) {
+        if (Number(ev.all_day)) return "All day"
+        var due = new Date(ev.due)
+        return Qt.formatTime(due, "HH:mm")
+    }
+
+    // Display line for a day-view / preview row. Reminders are prefixed with
+    // "Reminder" so they read distinctly from events.
+    function eventDisplayText(ev) {
+        var time = ev.isReminder ? reminderTimeStr(ev) : eventTimeStr(ev)
+        var prefix = ev.isReminder ? "Reminder \u2014 " : ""
+        return prefix + time + " \u2014 " + ev.summary
+    }
+
     // Whether an event's calendar accepts writes. Shared read-only calendars
     // (a spouse's, e.g.) have no stored credentials, so the API reports
     // writable:false -- the panel must not offer edit/delete on those.
@@ -645,43 +662,75 @@ Panel {
         // and those cells need their events to draw their dots.
         var start = gridStartDate()
         var end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 42)
-        var url = eventsUrl + "?start=" + encodeURIComponent(start.toISOString())
+        var calParam = "&calendars=" + encodeURIComponent(calIds.join(","))
+        var rangeParam = "?start=" + encodeURIComponent(start.toISOString())
             + "&end=" + encodeURIComponent(end.toISOString())
-            + "&calendars=" + encodeURIComponent(calIds.join(","))
-        var xhr = new XMLHttpRequest()
-        xhr.open("GET", url, true)
-        xhr.timeout = 15000
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE) {
-                loadingEvents = false
-                if (xhr.status === 200) {
+
+        // Events and reminders are fetched in parallel; the view recomputes once
+        // BOTH have landed (applyRangeData is idempotent, so the second caller
+        // just re-renders with the merged data).
+        var eventsDone = false
+        var remindersDone = false
+        function applyRangeData() {
+            if (!eventsDone || !remindersDone) return
+            loadingEvents = false
+            if (viewMode === "month") {
+                rangeDaysArr = computeRangeDays()
+                computeWeekRows()
+            } else if (viewMode === "day" && pendingDayDate) {
+                gotoDay(pendingDayDate)
+                pendingDayDate = null
+            } else if (viewMode === "day" && dayDate) {
+                var dayKey = Model.keyForDate(dayDate)
+                dayEvents = monthEvents[dayKey] || []
+            }
+            if (refreshLabels) initRange()
+        }
+
+        var exhr = new XMLHttpRequest()
+        exhr.open("GET", eventsUrl + rangeParam + calParam, true)
+        exhr.timeout = 15000
+        exhr.onreadystatechange = function() {
+            if (exhr.readyState === XMLHttpRequest.DONE) {
+                eventsDone = true
+                if (exhr.status === 200) {
                     var data = null
-                    try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
+                    try { data = JSON.parse(exhr.responseText) } catch (e) { data = null }
                     if (Array.isArray(data)) {
                         events = data
                         monthEvents = groupEventsByDay(data)
-                        if (viewMode === "month") {
-                            rangeDaysArr = computeRangeDays()
-                            computeWeekRows()
-                        } else if (viewMode === "day" && pendingDayDate) {
-                            gotoDay(pendingDayDate)
-                            pendingDayDate = null
-                        } else if (viewMode === "day" && dayDate) {
-                            var dayKey = Model.keyForDate(dayDate)
-                            dayEvents = monthEvents[dayKey] || []
-                        }
-                        if (refreshLabels) initRange()
                     } else if (data === null) {
                         error = "Bad response from omacal API"
                     } else {
                         error = "API error"
                     }
                 } else {
-                    error = xhr.status === 0 ? "omacal API did not respond" : "API error " + xhr.status
+                    error = exhr.status === 0 ? "omacal API did not respond" : "API error " + exhr.status
                 }
+                applyRangeData()
             }
         }
-        xhr.send()
+        exhr.send()
+
+        var rxhr = new XMLHttpRequest()
+        rxhr.open("GET", remindersUrl + rangeParam + calParam, true)
+        rxhr.timeout = 15000
+        rxhr.onreadystatechange = function() {
+            if (rxhr.readyState === XMLHttpRequest.DONE) {
+                remindersDone = true
+                if (rxhr.status === 200) {
+                    var rdata = null
+                    try { rdata = JSON.parse(rxhr.responseText) } catch (e) { rdata = null }
+                    if (Array.isArray(rdata)) {
+                        mergeRemindersIntoMonth(rdata)
+                    }
+                }
+                // A reminders fetch failure is non-fatal: the calendar still
+                // renders, just without reminders.
+                applyRangeData()
+            }
+        }
+        rxhr.send()
     }
 
     // Colour for an event's month-grid dot, darkened when the cell is
@@ -737,6 +786,41 @@ Panel {
     }
 
     function pad2(v) { var n = Number(v); return (n < 10 ? "0" : "") + n }
+
+    // Bucket reminders by their DUE date. A reminder's relevant instant is DUE
+    // (when it fires / needs doing), not a start/end pair. All-day reminders
+    // are date-valued and land in the cache at UTC midnight, so read their
+    // date straight off the ISO string (same rule as all-day events).
+    function groupRemindersByDay(rlist) {
+        var map = {}
+        for (var i = 0; i < rlist.length; i++) {
+            var r = rlist[i]
+            r.isReminder = true
+            var allDay = Number(r.all_day) === 1
+            var day
+            if (allDay) {
+                day = dateFromIso(r.due)
+            } else {
+                var d = new Date(r.due)
+                day = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+            }
+            var key = day.getFullYear() + "-" + pad2(day.getMonth() + 1) + "-" + pad2(day.getDate())
+            if (!map[key]) map[key] = []
+            map[key].push(r)
+        }
+        return map
+    }
+
+    // Merge reminders into the shared monthEvents map so every surface (month
+    // dots, day view, day-preview pane) picks them up. Reminders are appended
+    // after events so events sort first within a day.
+    function mergeRemindersIntoMonth(reminders) {
+        var rmap = groupRemindersByDay(reminders)
+        for (var key in rmap) {
+            if (!monthEvents[key]) monthEvents[key] = []
+            monthEvents[key] = monthEvents[key].concat(rmap[key])
+        }
+    }
 
     function eventsForDay(year, month, day) {
         var key = year + "-" + pad2(month + 1) + "-" + pad2(day)
@@ -1214,7 +1298,7 @@ Panel {
                                                 anchors.leftMargin: 10
                                                 anchors.right: parent.right
                                                 anchors.top: parent.top
-                                                text: root.eventTimeStr(modelData) + " \u2014 " + modelData.summary
+                                                text: root.eventDisplayText(modelData)
                                                 textFormat: Text.PlainText
                                                 wrapMode: Text.WordWrap
                                                 font.family: root.contentFontFamily
@@ -1345,11 +1429,15 @@ Panel {
                                                         spacing: 2
                                                         Repeater {
                                                             model: modelData.dayEvents
+                                                            // Reminders render as a hollow (outlined) dot so they read as
+                                                            // "a task is due" at a glance, distinct from filled event dots.
                                                             Rectangle {
                                                                 width: 5
                                                                 height: 5
                                                                 radius: 2
-                                                                color: root.eventDotColor(modelData, isDimmed)
+                                                                color: modelData.isReminder ? "transparent" : root.eventDotColor(modelData, isDimmed)
+                                                                border.width: modelData.isReminder ? 1 : 0
+                                                                border.color: modelData.isReminder ? root.eventDotColor(modelData, isDimmed) : "transparent"
                                                             }
                                                         }
                                                     }
@@ -1412,6 +1500,9 @@ Panel {
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         cursorShape: root.calendarWritable(modelData) ? Qt.PointingHandCursor : Qt.ArrowCursor
                                         onClicked: {
+                                            // Reminder add/edit/delete is a later step; for now a
+                                            // reminder row is display-only.
+                                            if (modelData.isReminder) return
                                             // Read-only shared calendars (a spouse's, e.g.) reject
                                             // writes server-side, so don't offer edit/delete on them.
                                             if (!root.calendarWritable(modelData)) {
@@ -1444,7 +1535,7 @@ Panel {
                                         anchors.leftMargin: 10
                                         anchors.right: parent.right
                                         anchors.top: parent.top
-                                        text: root.eventTimeStr(modelData) + " \u2014 " + modelData.summary
+                                        text: root.eventDisplayText(modelData)
                                         textFormat: Text.PlainText
                                         wrapMode: Text.WordWrap
                                         horizontalAlignment: Text.AlignLeft
