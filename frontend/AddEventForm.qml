@@ -39,39 +39,47 @@ Column {
     Item {
         width: dayContent.width
         height: Style.spacing.controlHeight
-        FormLabel {
-            id: typeLabel
-            formPanel: panel
-            text: "Type"
-        }
-        // Segmented two-button control. The low-level Button's `selected`
-        // state is a pure display binding (fill/border/bold from the pressed
-        // state) -- clicking only emits clicked(), it never writes a selection
-        // back. So the active highlight is bound directly to the panel
-        // property and can never desync from it, unlike a Dropdown (which
-        // self-stores `value` and severs the binding on first use: picking
-        // Reminder then cancelling left the dropdown stuck on Reminder while
-        // the form was back on Event).
+        // Segmented two-button control, centred and self-explanatory (the
+        // selected fill/bold makes the active mode obvious). The low-level
+        // Button's `selected` state is a pure display binding -- clicking only
+        // emits clicked(), it never writes a selection back. So the highlight
+        // stays bound to the panel property and can never desync from it,
+        // unlike a Dropdown (which self-stores `value` and severs the binding
+        // on first use: picking Reminder then cancelling left the dropdown
+        // stuck on Reminder while the form was back on Event).
         Row {
-            anchors.left: typeLabel.right
-            anchors.leftMargin: Style.space(34)
+            anchors.horizontalCenter: parent.horizontalCenter
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.space(2)
             Button {
-                text: "Event"
+                text: "EVENT"
                 selected: !panel.newEventIsReminder
                 foreground: panel.contentForeground
                 accent: panel.accent
                 fontFamily: panel.contentFontFamily
+                fontSize: Style.font.title
+                horizontalPadding: Style.spacing.controlPaddingX * 2
                 onClicked: panel.newEventIsReminder = false
             }
             Button {
-                text: "Reminder"
+                text: "REMINDER"
                 selected: panel.newEventIsReminder
                 foreground: panel.contentForeground
                 accent: panel.accent
                 fontFamily: panel.contentFontFamily
-                onClicked: panel.newEventIsReminder = true
+                fontSize: Style.font.title
+                horizontalPadding: Style.spacing.controlPaddingX * 2
+                onClicked: {
+                    panel.newEventIsReminder = true
+                    // Default a new reminder to All Day (matches how existing
+                    // reminders are stored -- date-only) and route it to the
+                    // task calendar. Editing an existing reminder keeps its
+                    // own all-day state and calendar.
+                    if (!panel.editingUid) {
+                        panel.newEventAllDay = true
+                        panel.newEventCalendarId = panel.defaultReminderCalendarId()
+                    }
+                }
             }
         }
     }
@@ -105,6 +113,9 @@ Column {
     }
 
     Item {
+        // Reminders auto-route to the task calendar, so the dropdown is hidden
+        // in reminder mode (it would only offer that one VTODO-capable target).
+        visible: !panel.newEventIsReminder
         width: dayContent.width
         height: Style.spacing.controlHeight
         FormLabel {
@@ -135,7 +146,7 @@ Column {
         id: allDayToggle
         width: dayContent.width
         label: "All day"
-        description: "Date-only event, no start/end time"
+        description: panel.newEventIsReminder ? "Date-only reminder, no time" : "Date-only event, no start/end time"
         checked: panel.newEventAllDay
         foreground: panel.contentForeground
         accent: panel.accent

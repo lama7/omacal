@@ -162,6 +162,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         cur.execute("UPDATE calendars SET password = NULL")
         cur.execute("INSERT INTO schema_version VALUES (7)")
 
+    if version < 9:
+        # Whether a calendar's server advertises VTODO (task) support. Lets the
+        # panel route reminders to the right calendar instead of showing every
+        # event calendar. Defaults to 0 (events); discovery rewrites it.
+        cols = {r[1] for r in cur.execute("PRAGMA table_info(calendars)")}
+        if "supports_todo" not in cols:
+            cur.execute("ALTER TABLE calendars ADD COLUMN supports_todo INTEGER NOT NULL DEFAULT 0")
+        cur.execute("INSERT INTO schema_version VALUES (9)")
+
     if version < 8:
         # Reminder support. A reminder is a CalDAV VTODO: it has a DUE date
         # (when it fires / needs doing) rather than an event's DTEND, plus
@@ -230,22 +239,24 @@ def add_calendar(
     password: str | None = None,
     color: str | None = None,
     principal_url: str | None = None,
+    supports_todo: int = 0,
 ) -> int:
     # The password is never stored in the DB — it lives in the keyring. The
     # column is kept for schema stability but always written as NULL.
     cur = conn.execute(
         """INSERT INTO calendars
-           (uid, display_name, url, username, password, color, principal_url, last_sync, enabled)
-           VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, 1)
+           (uid, display_name, url, username, password, color, principal_url, last_sync, enabled, supports_todo)
+           VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, 1, ?)
         ON CONFLICT(uid) DO UPDATE SET
            display_name = excluded.display_name,
            url = excluded.url,
            username = excluded.username,
            password = NULL,
            color = excluded.color,
-           principal_url = excluded.principal_url
+           principal_url = excluded.principal_url,
+           supports_todo = excluded.supports_todo
         RETURNING id""",
-        (uid, display_name, url, username, color, principal_url),
+        (uid, display_name, url, username, color, principal_url, supports_todo),
     )
     row = cur.fetchone()
     conn.commit()
@@ -254,7 +265,7 @@ def add_calendar(
 
 def list_calendars(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     cur = conn.execute(
-        "SELECT id, uid, display_name, color, url, username, password, principal_url, last_sync, sync_token, enabled FROM calendars ORDER BY display_name"
+        "SELECT id, uid, display_name, color, url, username, password, principal_url, last_sync, sync_token, enabled, supports_todo FROM calendars ORDER BY display_name"
     )
     return [dict(r) for r in cur.fetchall()]
 

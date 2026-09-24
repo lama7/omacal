@@ -266,6 +266,15 @@ Panel {
         }
     }
 
+    // The calendar a new reminder should go to: the user's own writable
+    // VTODO-capable (task) calendar. Falls back to the first writable calendar
+    // if none advertises VTODO (e.g. a server that doesn't report it).
+    function defaultReminderCalendarId() {
+        var writable = calendars.filter(function(c) { return c.writable })
+        var task = writable.find(function(c) { return c.supports_todo })
+        return task ? task.id : (writable.length > 0 ? writable[0].id : 0)
+    }
+
     function openAddForm() {
         showAddForm = true
         editingUid = ""
@@ -289,10 +298,15 @@ Panel {
         addEventForm.endsDropdown.value = "never"
         addEventForm.endsCountField.text = ""
         addEventForm.untilDateField.clear()
-        // Default calendar: prefer "Dad's Calendar", then first writable
+        // Default calendar: reminders go to the task calendar (VTODO-capable);
+        // events prefer "Dad's Calendar", then the first writable.
         var writable = calendars.filter(function(c) { return c.writable })
-        var dadCal = writable.find(function(c) { return c.display_name === "Dad's Calendar" })
-        newEventCalendarId = dadCal ? dadCal.id : (writable.length > 0 ? writable[0].id : 0)
+        if (newEventIsReminder) {
+            newEventCalendarId = defaultReminderCalendarId()
+        } else {
+            var dadCal = writable.find(function(c) { return c.display_name === "Dad's Calendar" })
+            newEventCalendarId = dadCal ? dadCal.id : (writable.length > 0 ? writable[0].id : 0)
+        }
         // Sync dropdown initial values — Dropdowns use direct assignment
         // (selectCurrent does root.value = v), so bindings can't be used.
         addEventForm.calendarDropdown.value = String(newEventCalendarId)

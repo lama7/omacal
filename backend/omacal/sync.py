@@ -418,6 +418,7 @@ def _discover_calendars(
                 "color": props.get("{http://apple.com/ns/ical/}calendar-color"),
                 "principal_url": (str(principal.url) if principal.url else None),
                 "writable": _check_writable(client, cal_url),
+                "supports_todo": 1 if (comp_set and "VTODO" in comp_set) else 0,
             })
         except Exception as e:
             logger.warning("Skipping calendar %s: %s", cal_url, e)
@@ -558,6 +559,7 @@ def sync_source(
             username if is_writable else None,
             password if is_writable else None,
             prop_color, cal_info.get("principal_url"),
+            supports_todo=cal_info.get("supports_todo", 0),
         )
 
         # One sync-collection REPORT per calendar: full replace on the first
