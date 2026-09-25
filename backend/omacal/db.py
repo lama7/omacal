@@ -227,6 +227,29 @@ def _migrate(conn: sqlite3.Connection) -> None:
         """)
         cur.execute("INSERT INTO schema_version VALUES (8)")
 
+    if version < 10:
+        # Reminder alarms (2026-09). A reminder can carry a heads-up that
+        # fires before DUE. Timed reminders use a relative VALARM offset
+        # (alarm_offset_seconds, default 3600 = 1h before DUE); all-day
+        # reminders use an absolute alarm time on the due date
+        # (alarm_time, "HH:MM"). The fired table dedupes so a recurring
+        # reminder toasts each occurrence once.
+        rcols = {r[1] for r in cur.execute("PRAGMA table_info(reminders)")}
+        if "alarm_offset_seconds" not in rcols:
+            cur.execute("ALTER TABLE reminders ADD COLUMN alarm_offset_seconds INTEGER")
+        if "alarm_time" not in rcols:
+            cur.execute("ALTER TABLE reminders ADD COLUMN alarm_time TEXT")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS reminder_alarms_fired (
+                calendar_id INTEGER NOT NULL,
+                uid TEXT NOT NULL,
+                occurrence_due TEXT NOT NULL,   -- ISO instant of the DUE that fired
+                fired_at TIMESTAMP NOT NULL,
+                PRIMARY KEY (calendar_id, uid, occurrence_due)
+            )
+        """)
+        cur.execute("INSERT INTO schema_version VALUES (10)")
+
     conn.commit()
 
 
@@ -314,8 +337,8 @@ def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict]
                        transparency=excluded.transparency,
                        rrule=excluded.rrule,
                        exdates=excluded.exdates,
-                       href=excluded.href,
-                       tzid=excluded.tzid
+href=excluded.href,
+tzid=excluded.tzid,
                     """,
                     (
                         calendar_id,
@@ -423,8 +446,8 @@ def get_overrides(conn: sqlite3.Connection, calendar_ids: list[int] | None = Non
 # ---------------------------------------------------------------------------
 
 _reminder_cols = (
-    "(calendar_id, uid, summary, description, location, start, due, all_day, "
-    "status, priority, rrule, exdates, href, tzid)"
+"(calendar_id, uid, summary, description, location, start, due, all_day, "
+"status, priority, rrule, exdates, href, tzid, alarm_offset_seconds, alarm_time)"
 )
 
 
@@ -434,8 +457,8 @@ def upsert_reminders(conn: sqlite3.Connection, calendar_id: int, reminders: list
     for rm in reminders:
         cur.execute(
             f"""INSERT INTO reminders {_reminder_cols}
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(calendar_id, uid) DO UPDATE SET
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(calendar_id, uid) DO UPDATE SET
                 summary=excluded.summary,
                 description=excluded.description,
                 location=excluded.location,
@@ -447,7 +470,9 @@ def upsert_reminders(conn: sqlite3.Connection, calendar_id: int, reminders: list
                 rrule=excluded.rrule,
                 exdates=excluded.exdates,
                 href=excluded.href,
-                tzid=excluded.tzid
+                tzid=excluded.tzid,
+                alarm_offset_seconds=excluded.alarm_offset_seconds,
+                alarm_time=excluded.alarm_time
             """,
             (
                 calendar_id,
@@ -462,8 +487,10 @@ def upsert_reminders(conn: sqlite3.Connection, calendar_id: int, reminders: list
                 rm.get("priority"),
                 rm.get("rrule"),
                 rm.get("exdates"),
-                rm.get("href"),
-                rm.get("tzid"),
+rm.get("href"),
+rm.get("tzid"),
+rm.get("alarm_offset_seconds"),
+rm.get("alarm_time"),
             ),
         )
     if commit:
@@ -591,15 +618,18 @@ def add_reminder(
     exdates: str | None = None,
     href: str | None = None,
     tzid: str | None = None,
+    alarm_offset_seconds: int | None = None,
+    alarm_time: str | None = None,
 ) -> dict[str, Any]:
     """Insert a single reminder into the local cache. Returns the row as a dict."""
     cur = conn.execute(
         f"""INSERT OR REPLACE INTO reminders {_reminder_cols}
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id, calendar_id, uid, summary, description, location,
-                  start, due, all_day, status, priority, rrule, exdates, href, tzid""",
+                  start, due, all_day, status, priority, rrule, exdates, href, tzid,
+                  alarm_offset_seconds, alarm_time""",
         (calendar_id, uid, summary, description, location, start, due, all_day,
-         status, priority, rrule, exdates, href, tzid),
+         status, priority, rrule, exdates, href, tzid, alarm_offset_seconds, alarm_time),
     )
     row = cur.fetchone()
     cur.close()
@@ -620,6 +650,25 @@ def set_reminder_href(conn: sqlite3.Connection, calendar_id: int, uid: str, href
     conn.execute("UPDATE reminders SET href=? WHERE calendar_id=? AND uid=?", (href, calendar_id, uid))
     conn.commit()
 
+
+
+def mark_alarm_fired(conn: sqlite3.Connection, calendar_id: int, uid: str, occurrence_due: str, fired_at: str | None = None) -> None:
+    """Record that a reminder occurrence's alarm has been toasted (dedupes recurring reminders)."""
+    fired_at = fired_at or datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT OR REPLACE INTO reminder_alarms_fired (calendar_id, uid, occurrence_due, fired_at) VALUES (?, ?, ?, ?)",
+        (calendar_id, uid, occurrence_due, fired_at),
+    )
+    conn.commit()
+
+
+def is_alarm_fired(conn: sqlite3.Connection, calendar_id: int, uid: str, occurrence_due: str) -> bool:
+    """True if this reminder occurrence's alarm has already been toasted."""
+    cur = conn.execute(
+        "SELECT 1 FROM reminder_alarms_fired WHERE calendar_id=? AND uid=? AND occurrence_due=?",
+        (calendar_id, uid, occurrence_due),
+    )
+    return cur.fetchone() is not None
 
 def add_event(
     conn: sqlite3.Connection,
@@ -763,3 +812,8 @@ def update_event(
     cur.close()
     conn.commit()
     return dict(row) if row else {}
+
+
+
+
+

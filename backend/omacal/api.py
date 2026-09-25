@@ -168,6 +168,14 @@ class OmacalHandler(BaseHTTPRequestHandler):
             start = datetime.combine(local_today, time.min).astimezone(timezone.utc)
             end = datetime.combine(local_today + timedelta(days=1), time.min).astimezone(timezone.utc)
             events = self._events_in_window(start, end, None)
+            # All-day events are cached at UTC midnight regardless of local
+            # zone, so the local-midnight window above can pull in the NEXT
+            # local day's all-day events (a 2026-09-26T00:00:00Z all-day event
+            # falls inside [09-25T04:00Z, 09-26T04:00Z) at UTC-4 and shows as
+            # today). An all-day event belongs to today only when its DATE
+            # part is today; timed events keep the honest overlap test.
+            today_iso = local_today.isoformat()
+            events = [e for e in events if (not e.get("all_day")) or e["start"][:10] == today_iso]
             self._json(200, events)
             return
 
@@ -330,6 +338,8 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 all_day = data.get("all_day", False)
                 location = data.get("location", "")
                 description = data.get("description", "")
+                alarm_offset = data.get("alarm_offset")
+                alarm_time = data.get("alarm_time")
                 rrule = (data.get("rrule") or "").strip() or None
 
                 due_dt = datetime.fromisoformat(due_str)
@@ -343,7 +353,8 @@ class OmacalHandler(BaseHTTPRequestHandler):
 
                 from omacal.sync import create_reminder
                 result = create_reminder(self.db_conn, calendar_id, summary, due_dt,
-                                         start_dt, all_day, location, description, rrule=rrule)
+                                         start_dt, all_day, location, description, rrule=rrule,
+                                         alarm_offset=alarm_offset, alarm_time=alarm_time)
                 self._json(200, result)
             except (ValueError, KeyError) as e:
                 self._json(400, {"error": str(e)})
@@ -470,6 +481,8 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 all_day = data.get("all_day", False)
                 location = data.get("location", "")
                 description = data.get("description", "")
+                alarm_offset = data.get("alarm_offset")
+                alarm_time = data.get("alarm_time")
 
                 due_dt = datetime.fromisoformat(due_str)
                 if due_dt.tzinfo is None:
@@ -482,7 +495,8 @@ class OmacalHandler(BaseHTTPRequestHandler):
 
                 from omacal.sync import update_reminder
                 result = update_reminder(self.db_conn, calendar_id, uid, summary, due_dt,
-                                         start_dt, all_day, location, description)
+                                         start_dt, all_day, location, description,
+                                         alarm_offset=alarm_offset, alarm_time=alarm_time)
                 self._json(200, result)
             except Exception as e:
                 import traceback
@@ -678,6 +692,25 @@ class OmacalServer:
         _scheduler = threading.Thread(target=scheduler, daemon=True)
         _scheduler.start()
 
+        # Reminder alarm delivery: check for due alarms every 30s (same daemon
+        # scheduler pattern as the sync). Each check runs in its own worker
+        # thread so a hung delivery can't stall future checks.
+        alarm_interval = self.cfg.get("alarm_check_interval", 30)
+
+        def run_alarm_check():
+            from omacal.sync import check_due_alarms
+            try:
+                fired = check_due_alarms()
+                if fired:
+                    logger.info("Fired %d reminder alarm(s)", len(fired))
+            except Exception as e:
+                logger.error("Alarm check failed: %s", e)
+        def alarm_scheduler():
+            while not stop.wait(alarm_interval):
+                threading.Thread(target=run_alarm_check, daemon=True).start()
+        _alarm_check = threading.Thread(target=alarm_scheduler, daemon=True)
+        _alarm_check.start()
+
         if background:
             return server
         try:
@@ -750,3 +783,11 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+
+
+
+
+
+

@@ -7,12 +7,12 @@ import logging
 import re
 import threading
 import traceback
-from datetime import datetime, timedelta, timezone, date as date_type
+from datetime import datetime, time, timedelta, timezone, date as date_type
 from pathlib import Path
 from typing import Any
 
 import caldav
-from icalendar import Calendar
+from icalendar import Calendar, Alarm, vDatetime, vDate
 
 from omacal.config import load_config
 from omacal.db import (add_calendar, replace_calendar_events, replace_calendar_reminders,
@@ -325,6 +325,24 @@ def _parse_ical_reminders(cal_data: bytes, calendar_id: int, cutoff: datetime, h
             if rid is not None and isinstance(rid, datetime) and rid.tzinfo is None:
                 rid = rid.replace(tzinfo=timezone.utc)
 
+        # VALARM read-back: a relative TRIGGER means a lead-time offset
+        # before DUE (timed); an absolute TRIGGER means a time on the DUE
+        # date (all-day). Persist as alarm_offset_seconds / alarm_time.
+        alarm_offset_seconds = None
+        alarm_time = None
+        for _sub in component.subcomponents:
+            if _sub.name != "VALARM":
+                continue
+            _trig = _sub.get("TRIGGER")
+            if _trig is None:
+                continue
+            if isinstance(_trig, timedelta):
+                alarm_offset_seconds = int(-_trig.total_seconds())
+            elif isinstance(_trig, datetime):
+                alarm_time = _trig.strftime("%H:%M")
+            elif isinstance(_trig, date_type):
+                alarm_time = "09:00"
+            break
         rec = {
             "uid": uid,
             "summary": summary,
@@ -338,6 +356,8 @@ def _parse_ical_reminders(cal_data: bytes, calendar_id: int, cutoff: datetime, h
             "rrule": rrule_str,
             "exdates": json.dumps(_exdate_values(component)) if rrule_str else None,
             "href": href,
+            "alarm_offset_seconds": alarm_offset_seconds,
+            "alarm_time": alarm_time,
             "tzid": tzid,
         }
         if rid is not None:
@@ -935,6 +955,66 @@ def _todo_due_value(due: datetime, all_day: bool):
     return due
 
 
+def _parse_alarm_time(alarm_time: str | None) -> tuple[int, int]:
+    """Split 'HH:MM' into (hour, minute); default 09:00."""
+    if alarm_time and ":" in alarm_time:
+        try:
+            h, m = alarm_time.split(":", 1)
+            return max(0, min(23, int(h))), max(0, min(59, int(m)))
+        except ValueError:
+            pass
+    return 9, 0
+
+
+def _set_valarm(comp, due: datetime, all_day: bool, alarm_offset: int | None, alarm_time: str | None, summary: str):
+    """Set (or replace) the VALARM on a VTODO component.
+
+    Timed: relative TRIGGER before DUE (alarm_offset seconds, default 3600).
+    All-day: absolute TRIGGER;VALUE=DATE-TIME at alarm_time on the DUE date
+    (a relative 1h-before-midnight would fire the previous evening).
+    """
+    for sub in [s for s in comp.subcomponents if s.name == "VALARM"]:
+        comp.subcomponents.remove(sub)
+    alarm = Alarm()
+    alarm.add("action", "DISPLAY")
+    alarm.add("description", summary or "Reminder")
+    if all_day:
+        d = due.date() if isinstance(due, datetime) else due
+        hh, mm = _parse_alarm_time(alarm_time)
+        local_tz = datetime.now().astimezone().tzinfo
+        dt = datetime.combine(d, time(hh, mm), tzinfo=local_tz)
+        alarm.add("trigger", vDatetime(dt), parameters={"VALUE": "DATE-TIME"})
+    else:
+        offset = alarm_offset if alarm_offset is not None else 3600
+        alarm.add("trigger", timedelta(seconds=-offset))
+    comp.add_component(alarm)
+
+
+def reminder_alarm_instant(row: dict) -> datetime | None:
+    """The instant this reminder occurrence's alarm should fire (aware datetime).
+
+    None when the reminder carries no alarm (both alarm fields NULL -- a legacy
+    reminder created before alarms existed).
+    """
+    due_iso = row.get("due")
+    if not due_iso:
+        return None
+    due = datetime.fromisoformat(str(due_iso).replace("Z", "+00:00"))
+    if due.tzinfo is None:
+        due = due.replace(tzinfo=timezone.utc)
+    if row.get("all_day"):
+        alarm_time = row.get("alarm_time")
+        if not alarm_time:
+            return None
+        hh, mm = _parse_alarm_time(alarm_time)
+        return datetime.combine(due.date(), time(hh, mm), tzinfo=datetime.now().astimezone().tzinfo)
+    offset = row.get("alarm_offset_seconds")
+    if offset is None:
+        return None
+    return due - timedelta(seconds=int(offset))
+
+
+
 def create_reminder(
     conn: Any,
     calendar_id: int,
@@ -945,19 +1025,27 @@ def create_reminder(
     location: str | None = None,
     description: str | None = None,
     rrule: str | None = None,
+    alarm_offset: int | None = None,
+    alarm_time: str | None = None,
 ) -> dict[str, Any]:
     """Create a reminder (VTODO) on the CalDAV server and cache it locally.
 
     DUE is the fire/display date (a reminder has no DTEND). DTSTART is optional
     and defaults to DUE, matching how iOS writes tasks (both set to the same
-    instant). all_day stores DATE-valued DUE/DTSTART. Pushes first; only caches
-    if the server accepts it. Returns the cached row as a dict.
+    instant). all_day stores DATE-valued DUE/DTSTART. A VALARM carries the
+    heads-up: timed reminders use a relative offset before DUE (alarm_offset,
+    default 3600 = 1h); all-day reminders use an absolute time on the DUE date
+    (alarm_time "HH:MM", default 09:00). Pushes first; only caches if the
+    server accepts it. Returns the cached row as a dict.
     """
     from uuid import uuid4
 
     from omacal.db import add_reminder
 
     url, username, password = _calendar_creds(conn, calendar_id)
+
+    if all_day and not alarm_time:
+        alarm_time = "09:00"
 
     uid = str(uuid4())
     push_kwargs: dict[str, Any] = {
@@ -979,7 +1067,14 @@ def create_reminder(
 
     client = _dav_client(url, username, password)
     cal_obj = client.calendar(url=url)
-    cal_obj.add_todo(**push_kwargs)
+    todo = cal_obj.add_todo(**push_kwargs)
+    # Add the VALARM on the returned component -- caldav's add_alarm can't emit
+    # the all-day TRIGGER;VALUE=DATE-TIME form, and the timed default (1h) has
+    # to be made explicit.
+    comp = todo.icalendar_component
+    _set_valarm(comp, due, all_day, alarm_offset, alarm_time, summary)
+    todo.data = comp.to_ical().decode()
+    todo.save()
 
     due_iso = due.replace(tzinfo=timezone.utc).isoformat() if all_day and isinstance(due, datetime) else due.isoformat()
     start_iso = None
@@ -994,10 +1089,10 @@ def create_reminder(
         status="NEEDS-ACTION",
         rrule=rrule,
         tzid=_tzid_of(due, due),
+        alarm_offset_seconds=None if all_day else (alarm_offset if alarm_offset is not None else 3600),
+        alarm_time=alarm_time if all_day else None,
     )
     return cached
-
-
 def delete_reminder(conn: Any, calendar_id: int, uid: str) -> dict[str, Any]:
     """Delete a reminder (VTODO) from the CalDAV server and local cache.
 
@@ -1042,6 +1137,8 @@ def update_reminder(
     all_day: bool = False,
     location: str | None = None,
     description: str | None = None,
+    alarm_offset: int | None = None,
+    alarm_time: str | None = None,
 ) -> dict[str, Any]:
     """Update an existing reminder (VTODO) on the server and local cache.
 
@@ -1090,6 +1187,7 @@ def update_reminder(
     # STATUS must stay NEEDS-ACTION while it's still a live reminder.
     comp.pop("STATUS", None)
     comp["status"] = "NEEDS-ACTION"
+    _set_valarm(comp, due, all_day, alarm_offset, alarm_time, summary)
     todo.data = comp.to_ical().decode()
     todo.save()
 
@@ -1114,7 +1212,83 @@ def update_reminder(
         status="NEEDS-ACTION",
         rrule=prev_rrule, exdates=prev_exdates,
         tzid=_tzid_of(due, due),
+        alarm_offset_seconds=None if all_day else (alarm_offset if alarm_offset is not None else 3600),
+        alarm_time=alarm_time if all_day else None,
     )
+
+
+def _deliver_alarm_toast(summary: str) -> None:
+    """Fire the omarchy desktop toast for a due reminder."""
+    import subprocess
+    try:
+        subprocess.run(
+            ["omarchy-notification-send", "-g", "\U0001F362", "-u", "normal",
+             "Reminder due", summary or "Reminder"],
+            check=False, capture_output=True, timeout=10,
+        )
+    except Exception as e:
+        logger.error("Failed to send reminder toast: %s", e)
+
+
+def check_due_alarms(config_path: Path | None = None, now: datetime | None = None) -> list[dict]:
+    """Fire toasts for reminders whose alarm instant has passed and not yet toasted.
+
+    Called on a short timer by the API server. Expands reminders over a wide
+    window (an all-day reminder's DUE is midnight but its alarm fires hours
+    into the day, so a narrow window would miss it), then toasts each
+    occurrence whose alarm fired within the last hour -- so a machine that was
+    sleeping still catches recently-due alarms, but a long-dormant reminder
+    doesn't flood toasts. Each (calendar, uid, occurrence DUE) is marked fired
+    so recurring reminders toast once per occurrence; the fired table is keyed
+    on uid+calendar (not the row id) so a full sync that re-inserts rows with
+    new ids doesn't re-toast.
+    """
+    import sqlite3
+
+    from omacal.db import (_migrate, get_reminders_for_window, get_reminder_overrides,
+                           mark_alarm_fired, is_alarm_fired)
+    from omacal.recur import expand_reminders
+
+    now = now or datetime.now().astimezone()
+    grace_start = now - timedelta(hours=1)
+    # Wide expand window: covers all-day (DUE at midnight, alarm hours later)
+    # and any reasonable lead offset.
+    expand_start = now - timedelta(hours=48)
+    expand_end = now + timedelta(hours=48)
+
+    cfg = load_config(config_path)
+    db_path = Path(cfg["database"])
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    _migrate(conn)
+    try:
+        masters = get_reminders_for_window(conn, expand_start, expand_end, None)
+        if not masters:
+            return []
+        overrides = get_reminder_overrides(conn, None)
+        occurrences = expand_reminders(masters, overrides, expand_start, expand_end)
+        fired_rows = []
+        for occ in occurrences:
+            alarm_at = reminder_alarm_instant(occ)
+            if alarm_at is None:
+                continue
+            if not (alarm_at <= now and alarm_at >= grace_start):
+                continue
+            cid = occ.get("calendar_id")
+            uid = occ.get("uid")
+            due = str(occ.get("due") or "")
+            if is_alarm_fired(conn, cid, uid, due):
+                continue
+            _deliver_alarm_toast(occ.get("summary") or "Reminder")
+            mark_alarm_fired(conn, cid, uid, due)
+            fired_rows.append(occ)
+        return fired_rows
+    finally:
+        conn.close()
+
 
 
 _sync_lock = threading.Lock()
@@ -1215,3 +1389,9 @@ def _sync_all_locked(config_path: Path | None = None) -> dict[str, Any]:
 
     conn.close()
     return {"total_events": total, "calendars": results}
+
+
+
+
+
+
