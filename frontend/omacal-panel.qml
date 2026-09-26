@@ -95,6 +95,9 @@ Panel {
     property string newEventDescription: ""
     property bool newEventAllDay: false
     property bool newEventIsReminder: false   // Event vs Reminder toggle
+    property int newReminderAlarmOffset: 3600   // timed reminder: seconds before DUE (default 1h)
+    property int newReminderAlarmHour: 9        // all-day reminder: alarm time on the DUE date
+    property int newReminderAlarmMinute: 0
     property string newEventRepeat: ""
     // RRULE presets. "Every 2 weeks" anchors on the weekday of the event's own
     // start date, which is what users expect from a repeat dropdown.
@@ -115,6 +118,16 @@ Panel {
         { value: "never", label: "Never" },
         { value: "count", label: "After N occurrences" },
         { value: "until", label: "On date" }
+    ]
+
+    // Reminder alarm lead-time presets (seconds before DUE), for timed reminders.
+    readonly property var alarmOffsetOptions: [
+        { value: "300", label: "5 min before" },
+        { value: "900", label: "15 min before" },
+        { value: "1800", label: "30 min before" },
+        { value: "3600", label: "1 hour before" },
+        { value: "7200", label: "2 hours before" },
+        { value: "86400", label: "1 day before" }
     ]
 
     // Edit/delete state
@@ -298,6 +311,12 @@ Panel {
         addEventForm.endsDropdown.value = "never"
         addEventForm.endsCountField.text = ""
         addEventForm.untilDateField.clear()
+        newReminderAlarmOffset = 3600
+        newReminderAlarmHour = 9
+        newReminderAlarmMinute = 0
+        addEventForm.alarmOffsetDropdown.value = "3600"
+        addEventForm.alarmHourDropdown.value = "9"
+        addEventForm.alarmMinuteDropdown.value = "0"
         // Default calendar: reminders go to the task calendar (VTODO-capable);
         // events prefer "Dad's Calendar", then the first writable.
         var writable = calendars.filter(function(c) { return c.writable })
@@ -348,6 +367,12 @@ Panel {
         addEventForm.endsDropdown.value = "never"
         addEventForm.endsCountField.text = ""
         addEventForm.untilDateField.clear()
+        newReminderAlarmOffset = 3600
+        newReminderAlarmHour = 9
+        newReminderAlarmMinute = 0
+        addEventForm.alarmOffsetDropdown.value = "3600"
+        addEventForm.alarmHourDropdown.value = "9"
+        addEventForm.alarmMinuteDropdown.value = "0"
         // Release the focused field so it stops holding keys (ESC etc.) after
         // the form is dismissed.
         keyCatcher.forceActiveFocus()
@@ -453,6 +478,13 @@ Panel {
                 description: newEventDescription
             }
             if (rrule) rpayload.rrule = rrule
+            // The alarm the heads-up fires on: timed = offset seconds before DUE,
+            // all-day = an explicit time on the DUE date (a relative 1h-before-
+            // midnight would fire the previous evening).
+            if (newEventAllDay)
+                rpayload.alarm_time = pad2(newReminderAlarmHour) + ":" + pad2(newReminderAlarmMinute)
+            else
+                rpayload.alarm_offset = newReminderAlarmOffset
             xhr.send(JSON.stringify(rpayload))
             return
         }
@@ -574,6 +606,20 @@ Panel {
         addEventForm.startMinuteDropdown.value = String(newEventStartMinute)
         addEventForm.endHourDropdown.value = String(newEventEndHour)
         addEventForm.endMinuteDropdown.value = String(newEventEndMinute)
+        // Prefill the reminder's alarm: timed = offset before DUE, all-day = a
+        // time on the due date. The API returns both on the reminder row.
+        if (newEventIsReminder) {
+            if (allDay) {
+                var t = String(ev.alarm_time || "09:00").split(":")
+                newReminderAlarmHour = parseInt(t[0], 10)
+                newReminderAlarmMinute = parseInt(t[1], 10)
+            } else {
+                newReminderAlarmOffset = (ev.alarm_offset_seconds != null) ? ev.alarm_offset_seconds : 3600
+            }
+            addEventForm.alarmOffsetDropdown.value = String(newReminderAlarmOffset)
+            addEventForm.alarmHourDropdown.value = String(newReminderAlarmHour)
+            addEventForm.alarmMinuteDropdown.value = String(newReminderAlarmMinute)
+        }
         root.focusEventTitle()
     }
 
@@ -1737,3 +1783,6 @@ Panel {
         }
     }
 }
+
+
+

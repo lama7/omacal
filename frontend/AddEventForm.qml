@@ -28,6 +28,9 @@ Column {
     property alias startMinuteDropdown: startMinuteDropdown
     property alias endHourDropdown: endHourDropdown
     property alias endMinuteDropdown: endMinuteDropdown
+    property alias alarmOffsetDropdown: alarmOffsetDropdown
+    property alias alarmHourDropdown: alarmHourDropdown
+    property alias alarmMinuteDropdown: alarmMinuteDropdown
 
     visible: panel.showAddForm
     width: dayContent.width
@@ -152,6 +155,82 @@ Column {
         accent: panel.accent
         fontFamily: panel.contentFontFamily
         onClicked: panel.newEventAllDay = !panel.newEventAllDay
+    }
+
+    // Reminder alarm: when the heads-up fires. Timed reminders use a
+    // lead-time offset before DUE; all-day reminders use a fixed time on
+    // the DUE date (a relative 1h-before-midnight would fire the previous
+    // evening). Hidden entirely for events.
+    Item {
+        visible: panel.newEventIsReminder
+        width: dayContent.width
+        height: Style.spacing.controlHeight
+        FormLabel {
+            id: alarmLabel
+            formPanel: panel
+            text: "Alarm"
+        }
+        Dropdown {
+            id: alarmOffsetDropdown
+            visible: !panel.newEventAllDay
+            width: Style.space(160)
+            height: Style.spacing.controlHeight
+            showLabel: false
+            value: String(panel.newReminderAlarmOffset)
+            options: panel.alarmOffsetOptions
+            foreground: panel.contentForeground
+            fontFamily: panel.contentFontFamily
+            onChanged: panel.newReminderAlarmOffset = parseInt(value, 10)
+            onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
+            anchors.left: alarmLabel.right
+            anchors.leftMargin: Style.space(34)
+            anchors.verticalCenter: parent.verticalCenter
+        }
+        Dropdown {
+            id: alarmHourDropdown
+            visible: panel.newEventAllDay
+            width: Style.space(50)
+            height: Style.spacing.controlHeight
+            showLabel: false
+            value: String(panel.newReminderAlarmHour)
+            options: panel.hourOptions
+            foreground: panel.contentForeground
+            fontFamily: panel.contentFontFamily
+            onChanged: panel.newReminderAlarmHour = parseInt(value, 10)
+            onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
+            anchors.left: alarmLabel.right
+            anchors.leftMargin: Style.space(34)
+            anchors.verticalCenter: parent.verticalCenter
+        }
+        Text {
+            id: alarmColon
+            visible: panel.newEventAllDay
+            anchors.left: alarmHourDropdown.right
+            anchors.leftMargin: Style.space(2)
+            text: ":"
+            width: Style.space(6)
+            color: panel.contentForeground
+            font.family: panel.contentFontFamily
+            font.pixelSize: Style.font.body
+            verticalAlignment: Text.AlignVCenter
+            anchors.verticalCenter: parent.verticalCenter
+        }
+        Dropdown {
+            id: alarmMinuteDropdown
+            visible: panel.newEventAllDay
+            width: Style.space(50)
+            height: Style.spacing.controlHeight
+            showLabel: false
+            value: String(panel.newReminderAlarmMinute)
+            options: panel.minuteOptions
+            foreground: panel.contentForeground
+            fontFamily: panel.contentFontFamily
+            onChanged: panel.newReminderAlarmMinute = parseInt(value, 10)
+            onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
+            anchors.left: alarmColon.right
+            anchors.leftMargin: Style.space(2)
+            anchors.verticalCenter: parent.verticalCenter
+        }
     }
 
     Toggle {
@@ -444,3 +523,4 @@ Column {
         }
     }
 }
+
