@@ -337,8 +337,8 @@ def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict]
                        transparency=excluded.transparency,
                        rrule=excluded.rrule,
                        exdates=excluded.exdates,
-href=excluded.href,
-tzid=excluded.tzid,
+                       href=excluded.href,
+                       tzid=excluded.tzid
                     """,
                     (
                         calendar_id,
