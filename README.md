@@ -80,6 +80,27 @@ omarchy plugin remove omacal    # removes the plugin itself
 - **First-run setup** — no manual config file editing to get started.
 - **Incremental sync** (RFC 6578) + on-open refresh; the cache window keeps
   one-offs for -30/+90 days and syncs every 60s.
+- **Reminders** (CalDAV `VTODO`) with a dedicated section — see [Reminders](#reminders).
+
+## Reminders
+
+Reminders are CalDAV `VTODO` items — the same add/edit/delete flow as events,
+toggled via the **Event / Reminder** buttons in the form.
+
+- **Creating** — pick **Reminder** in the add form. A new reminder defaults to
+  **All Day** and is routed to the task calendar (a `VTODO`-capable one); the
+  calendar dropdown is hidden because there's only that target. Editing an
+  existing reminder keeps its own all-day state and calendar.
+- **Alarm (heads-up)** — shown only in reminder mode. Timed reminders fire an
+  offset before their due time: *5 min / 15 min / 30 min / 1 hour / 2 hours /
+  1 day before* (default **1 hour** before DUE). All-day reminders fire at a
+  fixed time on the due date (hour + minute, default **09:00**).
+- **Display** — reminders render as an **outlined (hollow) dot** so they read
+  distinctly from filled event dots, in the month grid, day view, and preview
+  pane.
+- **Sync & completion** — reminders sync through the same CalDAV change stream
+  as events and are dropped when their `VTODO` is `COMPLETED`/`CANCELLED`. A
+  recurring reminder toasts each occurrence once (the fired table dedupes).
 
 ## Keyboard
 
