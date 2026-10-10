@@ -373,11 +373,12 @@ def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict]
                         ev.get("tzid"),
                     ),
                 )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount
 
 
-def upsert_overrides(conn: sqlite3.Connection, calendar_id: int, overrides: list[dict]) -> int:
+def upsert_overrides(conn: sqlite3.Connection, calendar_id: int, overrides: list[dict], commit: bool = True) -> int:
     """Insert or replace detached recurrence overrides for a calendar."""
     cur = conn.cursor()
     for ov in overrides:
@@ -412,7 +413,8 @@ def upsert_overrides(conn: sqlite3.Connection, calendar_id: int, overrides: list
                         ov.get("tzid"),
                     ),
                 )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount
 
 

@@ -413,7 +413,7 @@ def _discover_calendars(
     except Exception:
         try:
             client = _dav_client(url, username, password)
-            calendars = client.calendars()
+            calendars = client.get_calendars()
         except Exception as e:
             logger.error("Failed to discover calendars at %s: %s", url, e)
             return []
