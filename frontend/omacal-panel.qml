@@ -641,16 +641,25 @@ Panel {
     // Builds the dialog's model from the configured calendars, re-syncing the
     // on-screen `enabled` state so a hidden calendar still lists and can be
     // re-enabled.
-    function openCalendars() {
+    function buildCalToggleModel() {
+        // Rebuild the dialog's model from the configured calendars. The
+        // dialog rows bind `checked: modelData.enabled` to this array, so the
+        // on-screen toggles only reflect the latest server state once we
+        // replace the array itself. Mutating the `calendars` cache alone would
+        // leave every Toggle frozen on the snapshot taken at openCalendars() —
+        // the root cause of the frozen toggle animation. Called at open and
+        // after every refetch (loadCalendars / toggleCalendar success).
         var rows = []
         for (var i = 0; i < calendars.length; i++) {
             rows.push({ id: calendars[i].id, name: calendars[i].display_name,
                         enabled: !!calendars[i].enabled })
         }
         calToggleModel = rows
+    }
+    function openCalendars() {
+        buildCalToggleModel()
         showCalendars = true
     }
-
     function dismissCalendars() {
         showCalendars = false
     }
@@ -668,6 +677,7 @@ Panel {
                 for (var i = 0; i < calendars.length; i++) {
                     if (calendars[i].id === id) { calendars[i].enabled = enabled; break }
                 }
+                buildCalToggleModel()
                 loadCalendars()
             } else {
                 var msg = (xhr.status === 0)
@@ -799,6 +809,7 @@ Panel {
                     if (Array.isArray(data) && data.length > 0) {
                         calendars = data
                         loadRangeEvents(false)
+                        buildCalToggleModel()
                     } else if (data === null) {
                         error = "Bad response from omacal API"
                     } else {
