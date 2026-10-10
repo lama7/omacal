@@ -1,4 +1,6 @@
 import QtQuick
+import Quickshell
+import QtQuick.Layouts
 import qs.Commons
 import qs.Ui
 
@@ -14,8 +16,9 @@ import qs.Ui
 // stays presentational (stateless about the DB, like the scope toggle).
 Item {
   id: root
+  property bool opened: false
 
-  readonly property var model: []
+  property var model: []
   property int selectedIndex: 0
   property color background: Color.background
   property color foreground: Color.foreground
