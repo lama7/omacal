@@ -138,6 +138,8 @@ Panel {
     property bool deleteWholeSeries: false  // delete scope: true = whole series, false = this occurrence
     property var pendingDeleteEvent: null
     property bool showDeleteConfirm: false
+    property bool showCalendars: false
+    property var calToggleModel: []
 
     readonly property var hourOptions: (function() {
         var a = []; for (var h = 0; h < 24; h++) a.push({value: String(h), label: h < 10 ? " " + h : String(h)}); return a
@@ -635,6 +637,50 @@ Panel {
         deleteWholeSeries = false
     }
 
+    // Calendar toggle form (header button, right of "previous month").
+    // Builds the dialog's model from the configured calendars, re-syncing the
+    // on-screen `enabled` state so a hidden calendar still lists and can be
+    // re-enabled.
+    function openCalendars() {
+        var rows = []
+        for (var i = 0; i < calendars.length; i++) {
+            rows.push({ id: calendars[i].id, name: calendars[i].display_name,
+                        enabled: !!calendars[i].enabled })
+        }
+        calToggleModel = rows
+        showCalendars = true
+    }
+
+    function dismissCalendars() {
+        showCalendars = false
+    }
+
+    // The dialog is stateless; this wires a toggle to the backend and refreshes
+    // the visible grid. `enabled` here is the *new* desired state.
+    function toggleCalendar(id, enabled) {
+        var xhr = new XMLHttpRequest()
+        xhr.open("POST", apiBase + "/api/calendars/toggle", true)
+        xhr.timeout = 15000
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
+                // Update the local cache so the dialog reflects the flip, then
+                // re-fetch events/reminders (both now filter on c.enabled = 1).
+                for (var i = 0; i < calendars.length; i++) {
+                    if (calendars[i].id === id) { calendars[i].enabled = enabled; break }
+                }
+                loadCalendars()
+            } else {
+                var msg = (xhr.status === 0)
+                    ? "omacal API did not respond"
+                    : "Cannot toggle calendar (" + xhr.status + ")"
+                error = msg
+                // Re-sync local state so the dialog never lies to the user.
+                loadCalendars()
+            }
+        }
+        xhr.send(JSON.stringify({ calendar_id: id, enabled: enabled }))
+    }
+
     function deleteEvent() {
         if (!pendingDeleteEvent) return
         var ev = pendingDeleteEvent
@@ -1111,6 +1157,7 @@ Panel {
 
     function close() {
         dismissDeleteConfirm()
+        dismissCalendars()
         editingUid = ""
         root.opened = false
         if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function") root.bar.setCenterHoverRevealSuppressed(false)
@@ -1120,6 +1167,7 @@ Panel {
     onOpenedChanged: {
         if (!root.opened) {
             dismissDeleteConfirm()
+            dismissCalendars()
             // Drop a half-filled add/edit form too: reopening used to show the
             // stale draft the user had abandoned.
             dismissAddForm()
@@ -1186,6 +1234,10 @@ Panel {
                     if (dx !== 0) deleteConfirm.handleKey({ key: dx < 0 ? Qt.Key_Left : Qt.Key_Right })
                     return
                 }
+                if (root.showCalendars) {
+                    if (dx !== 0) calToggle.handleKey({ key: dx < 0 ? Qt.Key_Left : Qt.Key_Right })
+                    return
+                }
                 if (root.showAddForm) return
                 if (root.viewMode === "day") {
                     if (dx !== 0) root.shiftDay(dx)
@@ -1199,17 +1251,22 @@ Panel {
             onActivateRequested: function() {
                 if (root.viewMode === "setup") { setupForm.submit(); return }
                 if (root.showDeleteConfirm) { deleteConfirm.handleKey({ key: Qt.Key_Return }); return }
+                if (root.showCalendars) { calToggle.handleKey({ key: Qt.Key_Return }); return }
                 if (root.showAddForm) root.submitAddEvent()
                 else root.close()
             }
-            onCloseRequested: root.showDeleteConfirm ? deleteConfirm.handleKey({ key: Qt.Key_Escape }) : (root.showAddForm ? root.dismissAddForm() : root.close())
+            onCloseRequested: root.showDeleteConfirm ? deleteConfirm.handleKey({ key: Qt.Key_Escape })
+                : (root.showCalendars ? calToggle.handleKey({ key: Qt.Key_Escape })
+                     : (root.showAddForm ? root.dismissAddForm() : root.close()))
             onTabRequested: function(direction) {
                 if (root.showDeleteConfirm) { deleteConfirm.handleKey({ key: Qt.Key_Tab }); return }
+                if (root.showCalendars) { calToggle.handleKey({ key: Qt.Key_Tab }); return }
                 root.switchPanel(direction)
             }
             onTextKey: function(t) {
                 if (root.viewMode === "setup") return
                 if (root.showDeleteConfirm) return
+                if (root.showCalendars) return
                 if (root.showAddForm) {
                     if (t === "\b" || t === "\x7F") root.dismissAddForm()
                     return
@@ -1264,10 +1321,27 @@ Panel {
                         }
 
                         PanelActionButton {
+                            id: calendarsAction
+                            anchors.left: leftAction.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            // U+F0E18 (md-calendar_month_outline), embedded as a
+                            // UTF-16 surrogate pair so the glyph renders on every
+                            // JS engine in the panel; \u{...}/8-hex forms are not
+                            // uniformly supported for 5-hex astrals in QML JS.
+                            iconText: "\uDB83\uDE18"
+                            tooltipText: "Choose which calendars to show"
+                            visible: !root.showAddForm
+                            enabled: !root.showAddForm
+                            foreground: root.contentForeground
+                            fontFamily: root.contentFontFamily
+                            onClicked: root.openCalendars()
+                        }
+
+                        PanelActionButton {
                             id: left2Action
                             enabled: !root.showAddForm
                             visible: root.viewMode === "day" && !root.showAddForm
-                            anchors.left: leftAction.right
+                            anchors.left: calendarsAction.right
                             iconText: "\u2191"
                             tooltipText: "Back to Month"
                             foreground: root.contentForeground
@@ -1278,7 +1352,7 @@ Panel {
                         Text {
                             id: headerLabel
                             textFormat: Text.PlainText
-                            anchors.left: root.viewMode === "day" ? left2Action.right : leftAction.right
+                            anchors.left: root.viewMode === "day" ? left2Action.right : calendarsAction.right
                             anchors.right: root.viewMode === "day" ? right2Action.left : rightAction.left
                             anchors.leftMargin: Style.space(6)
                             anchors.rightMargin: Style.space(6)
@@ -1780,6 +1854,23 @@ Panel {
             onCanceled: root.dismissDeleteConfirm()
             onConfirmed: root.deleteEvent()
             onScopeToggled: root.deleteWholeSeries = checked
+        }
+        // Calendar visibility dialog — one Toggle per configured calendar plus a
+        // Done button. Keys (arrows/Tab/Enter/Space/Escape) are routed from
+        // PanelKeyCatcher to calToggle.handleKey(); the POST is owned by the
+        // panel (toggleCalendar) so the dialog stays presentational.
+        CalendarToggleDialog {
+            id: calToggle
+            anchors.fill: parent
+            z: 10
+            opened: root.showCalendars
+            model: root.calToggleModel
+            selectedIndex: 0
+            foreground: root.contentForeground
+            accent: root.accent
+            fontFamily: root.contentFontFamily
+            onClosed: root.dismissCalendars()
+            onToggled: root.toggleCalendar(id, enabled)
         }
     }
 }

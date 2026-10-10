@@ -9,6 +9,7 @@ Endpoints:
     GET  /api/events/today      → today's events
     POST /api/sync              → trigger a sync run
     POST /api/events             → create a new event
+    POST /api/calendars/toggle  → enable/disable a calendar's visibility
 """
 
 from __future__ import annotations
@@ -360,6 +361,25 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(e)})
             except Exception as e:
                 logger.error("POST /api/reminders failed: %s", e)
+                self._json(500, {"error": str(e)})
+            return
+        if parsed.path == "/api/calendars/toggle":
+            try:
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                data = json.loads(body)
+                calendar_id = int(data["calendar_id"])
+                enabled = bool(data.get("enabled", True))
+
+                from omacal.db import set_calendar_enabled
+                updated = set_calendar_enabled(self.db_conn, calendar_id, enabled)
+                if not updated:
+                    self._json(404, {"error": "unknown calendar id"})
+                    return
+                self._json(200, {"ok": True, "calendar_id": calendar_id, "enabled": enabled})
+            except (ValueError, KeyError) as e:
+                self._json(400, {"error": str(e)})
+            except Exception as e:
+                logger.error("POST /api/calendars/toggle failed: %s", e)
                 self._json(500, {"error": str(e)})
             return
         self._json(404, {"error": "not found"})

@@ -313,6 +313,21 @@ def set_last_sync(conn: sqlite3.Connection, calendar_id: int) -> None:
     conn.commit()
 
 
+def set_calendar_enabled(conn: sqlite3.Connection, calendar_id: int, enabled: bool) -> bool:
+    """Set a calendar's visibility flag (set, not flip).
+
+    The flag is read by the event/reminder window queries (``c.enabled = 1``),
+    by the panel's ``/api/calendars`` listing, and by sync (which skips disabled
+    calendars). Setting it off hides the calendar's events/reminders from the
+    panel immediately and skips it on future syncs. Returns True if a row was
+    updated, False if the calendar id is unknown.
+    """
+    cur = conn.execute("UPDATE calendars SET enabled = ? WHERE id = ?",
+                       (1 if enabled else 0, calendar_id))
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict], commit: bool = True) -> int:
     """Insert or replace events for a calendar. Returns count of rows touched.
 
@@ -594,7 +609,7 @@ def get_reminders_for_window(
         f"""SELECT r.*, c.display_name, c.color
             FROM reminders r
             JOIN calendars c ON c.id = r.calendar_id
-            WHERE (r.due IS NOT NULL AND r.due >= ? AND r.due < ? OR r.rrule IS NOT NULL)
+            WHERE (r.due IS NOT NULL AND r.due >= ? AND r.due < ? OR r.rrule IS NOT NULL) AND c.enabled = 1
             {where}
             ORDER BY r.due""",
         [start, end] + params,
@@ -725,7 +740,7 @@ def get_events_for_window(
             FROM events e
             JOIN calendars c ON c.id = e.calendar_id
             WHERE (e.rrule IS NOT NULL
-                   OR (e.start < ? AND (e.end IS NULL OR e.end > ?)))
+                   OR (e.start < ? AND (e.end IS NULL OR e.end > ?))) AND c.enabled = 1
             {where}
             ORDER BY e.start
         """,
