@@ -671,6 +671,9 @@ Panel {
     function dismissCalendars() {
         showCalendars = false
     }
+    // Hook for the dialog's "+" button (upper right). Behaviour TBD — see
+    // the add-calendar design note; keep as a no-op until Gerry decides.
+    function addCalendarRequested() { }
 
     // The dialog is stateless; this wires a toggle to the backend and refreshes
     // the visible grid. `enabled` here is the *new* desired state.
@@ -1900,6 +1903,10 @@ Panel {
             fontFamily: root.contentFontFamily
             onClosed: root.dismissCalendars()
             onToggled: root.toggleCalendar(id, enabled)
+            // Placeholder hook: the "+" button in the dialog's upper right.
+            // Behaviour (add-calendar form + backend endpoint) is a later
+            // pass; for now it's a visible, clickable button with no-op.
+            onAddRequested: root.addCalendarRequested()
         }
     }
 }

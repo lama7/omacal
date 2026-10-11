@@ -30,6 +30,7 @@ Item {
 
   signal closed()
   signal toggled(int id, bool enabled)
+  signal addRequested()
 
   // The Done button's slot, after all calendar rows.
   readonly property int doneIndex: root.model.count
@@ -94,7 +95,7 @@ Item {
     height: Math.min(
         parent.height - Style.space(48),
         Style.space(16)
-        + titleText.implicitHeight
+        + Math.max(titleText.implicitHeight, addBtn.height)
         + Style.space(10)
         + estimatedContentHeight
         + Style.space(10)
@@ -117,16 +118,38 @@ Item {
       anchors.margins: Style.space(16)
       spacing: Style.space(10)
 
-      Text {
-        id: titleText
+      RowLayout {
+        id: titleRow
         Layout.fillWidth: true
-        textFormat: Text.PlainText
-        text: "Calendars"
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.title
-        font.bold: true
-        wrapMode: Text.WordWrap
+        spacing: Style.space(8)
+
+        Text {
+          id: titleText
+          Layout.fillWidth: true
+          textFormat: Text.PlainText
+          text: "Calendars"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.title
+          font.bold: true
+          wrapMode: Text.WordWrap
+        }
+
+        Item { Layout.fillWidth: true }   // spacer pushes + to the right
+
+        // "+" button, same glyph as the day-view Add Event button (U+002B).
+        // Same component as the panel's header buttons (PanelActionButton):
+        // borderless, foreground-tint hover fill, PanelToolTip on hover.
+        // Click-only for now (no keyboard route in handleKey); emits
+        // addRequested() so the panel owns whatever adding a calendar entails.
+        PanelActionButton {
+          id: addBtn
+          iconText: "\u002b"
+          tooltipText: "Add Calendar"
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          onClicked: root.addRequested()
+        }
       }
 
       // Scrollable list so many calendars never push the card off-screen.
