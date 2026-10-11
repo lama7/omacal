@@ -495,9 +495,23 @@ Item {
           width: Style.space(96)
           height: Style.space(38)
           radius: root.cornerRadius
-          color: "transparent"
-          border.color: root.accent
-          border.width: Style.normalBorderWidth
+          // Keyboard-cursor cue: when Tab/Shift+Tab parks the cursor on the
+          // Done slot, paint the same hover-cursor fill/border the Toggles
+          // use for hasCursor, so the keyboard position is visible. (Done
+          // lives in the button row outside the Flickable, so it is always
+          // on screen; the highlight is the whole fix.)
+          readonly property bool hot: root.opened && !root.addOpen
+              && root.selectedIndex === root.doneIndex
+          color: hot
+            ? Style.controlFill(false, true, root.foreground, root.accent)
+            : "transparent"
+          border.color: hot
+            ? Style.controlBorder(false, true, root.foreground, root.accent)
+            : root.accent
+          border.width: hot
+            ? Style.controlBorderWidth(false, true)
+            : Style.normalBorderWidth
+          Behavior on color { ColorAnimation { duration: 100 } }
 
           Text {
             textFormat: Text.PlainText
