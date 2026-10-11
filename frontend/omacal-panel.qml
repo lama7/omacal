@@ -1415,8 +1415,8 @@ Panel {
                 : (root.showCalendars ? calToggle.handleKey({ key: Qt.Key_Escape })
                      : (root.showAddForm ? root.dismissAddForm() : root.close()))
             onTabRequested: function(direction) {
-                if (root.showDeleteConfirm) { deleteConfirm.handleKey({ key: Qt.Key_Tab }); return }
-                if (root.showCalendars) { calToggle.handleKey({ key: Qt.Key_Tab }); return }
+                if (root.showDeleteConfirm) { deleteConfirm.handleKey({ key: direction < 0 ? Qt.Key_Backtab : Qt.Key_Tab }); return }
+                if (root.showCalendars) { calToggle.handleKey({ key: direction < 0 ? Qt.Key_Backtab : Qt.Key_Tab }); return }
                 root.switchPanel(direction)
             }
             onTextKey: function(t) {
