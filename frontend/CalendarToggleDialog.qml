@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import QtQuick.Layouts
+import QtQuick.Controls
 import qs.Commons
 import qs.Ui
 
@@ -32,6 +33,14 @@ Item {
 
   // The Done button's slot, after all calendar rows.
   readonly property int doneIndex: root.model.length
+
+  // Stable content estimate: N rows of ~58px + 4px gaps, derived from
+  // model.length alone. Used for the card height, the Flickable contentHeight,
+  // the content Item height, and the 'is it scrollable' test -- so they all
+  // know immediately and never depend on the live listLayout.implicitHeight,
+  // which is 0 for one frame on every model rebuild (the source of the blip).
+  readonly property int estimatedContentHeight:
+      root.model.length * Style.space(58) + Math.max(root.model.length - 1, 0) * Style.space(4)
 
   function handleKey(event) {
     if (!root.opened) return false
@@ -72,16 +81,25 @@ Item {
   Rectangle {
     id: card
     // Width: most of the panel, capped so it doesn't span the full width on a
-    // wide screen. Height: top-anchored + capped so the card never pushes its
-    // top off-screen on a tall list.
+    // wide screen. Height: a stable estimate (title + row list + Done button +
+    // inner margins) from model.length, clamped by the parent. The Flickable
+    // scrolls any content taller than the card (scroll bar when scrollable),
+    // so the last row is never clipped and the card height never blips on a
+    // toggle press.
     width: Math.min(parent.width - Style.space(32), Style.space(420))
+    // The row list term is a stable estimate (see estimatedContentHeight below),
+    // never the live listLayout.implicitHeight, which is 0 for one frame on
+    // every model rebuild. Keeping it based on model.length is what stops the
+    // card and the content region from blipping when a toggle rebuilds the model.
     height: Math.min(
         parent.height - Style.space(48),
-        Style.space(20)
-        + Style.space(38)
-        + Math.min(root.model.length * Style.space(58) + Style.space(12),
-                   parent.height * 0.72)
-        + Style.space(20))
+        Style.space(16)
+        + titleText.implicitHeight
+        + Style.space(10)
+        + estimatedContentHeight
+        + Style.space(10)
+        + doneBtn.height
+        + Style.space(16))
     anchors.top: parent.top
     anchors.topMargin: Style.space(24)
     anchors.horizontalCenter: parent.horizontalCenter
@@ -119,15 +137,24 @@ Item {
         boundsBehavior: Flickable.StopAtBounds
         clip: true
         contentWidth: parent.width
-        contentHeight: list.implicitHeight
-        interactive: list.implicitHeight > parent.height
+        // Real content height: the ColumnLayout's implicit height (rows + gaps).
+        // The plain `list` Item has no implicit height of its own (it is sized
+        // to the viewport), so `list.implicitHeight` was 0 -> the Flickable was
+        // never scrollable and just clipped the rows that overflowed the viewport
+        // (hiding the task row at the bottom). Now contentHeight/interactive use
+        // the true height, so the list scrolls when it exceeds the card.
+        contentHeight: Math.max(listLayout.implicitHeight, estimatedContentHeight)
+        interactive: estimatedContentHeight > Math.max(listArea.height, 0)
+        flickableDirection: Flickable.VerticalFlick
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
         Item {
           id: list
           width: parent.width
-          anchors.fill: parent
+          height: Math.max(listLayout.implicitHeight, estimatedContentHeight)
 
           ColumnLayout {
+            id: listLayout
             anchors.left: parent.left
             anchors.top: parent.top
             spacing: Style.space(4)
