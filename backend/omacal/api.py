@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from datetime import datetime, time, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -367,7 +368,8 @@ class OmacalHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/calendars/add":
             # Create a NEW named calendar on the signed-in user's server,
-            # reusing the keyring credentials (no new login). Body: {name}.
+            # reusing the keyring credentials (no new login). Body: {name,
+            # color?} — color is #RRGGBB or #RRGGBBAA.
             try:
                 body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
                 data = json.loads(body)
@@ -375,8 +377,12 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 if not name:
                     self._json(400, {"error": "Calendar name is required"})
                     return
+                color = (data.get("color") or "").strip() or None
+                if color and not re.fullmatch(r"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?", color):
+                    self._json(400, {"error": "Bad calendar color"})
+                    return
                 from omacal.sync import add_calendar_named
-                result = add_calendar_named(self.db_conn, name)
+                result = add_calendar_named(self.db_conn, name, color)
                 self._json(200, result)
             except ValueError as e:
                 self._json(400, {"error": str(e)})

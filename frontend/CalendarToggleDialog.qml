@@ -31,7 +31,7 @@ Item {
   signal closed()
   signal toggled(int id, bool enabled)
   signal addRequested()
-  signal addSubmit(string name)
+  signal addSubmit(string name, string color)
   signal addCancel()
   signal navRequested(int dx)
 
@@ -40,6 +40,7 @@ Item {
   // the panel (addSubmit carries the typed name to it).
   property bool addOpen: false
   property string pendingAddName: ""
+  property string pendingAddColor: ""
   property alias nameFieldRef: nameField
 
   // The Done button's slot, after all calendar rows.
@@ -63,7 +64,7 @@ Item {
     if (root.addOpen) {
       if (event.key === Qt.Key_Escape) { root.addCancel(); return true }
       if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-        if (root.pendingAddName !== "") root.addSubmit(root.pendingAddName)
+        if (root.pendingAddName !== "") root.addSubmit(root.pendingAddName, root.pendingAddColor)
         return true
       }
       if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
@@ -259,9 +260,56 @@ Item {
           font.family: root.fontFamily
           font.pixelSize: Style.font.subtitle
           onTextChanged: if (text !== "") root.pendingAddName = text
-          Keys.onReturnPressed: root.addSubmit(root.pendingAddName)
-          Keys.onEnterPressed: root.addSubmit(root.pendingAddName)
+          Keys.onReturnPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor)
+          Keys.onEnterPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor)
           Keys.onEscapePressed: { root.pendingAddName = ""; root.addCancel() }
+        }
+
+        // Color picker: preset swatches (Google-Calendar style). Click one to
+        // pick the calendar's color; leave it unset for the server default.
+        // The chosen hex rides along on addSubmit to the backend, which PROPPATCHes
+        // the CalDAV calendar-color property and caches it in the DB.
+        RowLayout {
+          id: swatchRow
+          Layout.fillWidth: true
+          spacing: Style.space(8)
+
+          Repeater {
+            id: swatches
+            model: [
+              "#d93025", "#e8710a", "#f2b134", "#8f68ff",
+              "#1a73e8", "#12b5e0", "#1e8e3e", "#e91e63"
+            ]
+
+            Rectangle {
+              required property string modelData
+              required property int index
+              Layout.preferredWidth: Style.space(22)
+              Layout.preferredHeight: Style.space(22)
+              radius: width / 2
+              color: modelData
+              border.color: root.foreground
+              border.width: (root.pendingAddColor === modelData)
+                  ? Style.normalBorderWidth + 1 : 0
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.pendingAddColor = modelData
+              }
+            }
+          }
+
+          Text {
+            // Tiny caption so the row reads as a picker, not decoration.
+            Layout.fillWidth: true
+            textFormat: Text.PlainText
+            text: "Color"
+            color: root.foreground
+            opacity: 0.6
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
         }
 
         RowLayout {
@@ -292,7 +340,7 @@ Item {
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: root.addSubmit(root.pendingAddName)
+              onClicked: root.addSubmit(root.pendingAddName, root.pendingAddColor)
             }
           }
           Rectangle {

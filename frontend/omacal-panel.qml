@@ -675,6 +675,7 @@ Panel {
         // field's focus so ESC/arrows work again in month/day views.
         calToggle.addOpen = false
         calToggle.pendingAddName = ""
+        calToggle.pendingAddColor = ""
         keyCatcher.forceActiveFocus()
     }
     // Hook for the dialog's "+" button (upper right). Opens the mini form
@@ -682,6 +683,7 @@ Panel {
     // emits addSubmit(name)/addCancel(), so the POST lives here.
     function openAddCalendar() {
         calToggle.pendingAddName = ""
+        calToggle.pendingAddColor = ""
         calToggle.addOpen = true
         // Defer a tick: addOpen flips the form's visibility binding, and
         // forceActiveFocus on a still-hidden field is a silent no-op
@@ -690,9 +692,12 @@ Panel {
             calToggle.nameFieldRef.forceActiveFocus()
         })
     }
-    function submitAddCalendar(name) {
+    function submitAddCalendar(name, color) {
         var trimmed = (name || "").trim()
         if (trimmed === "") { error = "Enter a calendar name"; return }
+        var payload = { name: trimmed }
+        if (color && color !== "")
+            payload.color = color
         var xhr = new XMLHttpRequest()
         xhr.open("POST", apiBase + "/api/calendars/add", true)
         xhr.timeout = 30000   // write op: server round-trip
@@ -707,6 +712,7 @@ Panel {
                     error = ""
                     calToggle.addOpen = false
                     calToggle.pendingAddName = ""
+                    calToggle.pendingAddColor = ""
                     loadCalendars()
                     // Same focus release as cancelAddCalendar: the name field
                     // held focus when Create was clicked.
@@ -721,11 +727,12 @@ Panel {
                 // Keep the form open so the user can retry or cancel.
             }
         }
-        xhr.send(JSON.stringify({ name: trimmed }))
+        xhr.send(JSON.stringify(payload))
     }
     function cancelAddCalendar() {
         calToggle.addOpen = false
         calToggle.pendingAddName = ""
+        calToggle.pendingAddColor = ""
         error = ""
         // The name field still holds activeFocus when the form closes, and a
         // hidden focused TextField swallows ESC/arrows before the catcher
@@ -1962,7 +1969,7 @@ Panel {
             onClosed: root.dismissCalendars()
             onToggled: root.toggleCalendar(id, enabled)
             onAddRequested: root.openAddCalendar()
-            onAddSubmit: root.submitAddCalendar(name)
+            onAddSubmit: root.submitAddCalendar(name, color)
             onAddCancel: root.cancelAddCalendar()
             // Arrows while the mini form is open navigate months in the
             // panel behind the dialog (the dialog routes them here instead

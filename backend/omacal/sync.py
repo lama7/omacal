@@ -449,6 +449,7 @@ def _discover_calendars(
 def add_calendar_named(
     conn: Any,
     name: str,
+    color: str | None = None,
 ) -> dict[str, Any]:
     """Create a NEW named calendar for the signed-in user and cache it.
 
@@ -456,8 +457,12 @@ def add_calendar_named(
     calendar entry: principal URL + username, password from the keyring) —
     no new login. Creates the collection server-side via Principal.make_calendar
     (PUT, RFC 5995), then registers it in the DB cache (enabled=1) so the
-    panel's next /api/calendars fetch lists it. Returns {ok, calendar_id,
-    display_name}; raises ValueError for user-facing failures.
+    panel's next /api/calendars fetch lists it. `color` (optional, #RRGGBB
+    [AA]) is written to the server via PROPPATCH (Apple/IIS calendar-color
+    property, the de-facto CalDAV color convention) best-effort — a server
+    that rejects the property still gets the calendar, and the chosen color
+    is cached in the DB either way so the panel renders it. Returns {ok,
+    calendar_id, display_name}; raises ValueError for user-facing failures.
     """
     from omacal.config import load_config
     from omacal.keyring_store import get_password
@@ -479,6 +484,21 @@ def add_calendar_named(
     except Exception as e:
         raise ValueError(f"Could not create the calendar: {e}") from e
 
+    # Optional color: PROPPATCH the Apple/IIS calendar-color property (the
+    # de-facto CalDAV color convention; Thunderbird/Radicale/ICS all honour
+    # it). Best-effort: a server that rejects the property still has the
+    # calendar, and the DB cache below carries the color for the panel.
+    if color:
+        try:
+            from caldav.elements import dav
+
+            class _CalendarColor(dav.BaseElement):
+                tag = "{http://apple.com/ns/ical/}calendar-color"
+
+            cal_obj.set_properties([_CalendarColor(value=color)])
+        except Exception as e:
+            logger.warning("Could not PROPPATCH calendar color %r: %s", color, e)
+
     cal_url = str(cal_obj.url)
     props = {}
     try:
@@ -493,7 +513,7 @@ def add_calendar_named(
         display_name=cal_obj.get_display_name() or name,
         url=cal_url,
         username=username,
-        color=props.get("{http://apple.com/ns/ical/}calendar-color"),
+        color=props.get("{http://apple.com/ns/ical/}calendar-color") or color,
         principal_url=str(principal.url) if principal.url else url,
         supports_todo=1 if (comp_set and "VTODO" in comp_set) else 0,
     )
