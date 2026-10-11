@@ -31,6 +31,15 @@ Item {
   signal closed()
   signal toggled(int id, bool enabled)
   signal addRequested()
+  signal addSubmit(string name)
+  signal addCancel()
+
+  // Add-calendar mini form state. The panel flips this on "+" click; the
+  // field/buttons live inside the card while it is true. The POST stays in
+  // the panel (addSubmit carries the typed name to it).
+  property bool addOpen: false
+  property string pendingAddName: ""
+  property alias nameFieldRef: nameField
 
   // The Done button's slot, after all calendar rows.
   readonly property int doneIndex: root.model.count
@@ -45,6 +54,10 @@ Item {
 
   function handleKey(event) {
     if (!root.opened) return false
+    // While the add-calendar mini form is open its TextField owns Enter/Escape
+    // (a focused field swallows keys before the catcher sees them — same
+    // pattern as the add-event form), so row navigation is off.
+    if (root.addOpen) return false
     var total = root.doneIndex + 1   // rows + done
     if (event.key === Qt.Key_Escape) {
       root.closed()
@@ -153,8 +166,11 @@ Item {
       }
 
       // Scrollable list so many calendars never push the card off-screen.
+      // Hidden while the add-calendar mini form is open (the form replaces
+      // the list; the card height stays put since it is model-count driven).
       Flickable {
         id: listArea
+        visible: !root.addOpen
         Layout.fillWidth: true
         Layout.fillHeight: true
         boundsBehavior: Flickable.StopAtBounds
@@ -207,9 +223,87 @@ Item {
         }
       }
 
+      // Add-calendar mini form: shown in place of the list once "+" is clicked.
+      // Enter submits (the focused field owns Enter, like the add-event form),
+      // Escape cancels. The panel owns the POST via addSubmit(name).
+      Column {
+        id: addForm
+        visible: root.addOpen
+        Layout.fillWidth: true
+        spacing: Style.space(8)
+
+        TextField {
+          id: nameField
+          width: parent.width
+          height: Style.spacing.controlHeight
+          placeholderText: "Calendar name"
+          foreground: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.subtitle
+          onTextChanged: if (text !== "") root.pendingAddName = text
+          Keys.onReturnPressed: root.addSubmit(root.pendingAddName)
+          Keys.onEnterPressed: root.addSubmit(root.pendingAddName)
+          Keys.onEscapePressed: { root.pendingAddName = ""; root.addCancel() }
+        }
+
+        Row {
+            // spacer pushes Create/Cancel to the right, like the Done button
+            Item { width: parent.width - createBtn.width - cancelBtn.width - Style.space(10); height: 1 }
+            Rectangle {
+              id: createBtn
+              width: Style.space(96)
+              height: Style.space(38)
+              radius: root.cornerRadius
+              color: "transparent"
+              border.color: root.accent
+              border.width: Style.normalBorderWidth
+              Text {
+                textFormat: Text.PlainText
+                anchors.centerIn: parent
+                text: "Create"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.subtitle
+                font.bold: true
+              }
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.addSubmit(root.pendingAddName)
+              }
+            }
+            Rectangle {
+              id: cancelBtn
+              width: Style.space(96)
+              height: Style.space(38)
+              radius: root.cornerRadius
+              color: "transparent"
+              border.color: root.accent
+              border.width: Style.normalBorderWidth
+              Text {
+                textFormat: Text.PlainText
+                anchors.centerIn: parent
+                text: "Cancel"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.subtitle
+                font.bold: true
+              }
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.addCancel()
+              }
+            }
+        }
+      }
+
       RowLayout {
         id: buttonRow
         Layout.fillWidth: true
+        visible: !root.addOpen
         spacing: Style.space(10)
 
         Item { Layout.fillWidth: true }   // spacer pushes Done to the right

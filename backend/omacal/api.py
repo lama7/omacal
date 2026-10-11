@@ -10,6 +10,8 @@ Endpoints:
     POST /api/sync              → trigger a sync run
     POST /api/events             → create a new event
     POST /api/calendars/toggle  → enable/disable a calendar's visibility
+    POST /api/calendars/add     → create a new named calendar for the
+                                   signed-in user (reuses keyring creds)
 """
 
 from __future__ import annotations
@@ -361,6 +363,25 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(e)})
             except Exception as e:
                 logger.error("POST /api/reminders failed: %s", e)
+                self._json(500, {"error": str(e)})
+            return
+        if parsed.path == "/api/calendars/add":
+            # Create a NEW named calendar on the signed-in user's server,
+            # reusing the keyring credentials (no new login). Body: {name}.
+            try:
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                data = json.loads(body)
+                name = (data.get("name") or "").strip()
+                if not name:
+                    self._json(400, {"error": "Calendar name is required"})
+                    return
+                from omacal.sync import add_calendar_named
+                result = add_calendar_named(self.db_conn, name)
+                self._json(200, result)
+            except ValueError as e:
+                self._json(400, {"error": str(e)})
+            except Exception as e:
+                logger.error("POST /api/calendars/add failed: %s", e)
                 self._json(500, {"error": str(e)})
             return
         if parsed.path == "/api/calendars/toggle":

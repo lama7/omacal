@@ -446,6 +446,61 @@ def _discover_calendars(
     return result
 
 
+def add_calendar_named(
+    conn: Any,
+    name: str,
+) -> dict[str, Any]:
+    """Create a NEW named calendar for the signed-in user and cache it.
+
+    Reuses the credentials the user already configured (config's first
+    calendar entry: principal URL + username, password from the keyring) —
+    no new login. Creates the collection server-side via Principal.make_calendar
+    (PUT, RFC 5995), then registers it in the DB cache (enabled=1) so the
+    panel's next /api/calendars fetch lists it. Returns {ok, calendar_id,
+    display_name}; raises ValueError for user-facing failures.
+    """
+    from omacal.config import load_config
+    from omacal.keyring_store import get_password
+
+    cfg = load_config()
+    entries = [c for c in cfg.get("calendars", []) if c.get("username")]
+    if not entries:
+        raise ValueError("No signed-in calendar server configured")
+    entry = entries[0]
+    url, username = entry["url"], entry["username"]
+    password = get_password(url, username)
+    if not password:
+        raise ValueError("No credentials on file for the signed-in user")
+
+    client = _dav_client(url, username, password)
+    principal = client.principal()
+    try:
+        cal_obj = principal.make_calendar(name=name)
+    except Exception as e:
+        raise ValueError(f"Could not create the calendar: {e}") from e
+
+    cal_url = str(cal_obj.url)
+    props = {}
+    try:
+        props = cal_obj.get_properties()
+    except Exception:
+        pass
+    comp_set = props.get("{urn:ietf:params:xml:ns:caldav}supported-calendar-component-set")
+    uid = cal_url.rsplit("/", 1)[-1] or cal_url
+    cal_id = add_calendar(
+        conn,
+        uid=uid,
+        display_name=cal_obj.get_display_name() or name,
+        url=cal_url,
+        username=username,
+        color=props.get("{http://apple.com/ns/ical/}calendar-color"),
+        principal_url=str(principal.url) if principal.url else url,
+        supports_todo=1 if (comp_set and "VTODO" in comp_set) else 0,
+    )
+    logger.info("Created calendar %r (id=%d) at %s", name, cal_id, cal_url)
+    return {"ok": True, "calendar_id": cal_id, "display_name": name}
+
+
 def _sync_calendar_incremental(
     conn: Any,
     client: Any,

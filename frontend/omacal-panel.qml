@@ -671,9 +671,54 @@ Panel {
     function dismissCalendars() {
         showCalendars = false
     }
-    // Hook for the dialog's "+" button (upper right). Behaviour TBD — see
-    // the add-calendar design note; keep as a no-op until Gerry decides.
-    function addCalendarRequested() { }
+    // Hook for the dialog's "+" button (upper right). Opens the mini form
+    // inside the calendar-select card; the dialog owns the field/buttons and
+    // emits addSubmit(name)/addCancel(), so the POST lives here.
+    function openAddCalendar() {
+        calToggle.pendingAddName = ""
+        calToggle.addOpen = true
+        // Defer a tick: addOpen flips the form's visibility binding, and
+        // forceActiveFocus on a still-hidden field is a silent no-op
+        // (same pattern as focusEventTitle).
+        Qt.callLater(function() {
+            calToggle.nameFieldRef.forceActiveFocus()
+        })
+    }
+    function submitAddCalendar(name) {
+        var trimmed = (name || "").trim()
+        if (trimmed === "") { error = "Enter a calendar name"; return }
+        var xhr = new XMLHttpRequest()
+        xhr.open("POST", apiBase + "/api/calendars/add", true)
+        xhr.timeout = 30000   // write op: server round-trip
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
+                var data = null
+                try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
+                if (data && data.ok) {
+                    // The new calendar is in the DB cache now: refetch the
+                    // list and rebuild the dialog model so the row appears
+                    // (loadCalendars chains buildCalToggleModel on success).
+                    error = ""
+                    calToggle.addOpen = false
+                    calToggle.pendingAddName = ""
+                    loadCalendars()
+                } else {
+                    error = (data && data.error) ? data.error : "Could not add calendar"
+                }
+            } else {
+                error = (xhr.status === 0)
+                    ? "omacal API did not respond"
+                    : "Cannot add calendar (" + xhr.status + ")"
+                // Keep the form open so the user can retry or cancel.
+            }
+        }
+        xhr.send(JSON.stringify({ name: trimmed }))
+    }
+    function cancelAddCalendar() {
+        calToggle.addOpen = false
+        calToggle.pendingAddName = ""
+        error = ""
+    }
 
     // The dialog is stateless; this wires a toggle to the backend and refreshes
     // the visible grid. `enabled` here is the *new* desired state.
@@ -1903,10 +1948,9 @@ Panel {
             fontFamily: root.contentFontFamily
             onClosed: root.dismissCalendars()
             onToggled: root.toggleCalendar(id, enabled)
-            // Placeholder hook: the "+" button in the dialog's upper right.
-            // Behaviour (add-calendar form + backend endpoint) is a later
-            // pass; for now it's a visible, clickable button with no-op.
-            onAddRequested: root.addCalendarRequested()
+            onAddRequested: root.openAddCalendar()
+            onAddSubmit: root.submitAddCalendar(name)
+            onAddCancel: root.cancelAddCalendar()
         }
     }
 }
