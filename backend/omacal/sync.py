@@ -446,6 +446,80 @@ def _discover_calendars(
     return result
 
 
+def calendar_is_deletable(url: str | None, principal_url: str | None) -> bool:
+    """Ownership gate for calendar deletion.
+
+    A calendar may be deleted only when it lives in the signed-in user's own
+    namespace: the /calendars/<owner>/<slug> path segment of the calendar URL
+    must have the same <owner> as the principal URL, and the slug must not be
+    a shared collection (our server names those *_shared_by_*). Shared
+    calendars are read-only for us even though we hold credentials.
+    """
+    m = re.search(r"/calendars/([^/]+)/([^/]+)", (url or "").rstrip("/"))
+    if not m:
+        return False
+    owner, slug = m.group(1), m.group(2)
+    pm = re.search(r"/principals/(?:users/)?([^/]+)", principal_url or "")
+    if pm:
+        principal = pm.group(1)
+    else:
+        pm2 = re.search(r"/calendars/([^/]+)", (principal_url or "").rstrip("/"))
+        principal = pm2.group(1) if pm2 else None
+    if principal != owner:
+        return False
+    return "shared_by" not in slug.lower()
+
+
+def delete_calendar(
+    conn: Any,
+    calendar_id: int,
+) -> dict[str, Any]:
+    """Server-side DELETE of a calendar collection (like event delete).
+
+    Ownership-gated via calendar_is_deletable(); the server is the final
+    arbiter. Removes the collection and all its events for everyone
+    subscribed, then drops the DB cache row.
+    """
+    row = conn.execute(
+        "SELECT id, url, principal_url, uid, display_name FROM calendars WHERE id = ?",
+        (calendar_id,),
+    ).fetchone()
+    if not row:
+        raise ValueError("Calendar not found")
+    if not calendar_is_deletable(row["url"], row["principal_url"]):
+        raise ValueError("Calendar is shared/read-only and cannot be deleted")
+
+    cfg = load_config()
+    entry = next((c for c in cfg["calendars"] if c.get("username")), None)
+    if not entry:
+        raise ValueError("No signed-in calendar account")
+    url, username = entry["url"], entry["username"]
+    from omacal.keyring_store import get_password
+    password = get_password(entry.get("principal_url") or url, username)
+    if not password:
+        raise ValueError("No credentials on file for the signed-in account")
+
+    client = _dav_client(url, username, password)
+    principal = client.principal()
+    target = None
+    for cal in principal.calendars():
+        if str(cal.url).rstrip("/") == str(row["url"]).rstrip("/"):
+            target = cal
+            break
+    if target is None:
+        # Not on the server (stale cache): just drop the DB row.
+        conn.execute("DELETE FROM calendars WHERE id = ?", (calendar_id,))
+        conn.commit()
+        return {"ok": True, "calendar_id": calendar_id, "display_name": row["display_name"]}
+
+    target.delete()   # CalendarSet.delete: DELETE on the collection URL
+    conn.execute("DELETE FROM calendars WHERE id = ?", (calendar_id,))
+    conn.execute("DELETE FROM events WHERE calendar_id = ?", (calendar_id,))
+    conn.execute("DELETE FROM reminders WHERE calendar_id = ?", (calendar_id,))
+    conn.commit()
+    return {"ok": True, "calendar_id": calendar_id, "display_name": row["display_name"]}
+
+
 def add_calendar_named(
     conn: Any,
     name: str,

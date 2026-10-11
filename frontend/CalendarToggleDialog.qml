@@ -34,6 +34,14 @@ Item {
   signal addSubmit(string name, string color)
   signal addCancel()
   signal navRequested(int dx)
+  signal deleteRequested(int id)
+
+  // Hex colors already used by the visible calendars (set by the panel from
+  // the /api/calendars response). The add-calendar color picker hides palette
+  // swatches that are "close" to any of these: RGB Euclidean distance < 60
+  // (scale 0..441), so a new calendar never gets a color that looks the same
+  // as an existing one.
+  property var usedColors: []
 
   // Add-calendar mini form state. The panel flips this on "+" click; the
   // field/buttons live inside the card while it is true. The POST stays in
@@ -43,8 +51,57 @@ Item {
   property string pendingAddColor: ""
   property alias nameFieldRef: nameField
 
+  // Color palette for the picker. Swatches "close" to a color already used by
+  // a visible calendar are hidden so a new calendar never looks like an
+  // existing one. "Close" = RGB Euclidean distance < 60 (scale 0..441):
+  // deterministic, not subjective — hex codes themselves are not perceptually
+  // ordered, so the comparison happens in RGB space after parsing.
+  property var palette: [
+    "#d93025", "#e8710a", "#f2b134", "#8f68ff",
+    "#1a73e8", "#12b5e0", "#1e8e3e", "#e91e63"
+  ]
+  function hexToRgb(hex) {
+    return [
+      parseInt(hex.substring(1, 3), 16),
+      parseInt(hex.substring(3, 5), 16),
+      parseInt(hex.substring(5, 7), 16)
+    ]
+  }
+  function colorTooClose(hex) {
+    var rgb = hexToRgb(hex)
+    for (var i = 0; i < usedColors.length; i++) {
+      var u = hexToRgb(String(usedColors[i]))
+      var dr = rgb[0] - u[0]
+      var dg = rgb[1] - u[1]
+      var db = rgb[2] - u[2]
+      if (Math.sqrt(dr * dr + dg * dg + db * db) < 60)
+        return true
+    }
+    return false
+  }
+  property var availableSwatches: {
+    var out = []
+    for (var i = 0; i < palette.length; i++) {
+      if (!colorTooClose(palette[i]))
+        out.push(palette[i])
+    }
+    return out
+  }
+
   // The Done button's slot, after all calendar rows.
   readonly property int doneIndex: root.model.count
+
+  // Keyboard selection follows the scroll: when arrows/Tab move the cursor
+  // past the visible window, re-anchor contentY so the selected row stays on
+  // screen. Row pitch matches estimatedContentHeight's terms (58px rows +
+  // 4px gaps); the window is the Flickable's own height.
+  function scrollToSelection() {
+    if (root.selectedIndex >= root.doneIndex) return   // Done button, no row
+    var rowStep = Style.space(58) + Style.space(4)
+    var window = Math.max(listArea.height, 0)
+    var target = root.selectedIndex * rowStep - Math.max(window - rowStep, 0) / 2
+    listArea.contentY = Math.max(0, Math.min(target, estimatedContentHeight - window))
+  }
 
   // Stable content estimate: N rows of ~58px + 4px gaps, derived from
   // model.count alone. Used for the card height, the Flickable contentHeight,
@@ -79,9 +136,21 @@ Item {
       return true
     } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Backtab) {
       root.selectedIndex = (root.selectedIndex - 1 + total) % total
+      root.scrollToSelection()
       return true
     } else if (event.key === Qt.Key_Right || event.key === Qt.Key_Tab) {
       root.selectedIndex = (root.selectedIndex + 1) % total
+      root.scrollToSelection()
+      return true
+    } else if (event.key === Qt.Key_Plus || event.text === "+") {
+      // '+' opens the add-calendar mini form (same as clicking the + button).
+      root.addRequested()
+      return true
+    } else if (event.key === Qt.Key_D || event.text === "d" || event.text === "D") {
+      // 'd' deletes the calendar under the keyboard cursor (same flow as
+      // right-click). Only for calendars in the signed-in user's namespace.
+      var m = root.model.get(root.selectedIndex)
+      if (m && m.deletable) root.deleteRequested(m.id)
       return true
     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
       if (root.selectedIndex === root.doneIndex) root.closed()
@@ -220,18 +289,40 @@ Item {
               id: rows
               model: root.model
 
-              Toggle {
+              Item {
                 required property var modelData
                 required property int index
+                // implicitWidth matters: the ColumnLayout's own width derives
+                // from children's implicit widths, and a bare Item is 0 —
+                // Layout.fillWidth alone would collapse the row to zero width.
+                implicitWidth: rowToggle.implicitWidth
                 Layout.fillWidth: true
-                label: modelData.name
-                description: modelData.enabled ? "Visible" : "Hidden"
-                checked: modelData.enabled
-                hasCursor: index === root.selectedIndex
-                foreground: root.foreground
-                accent: root.accent
-                fontFamily: root.fontFamily
-                onClicked: root.toggled(modelData.id, !modelData.enabled)
+                Layout.preferredHeight: rowToggle.implicitHeight
+
+                Toggle {
+                  id: rowToggle
+                  anchors.fill: parent
+                  label: modelData.name
+                  description: modelData.enabled ? "Visible" : "Hidden"
+                  checked: modelData.enabled
+                  hasCursor: index === root.selectedIndex
+                  foreground: root.foreground
+                  accent: root.accent
+                  fontFamily: root.fontFamily
+                  onClicked: root.toggled(modelData.id, !modelData.enabled)
+                }
+
+                // Right-click overlay: right-clicking a row asks to delete
+                // that calendar (mirrors the event rows' right-click ->
+                // delete-confirm flow). Only accepted for calendars in the
+                // signed-in user's own namespace (deletable flag from the
+                // API); the server is the final arbiter. acceptedButtons is
+                // right-only, so left-clicks fall through to the Toggle.
+                MouseArea {
+                  anchors.fill: parent
+                  acceptedButtons: Qt.RightButton
+                  onClicked: if (modelData.deletable) root.deleteRequested(modelData.id)
+                }
               }
             }
           }
@@ -276,10 +367,7 @@ Item {
 
           Repeater {
             id: swatches
-            model: [
-              "#d93025", "#e8710a", "#f2b134", "#8f68ff",
-              "#1a73e8", "#12b5e0", "#1e8e3e", "#e91e63"
-            ]
+            model: root.availableSwatches   // palette minus colors close to existing calendars'
 
             Rectangle {
               required property string modelData

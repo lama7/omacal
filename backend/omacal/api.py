@@ -143,14 +143,17 @@ class OmacalHandler(BaseHTTPRequestHandler):
 
         if path == "/api/calendars":
             from omacal.keyring_store import has_password
+            from omacal.sync import calendar_is_deletable
             calendars = db_get_calendars(self.db_conn)
             for c in calendars:
                 # Writability = we hold a password for this calendar in the
                 # keyring. The password is keyed by the principal URL (the
                 # configured URL); fall back to the calendar URL.
-                from omacal.keyring_store import has_password
                 key = c.get("principal_url") or c.get("url", "")
                 c["writable"] = bool(c.get("username")) and has_password(key, c.get("username"))
+                # Deletable = owned by the signed-in user's namespace (not a
+                # *_shared_by_* collection); the server is the final arbiter.
+                c["deletable"] = calendar_is_deletable(c.get("url"), c.get("principal_url"))
                 c.pop("password", None)
                 c.pop("username", None)
                 c.pop("sync_token", None)
@@ -413,6 +416,20 @@ class OmacalHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/calendars/") and len(parsed.path) > len("/api/calendars/"):
+            # DELETE /api/calendars/<id>: server-side delete of the whole
+            # collection (like event delete). Ownership-gated server-side.
+            try:
+                calendar_id = int(parsed.path.rsplit("/", 1)[-1])
+                from omacal.sync import delete_calendar
+                result = delete_calendar(self.db_conn, calendar_id)
+                self._json(200, result)
+            except ValueError as e:
+                self._json(400, {"error": str(e)})
+            except Exception as e:
+                logger.error("DELETE /api/calendars failed: %s", e)
+                self._json(500, {"error": str(e)})
+            return
         if parsed.path == "/api/events":
             query = parse_qs(parsed.query)
             uid = query.get("uid", [None])[0]

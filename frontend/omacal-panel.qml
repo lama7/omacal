@@ -138,6 +138,17 @@ Panel {
     property bool editThisOccurrence: true  // scope toggle: true = this occurrence, false = whole series
     property bool deleteWholeSeries: false  // delete scope: true = whole series, false = this occurrence
     property var pendingDeleteEvent: null
+    property var pendingDeleteCalendar: null   // {id, name} for calendar deletes
+    // Hex colors used by the visible calendars (feeds the calendar dialog's
+    // color picker, which hides palette swatches close to these).
+    property var calendarUsedColors: {
+        var out = []
+        for (var i = 0; i < calendars.length; i++) {
+            var c = calendars[i].color
+            if (c && String(c).length >= 7) out.push(String(c))
+        }
+        return out
+    }
     property bool showDeleteConfirm: false
     property bool showCalendars: false
     property ListModel calToggleModel: ListModel {}
@@ -635,7 +646,48 @@ Panel {
     function dismissDeleteConfirm() {
         showDeleteConfirm = false
         pendingDeleteEvent = null
+        pendingDeleteCalendar = null
         deleteWholeSeries = false
+    }
+
+    // Calendar delete-confirm: opened by right-click / 'd' on a toggle row
+    // (only for calendars in the signed-in user's own namespace). Reuses the
+    // same DeleteConfirmDialog overlay; the calendar dialog stays open
+    // underneath so Cancel returns straight to the list.
+    function deleteCalendarRequested(id) {
+        for (var i = 0; i < calendars.length; i++) {
+            if (calendars[i].id === id) {
+                if (!calendars[i].deletable) { error = "Shared calendar \u2014 can't delete"; return }
+                pendingDeleteCalendar = { id: id, name: calendars[i].display_name }
+                showDeleteConfirm = true
+                return
+            }
+        }
+    }
+    function deleteCalendarNow() {
+        if (!pendingDeleteCalendar) return
+        var id = pendingDeleteCalendar.id
+        var xhr = new XMLHttpRequest()
+        xhr.open("DELETE", apiBase + "/api/calendars/" + id, true)
+        xhr.timeout = 30000   // write op: server round-trip
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                dismissDeleteConfirm()
+                if (xhr.status === 200) {
+                    // Collection gone server-side: refetch the list (and
+                    // events) so the toggle row disappears.
+                    error = ""
+                    loadCalendars()
+                } else {
+                    var msg = ""
+                    try { msg = JSON.parse(xhr.responseText).error || "" } catch (e) { msg = "" }
+                    error = xhr.status === 0
+                        ? "No response from omacal API"
+                        : "Delete failed (" + xhr.status + ")" + (msg ? ": " + msg : "")
+                }
+            }
+        }
+        xhr.send()
     }
 
     // Calendar toggle form (header button, right of "previous month").
@@ -651,7 +703,8 @@ Panel {
         calToggleModel.clear()
         for (var i = 0; i < calendars.length; i++) {
             calToggleModel.append({ id: calendars[i].id, name: calendars[i].display_name,
-                                    enabled: !!calendars[i].enabled })
+                                    enabled: !!calendars[i].enabled,
+                                    deletable: !!calendars[i].deletable })
         }
     }
     // In-place flip of one row's `enabled`, so the Toggle's Behaviour animations
@@ -803,6 +856,8 @@ Panel {
     }
 
     function deleteConfirmText() {
+        if (pendingDeleteCalendar)
+            return "Delete the calendar \"" + pendingDeleteCalendar.name + "\"?"
         var ev = pendingDeleteEvent
         if (!ev) return "Delete this event?"
         if (ev.isReminder) return "Delete the reminder \"" + ev.summary + "\"?"
@@ -1091,6 +1146,17 @@ Panel {
         dayEvents = []
         pendingDayDate = null
         loadCalendars()
+        // Re-probe first-run state on every refresh: the one-shot probe in
+        // Component.onCompleted can race a backend restart (venv rebuild /
+        // systemctl restart), and a dead connection latches needsSetup=true,
+        // which would lock the panel into the setup form forever. Cheap
+        // health call, and open() reads needsSetup after this callback.
+        fetchNeedsSetup(function() {
+            if (!needsSetup && viewMode === "setup") {
+                viewMode = "month"
+                loadCalendars()
+            }
+        })
         if (!needsSetup) viewMode = "month"
     }
 
@@ -1356,7 +1422,15 @@ Panel {
             onTextKey: function(t) {
                 if (root.viewMode === "setup") return
                 if (root.showDeleteConfirm) return
-                if (root.showCalendars) return
+                if (root.showCalendars) {
+                    // '+' opens the add-calendar mini form; 'd' deletes the
+                    // calendar under the keyboard cursor (same flows as the
+                    // + button and right-click). Routed through handleKey so
+                    // the dialog owns the cursor state.
+                    if (t === "+" || t === "=") calToggle.handleKey({ key: Qt.Key_Plus, text: "+" })
+                    else if (t === "d" || t === "D") calToggle.handleKey({ key: Qt.Key_D, text: "d" })
+                    return
+                }
                 if (root.showAddForm) {
                     if (t === "\b" || t === "\x7F") root.dismissAddForm()
                     return
@@ -1938,7 +2012,9 @@ Panel {
         DeleteConfirmDialog {
             id: deleteConfirm
             anchors.fill: parent
-            z: 10
+            // Above CalendarToggleDialog (z 10): a calendar delete-confirm
+            // overlays the open calendar card, so it must stack on top.
+            z: 11
             opened: root.showDeleteConfirm
             message: root.deleteConfirmText()
             confirmText: "Delete"
@@ -1949,7 +2025,7 @@ Panel {
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
             onCanceled: root.dismissDeleteConfirm()
-            onConfirmed: root.deleteEvent()
+            onConfirmed: root.pendingDeleteCalendar ? root.deleteCalendarNow() : root.deleteEvent()
             onScopeToggled: root.deleteWholeSeries = checked
         }
         // Calendar visibility dialog — one Toggle per configured calendar plus a
@@ -1975,6 +2051,12 @@ Panel {
             // panel behind the dialog (the dialog routes them here instead
             // of swallowing, so ESC/arrows keep working in the form state).
             onNavRequested: root.shiftMonth(dx)
+            // Colors already in use by the visible calendars: the dialog hides
+            // palette swatches close to these so a new calendar never reuses a
+            // color that looks like an existing one. Recomputed whenever the
+            // panel refetches the calendar list.
+            usedColors: root.calendarUsedColors
+            onDeleteRequested: root.deleteCalendarRequested(id)
         }
     }
 }
