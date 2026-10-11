@@ -153,7 +153,9 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 c["writable"] = bool(c.get("username")) and has_password(key, c.get("username"))
                 # Deletable = owned by the signed-in user's namespace (not a
                 # *_shared_by_* collection); the server is the final arbiter.
-                c["deletable"] = calendar_is_deletable(c.get("url"), c.get("principal_url"))
+                # Subscribed (URL-added) rows are always deletable: the server
+                # treats that as unsubscribe (local cache removal only).
+                c["deletable"] = bool(c.get("subscribed")) or calendar_is_deletable(c.get("url"), c.get("principal_url"))
                 c.pop("password", None)
                 c.pop("username", None)
                 c.pop("sync_token", None)
@@ -391,6 +393,31 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(e)})
             except Exception as e:
                 logger.error("POST /api/calendars/add failed: %s", e)
+                self._json(500, {"error": str(e)})
+            return
+        if parsed.path == "/api/calendars/subscribe":
+            # Subscribe to an EXISTING calendar by collection URL (body: {url,
+            # name?, color?}). No new login: same-origin URLs reuse the
+            # keyring credentials; others fetch unauthenticated (public).
+            try:
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                data = json.loads(body)
+                url = (data.get("url") or "").strip()
+                if not url:
+                    self._json(400, {"error": "Calendar URL is required"})
+                    return
+                name = (data.get("name") or "").strip() or None
+                color = (data.get("color") or "").strip() or None
+                if color and not re.fullmatch(r"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?", color):
+                    self._json(400, {"error": "Bad calendar color"})
+                    return
+                from omacal.sync import subscribe_calendar
+                result = subscribe_calendar(self.db_conn, url, name, color)
+                self._json(200, result)
+            except ValueError as e:
+                self._json(400, {"error": str(e)})
+            except Exception as e:
+                logger.error("POST /api/calendars/subscribe failed: %s", e)
                 self._json(500, {"error": str(e)})
             return
         if parsed.path == "/api/calendars/toggle":

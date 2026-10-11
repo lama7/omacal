@@ -658,7 +658,7 @@ Panel {
         for (var i = 0; i < calendars.length; i++) {
             if (calendars[i].id === id) {
                 if (!calendars[i].deletable) { error = "Shared calendar \u2014 can't delete"; return }
-                pendingDeleteCalendar = { id: id, name: calendars[i].display_name }
+                pendingDeleteCalendar = { id: id, name: calendars[i].display_name, subscribed: !!calendars[i].subscribed }
                 showDeleteConfirm = true
                 return
             }
@@ -704,7 +704,8 @@ Panel {
         for (var i = 0; i < calendars.length; i++) {
             calToggleModel.append({ id: calendars[i].id, name: calendars[i].display_name,
                                     enabled: !!calendars[i].enabled,
-                                    deletable: !!calendars[i].deletable })
+                                    deletable: !!calendars[i].deletable,
+                                    subscribed: !!calendars[i].subscribed })
         }
     }
     // In-place flip of one row's `enabled`, so the Toggle's Behaviour animations
@@ -742,6 +743,7 @@ Panel {
     function openAddCalendar() {
         calToggle.pendingAddName = ""
         calToggle.pendingAddColor = ""
+        calToggle.pendingAddUrl = ""
         calToggle.addOpen = true
         // Defer a tick: addOpen flips the form's visibility binding, and
         // forceActiveFocus on a still-hidden field is a silent no-op
@@ -750,8 +752,46 @@ Panel {
             calToggle.nameFieldRef.forceActiveFocus()
         })
     }
-    function submitAddCalendar(name, color) {
+    function submitAddCalendar(name, color, url) {
         var trimmed = (name || "").trim()
+        var trimmedUrl = (url || "").trim()
+        if (trimmedUrl !== "") {
+            // Subscribe mode: POST the URL to /api/calendars/subscribe. The
+            // name (if typed) is an optional label override; the backend
+            // falls back to the collection's own display name.
+            var subPayload = { url: trimmedUrl }
+            if (trimmed !== "")
+                subPayload.name = trimmed
+            if (color && color !== "")
+                subPayload.color = color
+            var subXhr = new XMLHttpRequest()
+            subXhr.open("POST", apiBase + "/api/calendars/subscribe", true)
+            subXhr.timeout = 30000   // write op: server round-trip
+            subXhr.onreadystatechange = function() {
+                if (subXhr.readyState === XMLHttpRequest.DONE && subXhr.status === 200) {
+                    var data = null
+                    try { data = JSON.parse(subXhr.responseText) } catch (e) { data = null }
+                    if (data && data.ok) {
+                        error = ""
+                        calToggle.addOpen = false
+                        calToggle.pendingAddName = ""
+                        calToggle.pendingAddColor = ""
+                        calToggle.pendingAddUrl = ""
+                        loadCalendars()
+                        keyCatcher.forceActiveFocus()
+                    } else {
+                        error = (data && data.error) ? data.error : "Could not subscribe to calendar"
+                    }
+                } else {
+                    error = (subXhr.status === 0)
+                        ? "omacal API did not respond"
+                        : "Cannot subscribe to calendar (" + subXhr.status + ")"
+                    // Keep the form open so the user can retry or cancel.
+                }
+            }
+            subXhr.send(JSON.stringify(subPayload))
+            return
+        }
         if (trimmed === "") { error = "Enter a calendar name"; return }
         var payload = { name: trimmed }
         if (color && color !== "")
@@ -791,6 +831,7 @@ Panel {
         calToggle.addOpen = false
         calToggle.pendingAddName = ""
         calToggle.pendingAddColor = ""
+        calToggle.pendingAddUrl = ""
         error = ""
         // The name field still holds activeFocus when the form closes, and a
         // hidden focused TextField swallows ESC/arrows before the catcher
@@ -862,7 +903,11 @@ Panel {
 
     function deleteConfirmText() {
         if (pendingDeleteCalendar)
-            return "Delete the calendar \"" + pendingDeleteCalendar.name + "\"?"
+            // Subscribed (URL-added) calendars belong to someone else: the
+            // server-side DELETE is an unsubscribe (local cache removal only).
+            return pendingDeleteCalendar.subscribed
+                ? "Unsubscribe from \"" + pendingDeleteCalendar.name + "\"?"
+                : "Delete the calendar \"" + pendingDeleteCalendar.name + "\"?"
         var ev = pendingDeleteEvent
         if (!ev) return "Delete this event?"
         if (ev.isReminder) return "Delete the reminder \"" + ev.summary + "\"?"
@@ -2036,7 +2081,7 @@ Panel {
             z: 11
             opened: root.showDeleteConfirm
             message: root.deleteConfirmText()
-            confirmText: "Delete"
+            confirmText: root.pendingDeleteCalendar && root.pendingDeleteCalendar.subscribed ? "Unsubscribe" : "Delete"
             cancelText: "Cancel"
             selectedIndex: 0
             showScope: root.pendingDeleteEvent && root.pendingDeleteEvent.is_recurring && !root.pendingDeleteEvent.isReminder
@@ -2064,7 +2109,7 @@ Panel {
             onClosed: root.dismissCalendars()
             onToggled: root.toggleCalendar(id, enabled)
             onAddRequested: root.openAddCalendar()
-            onAddSubmit: root.submitAddCalendar(name, color)
+            onAddSubmit: root.submitAddCalendar(name, color, url)
             onAddCancel: root.cancelAddCalendar()
             // Arrows while the mini form is open navigate months in the
             // panel behind the dialog (the dialog routes them here instead

@@ -250,6 +250,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
         """)
         cur.execute("INSERT INTO schema_version VALUES (10)")
 
+    if version < 11:
+        # Subscribed calendars (2026-10). A calendar added by URL (subscribe-by-URL
+        # in the add-calendar form) is not part of the configured account's
+        # discovery, so the stale-calendar prune must never treat it as stale.
+        # 1 = added by URL; the sync's prune exempts these rows and the periodic
+        # sync refreshes them directly.
+        cols = {r[1] for r in cur.execute("PRAGMA table_info(calendars)")}
+        if "subscribed" not in cols:
+            cur.execute("ALTER TABLE calendars ADD COLUMN subscribed INTEGER NOT NULL DEFAULT 0")
+        cur.execute("INSERT INTO schema_version VALUES (11)")
+
     conn.commit()
 
 
@@ -263,13 +274,16 @@ def add_calendar(
     color: str | None = None,
     principal_url: str | None = None,
     supports_todo: int = 0,
+    subscribed: int = 0,
 ) -> int:
     # The password is never stored in the DB — it lives in the keyring. The
     # column is kept for schema stability but always written as NULL.
+    # `subscribed` is deliberately NOT in the ON CONFLICT update: discovery
+    # (which passes 0) must never clear the flag of a URL-added row.
     cur = conn.execute(
         """INSERT INTO calendars
-           (uid, display_name, url, username, password, color, principal_url, last_sync, enabled, supports_todo)
-           VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, 1, ?)
+           (uid, display_name, url, username, password, color, principal_url, last_sync, enabled, supports_todo, subscribed)
+           VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, 1, ?, ?)
         ON CONFLICT(uid) DO UPDATE SET
            display_name = excluded.display_name,
            url = excluded.url,
@@ -279,7 +293,7 @@ def add_calendar(
            principal_url = excluded.principal_url,
            supports_todo = excluded.supports_todo
         RETURNING id""",
-        (uid, display_name, url, username, color, principal_url, supports_todo),
+        (uid, display_name, url, username, color, principal_url, supports_todo, subscribed),
     )
     row = cur.fetchone()
     conn.commit()
@@ -288,7 +302,7 @@ def add_calendar(
 
 def list_calendars(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     cur = conn.execute(
-        "SELECT id, uid, display_name, color, url, username, password, principal_url, last_sync, sync_token, enabled, supports_todo FROM calendars ORDER BY display_name"
+        "SELECT id, uid, display_name, color, url, username, password, principal_url, last_sync, sync_token, enabled, supports_todo, subscribed FROM calendars ORDER BY display_name"
     )
     return [dict(r) for r in cur.fetchall()]
 

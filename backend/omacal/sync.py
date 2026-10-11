@@ -479,13 +479,24 @@ def delete_calendar(
     Ownership-gated via calendar_is_deletable(); the server is the final
     arbiter. Removes the collection and all its events for everyone
     subscribed, then drops the DB cache row.
+
+    Subscribed (URL-added) rows are the exception: the collection belongs to
+    someone else, so "delete" means UNSUBSCRIBE — drop the local cache rows
+    only, never touch the server.
     """
     row = conn.execute(
-        "SELECT id, url, principal_url, uid, display_name FROM calendars WHERE id = ?",
+        "SELECT id, url, principal_url, uid, display_name, subscribed FROM calendars WHERE id = ?",
         (calendar_id,),
     ).fetchone()
     if not row:
         raise ValueError("Calendar not found")
+    if row["subscribed"]:
+        # Unsubscribe: local-only removal (see docstring).
+        conn.execute("DELETE FROM calendars WHERE id = ?", (calendar_id,))
+        conn.execute("DELETE FROM events WHERE calendar_id = ?", (calendar_id,))
+        conn.execute("DELETE FROM reminders WHERE calendar_id = ?", (calendar_id,))
+        conn.commit()
+        return {"ok": True, "calendar_id": calendar_id, "display_name": row["display_name"], "unsubscribed": True}
     if not calendar_is_deletable(row["url"], row["principal_url"]):
         raise ValueError("Calendar is shared/read-only and cannot be deleted")
 
@@ -593,6 +604,116 @@ def add_calendar_named(
     )
     logger.info("Created calendar %r (id=%d) at %s", name, cal_id, cal_url)
     return {"ok": True, "calendar_id": cal_id, "display_name": name}
+
+
+def subscribe_calendar(
+    conn: Any,
+    url: str,
+    name: str | None = None,
+    color: str | None = None,
+) -> dict[str, Any]:
+    """Subscribe to an EXISTING calendar by its collection URL — no new login.
+
+    The URL is the user's calendar's collection URL (the same kind of URL the
+    panel shows in Thunderbird's client, or a public .ics). Auth: if the URL
+    lives on the signed-in user's server (same origin as the configured
+    account), reuse the keyring credentials; otherwise fetch unauthenticated
+    (public calendars). The collection is PROPFINDed for display-name/color/
+    component-set, then cached with subscribed=1 so the stale prune never
+    removes it and the periodic sync refreshes it directly (sync_subscribed).
+    Events are fetched once here via the incremental sync path (no token →
+    full replace) so the calendar is populated immediately, not after the
+    next poll. Returns {ok, calendar_id, display_name}; raises ValueError
+    for user-facing failures.
+    """
+    from omacal.config import load_config
+    from omacal.keyring_store import get_password
+    from urllib.parse import urlparse
+
+    url = (url or "").strip()
+    if not re.fullmatch(r"https?://\S+", url):
+        raise ValueError("Calendar URL must start with http:// or https://")
+
+    # Same-origin as the signed-in account → reuse keyring creds; otherwise
+    # unauthenticated (public subscription).
+    cfg = load_config()
+    username: str | None = None
+    password: str | None = None
+    account = next((c for c in cfg.get("calendars", []) if c.get("username")), None)
+    if account:
+        def _origin(u: str) -> tuple:
+            p = urlparse(u)
+            return (p.scheme.lower(), p.netloc.lower())
+        if _origin(url) == _origin(account["url"]):
+            username = account["username"]
+            password = get_password(account["url"], username)
+            if not password:
+                username = password = None  # no creds on file: try public
+
+    try:
+        client = _dav_client(url, username, password)
+        cal_obj = client.calendar(url=url)
+    except Exception as e:
+        raise ValueError(f"Could not open the calendar at that URL: {e}") from e
+
+    cal_url = str(cal_obj.url)
+    props: dict = {}
+    try:
+        props = cal_obj.get_properties()
+    except Exception:
+        pass
+    display = (name or "").strip() or cal_obj.get_display_name() or cal_url.rsplit("/", 1)[-1] or "Calendar"
+    comp_set = props.get("{urn:ietf:params:xml:ns:caldav}supported-calendar-component-set")
+    cal_color = props.get("{http://apple.com/ns/ical/}calendar-color") or color
+
+    uid = cal_url.rsplit("/", 1)[-1] or cal_url
+    cal_id = add_calendar(
+        conn,
+        uid=uid,
+        display_name=display,
+        url=cal_url,
+        username=username,
+        color=cal_color,
+        principal_url=None,
+        supports_todo=1 if (comp_set and "VTODO" in comp_set) else 0,
+        subscribed=1,
+    )
+
+    # Populate the cache now (not after the next poll): incremental sync with
+    # no token = full replace of this calendar's rows.
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    try:
+        n, dels = _sync_calendar_incremental(conn, client, cal_id, cal_url, display, cutoff)
+    except Exception as e:
+        logger.warning("Subscribe %r: initial fetch failed (%s); row cached, periodic sync retries", display, e)
+        n = 0
+    logger.info("Subscribed calendar %r (id=%d) at %s (%d events)", display, cal_id, cal_url, n)
+    return {"ok": True, "calendar_id": cal_id, "display_name": display}
+
+
+def sync_subscribed(conn: Any) -> None:
+    """Refresh subscribed (URL-added) calendars directly.
+
+    They are not in config's sources, so sync_all's per-source loop never
+    reaches them; this closes that gap on every periodic sync. A failure is
+    logged and swallowed — a dead subscription must not fail the whole sync.
+    """
+    from omacal.keyring_store import get_password
+
+    rows = conn.execute(
+        "SELECT id, url, username, display_name FROM calendars WHERE subscribed = 1 AND enabled = 1"
+    ).fetchall()
+    if not rows:
+        return
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    for row in rows:
+        username = row["username"]
+        password = get_password(row["url"], username) if username else None
+        try:
+            client = _dav_client(row["url"], username, password)
+            _sync_calendar_incremental(conn, client, row["id"], row["url"], row["display_name"], cutoff)
+        except Exception as e:
+            logger.warning("Refresh of subscribed calendar %r failed: %s", row["display_name"], e)
 
 
 def _sync_calendar_incremental(
@@ -1519,6 +1640,10 @@ def _sync_all_locked(config_path: Path | None = None) -> dict[str, Any]:
             incomplete.append(name)
             logger.error("Sync failed for %s: %s", name, e)
 
+    # Refresh subscribed (URL-added) calendars: they are not config sources,
+    # so the loop above never reaches them. Failures are logged, not fatal.
+    sync_subscribed(conn)
+
     if incomplete:
         logger.warning(
             "Skipping stale-calendar cleanup: %d source(s) did not complete (%s)",
@@ -1526,8 +1651,10 @@ def _sync_all_locked(config_path: Path | None = None) -> dict[str, Any]:
         )
     else:
         # Remove stale calendar entries that are no longer discovered.
-        cur = conn.execute("SELECT id, url FROM calendars")
-        stale = [row["id"] for row in cur.fetchall() if row["url"] not in synced_urls]
+        # Subscribed rows are exempt: they are not part of any source's
+        # discovery, so "not in synced_urls" does not mean stale for them.
+        cur = conn.execute("SELECT id, url, subscribed FROM calendars")
+        stale = [row["id"] for row in cur.fetchall() if not row["subscribed"] and row["url"] not in synced_urls]
         if stale:
             placeholders = ",".join("?" for _ in stale)
             conn.execute(f"DELETE FROM calendars WHERE id IN ({placeholders})", stale)

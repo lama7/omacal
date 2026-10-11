@@ -31,7 +31,7 @@ Item {
   signal closed()
   signal toggled(int id, bool enabled)
   signal addRequested()
-  signal addSubmit(string name, string color)
+  signal addSubmit(string name, string color, string url)
   signal addCancel()
   signal navRequested(int dx)
   signal deleteRequested(int id)
@@ -49,6 +49,7 @@ Item {
   property bool addOpen: false
   property string pendingAddName: ""
   property string pendingAddColor: ""
+  property string pendingAddUrl: ""
   property alias nameFieldRef: nameField
 
   // Color palette for the picker. Swatches "close" to a color already used by
@@ -160,7 +161,7 @@ Item {
     if (root.addOpen) {
       if (event.key === Qt.Key_Escape) { root.addCancel(); return true }
       if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-        if (root.pendingAddName !== "") root.addSubmit(root.pendingAddName, root.pendingAddColor)
+        if (root.pendingAddName !== "" || root.pendingAddUrl !== "") root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl)
         return true
       }
       if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
@@ -382,9 +383,27 @@ Item {
           font.family: root.fontFamily
           font.pixelSize: Style.font.subtitle
           onTextChanged: if (text !== "") root.pendingAddName = text
-          Keys.onReturnPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor)
-          Keys.onEnterPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor)
-          Keys.onEscapePressed: { root.pendingAddName = ""; root.addCancel() }
+          Keys.onReturnPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl)
+          Keys.onEnterPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl)
+          Keys.onEscapePressed: { root.pendingAddName = ""; root.pendingAddUrl = ""; root.addCancel() }
+        }
+
+        TextField {
+          id: urlField
+          Layout.fillWidth: true
+          Layout.preferredHeight: Math.max(implicitHeight, Style.spacing.controlHeight)
+          // Subscribe-by-URL: paste an existing calendar's collection URL
+          // (or a public .ics). Filling this in switches the submit from
+          // "create a new calendar" to "subscribe to that calendar" — the
+          // name above becomes an optional label override.
+          placeholderText: "Calendar URL (subscribe)"
+          foreground: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.subtitle
+          onTextChanged: if (text !== "") root.pendingAddUrl = text
+          Keys.onReturnPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl)
+          Keys.onEnterPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl)
+          Keys.onEscapePressed: { root.pendingAddUrl = ""; root.addCancel() }
         }
 
         // Color picker: preset swatches (Google-Calendar style). Click one to
@@ -448,7 +467,9 @@ Item {
             Text {
               textFormat: Text.PlainText
               anchors.centerIn: parent
-              text: "Create"
+              // Subscribe mode: a URL was typed, so the action is subscribing
+              // to an existing calendar, not creating a new one.
+              text: root.pendingAddUrl !== "" ? "Subscribe" : "Create"
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.subtitle
@@ -458,7 +479,7 @@ Item {
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: root.addSubmit(root.pendingAddName, root.pendingAddColor)
+              onClicked: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl)
             }
           }
           Rectangle {
