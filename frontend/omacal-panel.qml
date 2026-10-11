@@ -670,6 +670,12 @@ Panel {
     }
     function dismissCalendars() {
         showCalendars = false
+        // Reset the mini form on every dialog exit (the scrim's MouseArea can
+        // close the dialog while the form is open), and release the name
+        // field's focus so ESC/arrows work again in month/day views.
+        calToggle.addOpen = false
+        calToggle.pendingAddName = ""
+        keyCatcher.forceActiveFocus()
     }
     // Hook for the dialog's "+" button (upper right). Opens the mini form
     // inside the calendar-select card; the dialog owns the field/buttons and
@@ -702,6 +708,9 @@ Panel {
                     calToggle.addOpen = false
                     calToggle.pendingAddName = ""
                     loadCalendars()
+                    // Same focus release as cancelAddCalendar: the name field
+                    // held focus when Create was clicked.
+                    keyCatcher.forceActiveFocus()
                 } else {
                     error = (data && data.error) ? data.error : "Could not add calendar"
                 }
@@ -718,6 +727,10 @@ Panel {
         calToggle.addOpen = false
         calToggle.pendingAddName = ""
         error = ""
+        // The name field still holds activeFocus when the form closes, and a
+        // hidden focused TextField swallows ESC/arrows before the catcher
+        // sees them (same reason dismissAddForm does this). Move focus back.
+        keyCatcher.forceActiveFocus()
     }
 
     // The dialog is stateless; this wires a toggle to the backend and refreshes
