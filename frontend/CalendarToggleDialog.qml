@@ -226,7 +226,7 @@ Item {
       // Add-calendar mini form: shown in place of the list once "+" is clicked.
       // Enter submits (the focused field owns Enter, like the add-event form),
       // Escape cancels. The panel owns the POST via addSubmit(name).
-      Column {
+      ColumnLayout {
         id: addForm
         visible: root.addOpen
         Layout.fillWidth: true
@@ -234,8 +234,8 @@ Item {
 
         TextField {
           id: nameField
-          width: parent.width
-          height: Style.spacing.controlHeight
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.spacing.controlHeight
           placeholderText: "Calendar name"
           foreground: root.foreground
           font.family: root.fontFamily
@@ -246,57 +246,61 @@ Item {
           Keys.onEscapePressed: { root.pendingAddName = ""; root.addCancel() }
         }
 
-        Row {
-            // spacer pushes Create/Cancel to the right, like the Done button
-            Item { width: parent.width - createBtn.width - cancelBtn.width - Style.space(10); height: 1 }
-            Rectangle {
-              id: createBtn
-              width: Style.space(96)
-              height: Style.space(38)
-              radius: root.cornerRadius
-              color: "transparent"
-              border.color: root.accent
-              border.width: Style.normalBorderWidth
-              Text {
-                textFormat: Text.PlainText
-                anchors.centerIn: parent
-                text: "Create"
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.subtitle
-                font.bold: true
-              }
-              MouseArea {
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.addSubmit(root.pendingAddName)
-              }
+        RowLayout {
+          id: addBtnRow
+          Layout.fillWidth: true
+          spacing: Style.space(10)
+
+          Item { Layout.fillWidth: true }   // spacer pushes Create/Cancel right
+
+          Rectangle {
+            id: createBtn
+            Layout.preferredWidth: Style.space(96)
+            height: Style.space(38)
+            radius: root.cornerRadius
+            color: "transparent"
+            border.color: root.accent
+            border.width: Style.normalBorderWidth
+            Text {
+              textFormat: Text.PlainText
+              anchors.centerIn: parent
+              text: "Create"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.subtitle
+              font.bold: true
             }
-            Rectangle {
-              id: cancelBtn
-              width: Style.space(96)
-              height: Style.space(38)
-              radius: root.cornerRadius
-              color: "transparent"
-              border.color: root.accent
-              border.width: Style.normalBorderWidth
-              Text {
-                textFormat: Text.PlainText
-                anchors.centerIn: parent
-                text: "Cancel"
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.subtitle
-                font.bold: true
-              }
-              MouseArea {
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.addCancel()
-              }
+            MouseArea {
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.addSubmit(root.pendingAddName)
             }
+          }
+          Rectangle {
+            id: cancelBtn
+            Layout.preferredWidth: Style.space(96)
+            height: Style.space(38)
+            radius: root.cornerRadius
+            color: "transparent"
+            border.color: root.accent
+            border.width: Style.normalBorderWidth
+            Text {
+              textFormat: Text.PlainText
+              anchors.centerIn: parent
+              text: "Cancel"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.subtitle
+              font.bold: true
+            }
+            MouseArea {
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.addCancel()
+            }
+          }
         }
       }
 
