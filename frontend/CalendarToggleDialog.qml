@@ -56,6 +56,15 @@ Item {
   // existing one. "Close" = RGB Euclidean distance < 60 (scale 0..441):
   // deterministic, not subjective — hex codes themselves are not perceptually
   // ordered, so the comparison happens in RGB space after parsing.
+  //
+  // The picker always offers at least MIN_SWATCHES (4): the palette is 8 wide,
+  // so with many calendars the strict filter can leave fewer than 4. Rather
+  // than starving the picker, swatches are RANKED by how far they are from the
+  // closest used color — everything at distance >= 60 is preferred, then the
+  // least-colliding hidden colors top the list back up to 4. So the "no
+  // duplicate colors" rule is honored whenever it can be, and degrades
+  // gracefully (closest-first) when it cannot.
+  readonly property int minSwatches: 4
   property var palette: [
     "#d93025", "#e8710a", "#f2b134", "#8f68ff",
     "#1a73e8", "#12b5e0", "#1e8e3e", "#e91e63"
@@ -67,25 +76,41 @@ Item {
       parseInt(hex.substring(5, 7), 16)
     ]
   }
-  function colorTooClose(hex) {
+  // Distance from `hex` to the nearest color already in use (441 = max
+  // possible, i.e. nothing in use).
+  function colorDistanceToUsed(hex) {
     var rgb = hexToRgb(hex)
+    var best = 441
     for (var i = 0; i < usedColors.length; i++) {
       var u = hexToRgb(String(usedColors[i]))
       var dr = rgb[0] - u[0]
       var dg = rgb[1] - u[1]
       var db = rgb[2] - u[2]
-      if (Math.sqrt(dr * dr + dg * dg + db * db) < 60)
-        return true
+      var d = Math.sqrt(dr * dr + dg * dg + db * db)
+      if (d < best) best = d
     }
-    return false
+    return best
   }
+  function colorTooClose(hex) {
+    return colorDistanceToUsed(hex) < 60
+  }
+  // Ranked: strict survivors (distance >= 60) first, in palette order, then
+  // the hidden colors by descending distance, trimmed to at least minSwatches
+  // entries (never more than the palette itself).
   property var availableSwatches: {
-    var out = []
+    var strict = []
+    var hidden = []
     for (var i = 0; i < palette.length; i++) {
-      if (!colorTooClose(palette[i]))
-        out.push(palette[i])
+      var hex = palette[i]
+      if (colorTooClose(hex)) hidden.push([hex, colorDistanceToUsed(hex)])
+      else strict.push(hex)
     }
-    return out
+    if (strict.length < minSwatches && hidden.length > 0) {
+      hidden.sort(function(a, b) { return b[1] - a[1] })   // least colliding first
+      for (var j = 0; strict.length < minSwatches && j < hidden.length; j++)
+        strict.push(hidden[j][0])
+    }
+    return strict
   }
 
   // The Done button's slot, after all calendar rows.
@@ -360,6 +385,16 @@ Item {
         // pick the calendar's color; leave it unset for the server default.
         // The chosen hex rides along on addSubmit to the backend, which PROPPATCHes
         // the CalDAV calendar-color property and caches it in the DB.
+        Text {
+          // Caption above the swatch row so the row reads as a picker.
+          Layout.fillWidth: true
+          textFormat: Text.PlainText
+          text: "Select calendar color:"
+          color: root.foreground
+          opacity: 0.6
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
         RowLayout {
           id: swatchRow
           Layout.fillWidth: true
@@ -386,17 +421,6 @@ Item {
                 onClicked: root.pendingAddColor = modelData
               }
             }
-          }
-
-          Text {
-            // Tiny caption so the row reads as a picker, not decoration.
-            Layout.fillWidth: true
-            textFormat: Text.PlainText
-            text: "Color"
-            color: root.foreground
-            opacity: 0.6
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
           }
         }
 
