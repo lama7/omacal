@@ -1951,6 +1951,10 @@ Panel {
             onAddRequested: root.openAddCalendar()
             onAddSubmit: root.submitAddCalendar(name)
             onAddCancel: root.cancelAddCalendar()
+            // Arrows while the mini form is open navigate months in the
+            // panel behind the dialog (the dialog routes them here instead
+            // of swallowing, so ESC/arrows keep working in the form state).
+            onNavRequested: root.shiftMonth(dx)
         }
     }
 }

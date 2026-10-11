@@ -33,6 +33,7 @@ Item {
   signal addRequested()
   signal addSubmit(string name)
   signal addCancel()
+  signal navRequested(int dx)
 
   // Add-calendar mini form state. The panel flips this on "+" click; the
   // field/buttons live inside the card while it is true. The POST stays in
@@ -54,10 +55,23 @@ Item {
 
   function handleKey(event) {
     if (!root.opened) return false
-    // While the add-calendar mini form is open its TextField owns Enter/Escape
-    // (a focused field swallows keys before the catcher sees them — same
-    // pattern as the add-event form), so row navigation is off.
-    if (root.addOpen) return false
+    // While the add-calendar mini form is open: Escape cancels the form
+    // (back to the list), Enter/Space submits if a name is typed, arrows
+    // navigate months in the panel behind the dialog (the focused TextField
+    // swallows arrows as caret moves first; these reach here only when the
+    // field does NOT hold focus).
+    if (root.addOpen) {
+      if (event.key === Qt.Key_Escape) { root.addCancel(); return true }
+      if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+        if (root.pendingAddName !== "") root.addSubmit(root.pendingAddName)
+        return true
+      }
+      if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+        root.navRequested(event.key === Qt.Key_Left ? -1 : 1)
+        return true
+      }
+      return false
+    }
     var total = root.doneIndex + 1   // rows + done
     if (event.key === Qt.Key_Escape) {
       root.closed()
@@ -235,7 +249,11 @@ Item {
         TextField {
           id: nameField
           Layout.fillWidth: true
-          Layout.preferredHeight: Style.spacing.controlHeight
+          // implicitHeight, not Style.spacing.controlHeight (28px fixed):
+          // the TextField's own implicit height (font metrics + internal
+          // padding at subtitle size) exceeds 28, and a fixed 28 clips
+          // entered text at the top.
+          Layout.preferredHeight: Math.max(implicitHeight, Style.spacing.controlHeight)
           placeholderText: "Calendar name"
           foreground: root.foreground
           font.family: root.fontFamily
