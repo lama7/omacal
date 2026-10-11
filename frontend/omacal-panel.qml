@@ -1379,7 +1379,15 @@ Panel {
         centerOnBar: false
         focusTarget: keyCatcher
         contentWidth: panel.fittedContentWidth(root.previewPaneWidth + root.monthGridWidth + Style.space(2) * 2 + 1)
-        contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight)
+        // The calendar-select dialog is an overlay, not part of contentColumn,
+        // so the column's implicit height (short in day view) would squeeze its
+        // card. Fold the dialog's own stable height estimate (naturalCardHeight,
+        // parent-free so no binding loop) into the panel height while it is
+        // open — same mechanism the add-event form uses by BEING the main view.
+        // +48 matches the card's parent clamp margins (24 top + 24 bottom).
+        contentHeight: panel.fittedContentHeight(Math.max(
+            contentColumn.implicitHeight,
+            root.showCalendars ? calToggle.naturalCardHeight + Style.space(48) : 0))
 
         PanelKeyCatcher {
             id: keyCatcher

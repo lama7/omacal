@@ -136,6 +136,20 @@ Item {
   readonly property int estimatedContentHeight:
       root.model.count * Style.space(58) + Math.max(root.model.count - 1, 0) * Style.space(4)
 
+  // The card's height WITHOUT the parent clamp — the panel feeds this into its
+  // own contentHeight so opening the dialog in a short view (day view) grows
+  // the popup to fit the card, instead of the card being squeezed into the
+  // shorter main view. Same terms as the card's own height sum, so the two
+  // agree exactly; the card still clamps to the parent as a floor guard.
+  readonly property int naturalCardHeight:
+      Style.space(16)
+      + Math.max(titleText.implicitHeight, addBtn.height)
+      + Style.space(10)
+      + estimatedContentHeight
+      + Style.space(10)
+      + doneBtn.height
+      + Style.space(16)
+
   function handleKey(event) {
     if (!root.opened) return false
     // While the add-calendar mini form is open: Escape cancels the form
@@ -214,15 +228,7 @@ Item {
     // never the live listLayout.implicitHeight, which is 0 for one frame on
     // every model rebuild. Keeping it based on model.count is what stops the
     // card and the content region from blipping when a toggle rebuilds the model.
-    height: Math.min(
-        parent.height - Style.space(48),
-        Style.space(16)
-        + Math.max(titleText.implicitHeight, addBtn.height)
-        + Style.space(10)
-        + estimatedContentHeight
-        + Style.space(10)
-        + doneBtn.height
-        + Style.space(16))
+    height: Math.min(parent.height - Style.space(48), naturalCardHeight)
     anchors.top: parent.top
     anchors.topMargin: Style.space(24)
     anchors.horizontalCenter: parent.horizontalCenter
