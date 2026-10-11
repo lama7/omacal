@@ -720,6 +720,11 @@ Panel {
     function openCalendars() {
         buildCalToggleModel()
         showCalendars = true
+        // Drop any active day-preview hover: the cells under the dialog would
+        // otherwise keep a stale hoveredDate (the onEntered gate stops updates,
+        // and the preview pane should read "Hover a day to preview" while the
+        // calendar dialog — including its add-calendar mini form — is up).
+        hoveredDate = null
     }
     function dismissCalendars() {
         showCalendars = false
@@ -1819,7 +1824,13 @@ Panel {
                                                         hoverEnabled: true
                                                         cursorShape: Qt.PointingHandCursor
                                                         onClicked: root.gotoDay(new Date(modelData.year, modelData.month, modelData.date))
-                                                        onEntered: root.hoveredDate = new Date(modelData.year, modelData.month, modelData.date)
+                                                        // Hover preview is suppressed while the calendar-select
+                                                        // dialog (or its add-calendar mini form) is up: QML hover
+                                                        // is not occlusion-aware, so the cells under the dialog
+                                                        // keep firing onEntered/onExited. Gate the write and
+                                                        // clear the state on open so the preview pane reads
+                                                        // "Hover a day to preview" instead of a stale hover.
+                                                        onEntered: if (!root.showCalendars) root.hoveredDate = new Date(modelData.year, modelData.month, modelData.date)
                                                         onExited: root.hoveredDate = null
                                                     }
                                                 }
