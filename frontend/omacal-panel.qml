@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import QtQml.Models
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
@@ -139,7 +140,7 @@ Panel {
     property var pendingDeleteEvent: null
     property bool showDeleteConfirm: false
     property bool showCalendars: false
-    property var calToggleModel: []
+    property ListModel calToggleModel: ListModel {}
 
     readonly property var hourOptions: (function() {
         var a = []; for (var h = 0; h < 24; h++) a.push({value: String(h), label: h < 10 ? " " + h : String(h)}); return a
@@ -642,19 +643,26 @@ Panel {
     // on-screen `enabled` state so a hidden calendar still lists and can be
     // re-enabled.
     function buildCalToggleModel() {
-        // Rebuild the dialog's model from the configured calendars. The
-        // dialog rows bind `checked: modelData.enabled` to this array, so the
-        // on-screen toggles only reflect the latest server state once we
-        // replace the array itself. Mutating the `calendars` cache alone would
-        // leave every Toggle frozen on the snapshot taken at openCalendars() —
-        // the root cause of the frozen toggle animation. Called at open and
-        // after every refetch (loadCalendars / toggleCalendar success).
-        var rows = []
+        // Rebuild the dialog's model from the configured calendars. Called at
+        // open and after every refetch (loadCalendars). It is a ListModel so a
+        // single-row toggle can flip via setProperty() (updateCalToggleState) —
+        // an in-place change that re-evaluates only that one delegate and lets
+        // the switch knob animate, instead of destroying and re-creating all rows.
+        calToggleModel.clear()
         for (var i = 0; i < calendars.length; i++) {
-            rows.push({ id: calendars[i].id, name: calendars[i].display_name,
-                        enabled: !!calendars[i].enabled })
+            calToggleModel.append({ id: calendars[i].id, name: calendars[i].display_name,
+                                    enabled: !!calendars[i].enabled })
         }
-        calToggleModel = rows
+    }
+    // In-place flip of one row's `enabled`, so the Toggle's Behaviour animations
+    // run on a living delegate (not a model rebuild). Matches by id.
+    function updateCalToggleState(id, enabled) {
+        for (var i = 0; i < calToggleModel.count; i++) {
+            if (calToggleModel.get(i).id === id) {
+                calToggleModel.setProperty(i, "enabled", enabled)
+                break
+            }
+        }
     }
     function openCalendars() {
         buildCalToggleModel()
@@ -672,13 +680,16 @@ Panel {
         xhr.timeout = 15000
         xhr.onreadystatechange = function() {
             if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
-                // Update the local cache so the dialog reflects the flip, then
-                // re-fetch events/reminders (both now filter on c.enabled = 1).
+                // Update the cache, flip the one dialog row in place (animates on
+                // the living delegate), and re-fetch events/reminders — both now
+                // filter on c.enabled = 1. Deliberately do NOT rebuild the whole
+                // model here: it would tear down all rows, killing the knob
+                // animation and flashing the list height.
                 for (var i = 0; i < calendars.length; i++) {
                     if (calendars[i].id === id) { calendars[i].enabled = enabled; break }
                 }
-                buildCalToggleModel()
-                loadCalendars()
+                updateCalToggleState(id, enabled)
+                loadRangeEvents(true)
             } else {
                 var msg = (xhr.status === 0)
                     ? "omacal API did not respond"
@@ -1789,8 +1800,15 @@ Panel {
                 Item {
                     width: contentColumn.width
                     anchors.horizontalCenter: parent.horizontalCenter
-                    height: (backendBanner.visible ? backendBanner.implicitHeight + Style.space(4) : 0)
-                        + (statusText.visible ? statusText.implicitHeight + Style.space(4) : 0)
+                    // Reserve one status-line slot so showing/hiding the status
+                    // text (e.g. the transient "Loading\u2026" during a toggle's
+                    // grid refetch) never changes contentColumn.implicitHeight and
+                    // thus never resizes the whole panel (which would also stretch
+                    // the overlay dialogs that anchors.fill it). The backend banner
+                    // still adds its own height when present (a rare persistent state).
+                    height: Style.space(4)
+                        + (backendBanner.visible ? backendBanner.implicitHeight + Style.space(4) : 0)
+                        + statusText.implicitHeight
 
                     // Backend-update banner: appears in month view when the
                     // installed backend version no longer matches the pin.
