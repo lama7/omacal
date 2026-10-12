@@ -61,6 +61,33 @@ def cmd_init(args):
     print("Edit it to add your CalDAV calendars, then run 'omacal sync'.")
 
 
+def cmd_oauth(args):
+    """OAuth consent/token management (login, status, revoke)."""
+    from omacal.oauth import oauth_login, oauth_status, oauth_revoke
+
+    provider = args.provider
+    if args.oauth_cmd == "login":
+        cfg = load_config(args.config)
+        if oauth_login(cfg, provider):
+            print(f"Consented {provider}; tokens stored in the keyring.")
+        else:
+            print(f"OAuth login for {provider} did not complete.")
+            sys.exit(1)
+    elif args.oauth_cmd == "status":
+        if provider:
+            print(json.dumps({provider: oauth_status(provider)}, indent=2))
+        else:
+            cfg = load_config(args.config)
+            out = {name: oauth_status(name) for name in (cfg.get("oauth") or {})}
+            print(json.dumps(out, indent=2))
+    elif args.oauth_cmd == "revoke":
+        if not provider:
+            print("revoke needs a provider name")
+            sys.exit(1)
+        oauth_revoke(provider)
+        print(f"Token set for {provider} forgotten.")
+
+
 def main():
     parser = argparse.ArgumentParser(prog="omacal", description="omacal CalDAV calendar CLI")
     parser.add_argument("--config", type=Path, default=None, help="config file path")
@@ -76,6 +103,19 @@ def main():
 
     p_config = sub.add_parser("config", help="interactive config")
     p_config.set_defaults(func=cmd_syncconfig)
+
+    p_oauth = sub.add_parser("oauth", help="OAuth consent/token management")
+    oauth_sub = p_oauth.add_subparsers(dest="oauth_cmd")
+    oauth_sub.required = True
+    p_oauth_login = oauth_sub.add_parser("login", help="run the OAuth consent flow")
+    p_oauth_login.add_argument("provider")
+    p_oauth_login.set_defaults(func=cmd_oauth)
+    p_oauth_status = oauth_sub.add_parser("status", help="show OAuth consent state")
+    p_oauth_status.add_argument("provider", nargs="?")
+    p_oauth_status.set_defaults(func=cmd_oauth)
+    p_oauth_revoke = oauth_sub.add_parser("revoke", help="forget stored tokens")
+    p_oauth_revoke.add_argument("provider")
+    p_oauth_revoke.set_defaults(func=cmd_oauth)
 
     args = parser.parse_args()
     args.func(args)
