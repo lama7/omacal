@@ -81,6 +81,27 @@ omarchy plugin remove omacal    # removes the plugin itself
 - **Incremental sync** (RFC 6578) + on-open refresh; the cache window keeps
   one-offs for -30/+90 days and syncs every 60s.
 - **Reminders** (CalDAV `VTODO`) with a dedicated section — see [Reminders](#reminders).
+- **Calendar management** — a calendar-select dialog to show/hide calendars, add or
+  subscribe to calendars, delete them, and pick colors — see [Calendars](#calendars).
+
+## Calendars
+
+The calendar-select dialog lists every known calendar with a toggle row each.
+
+- **Show / hide** — toggled-off calendars stop rendering dots and listing
+  events in the month/day views.
+- **Add (`+`)** — a mini form creates a new named calendar on your server, or
+  **subscribes** to an existing one: paste its collection URL and the submit
+  button reads "Subscribe" instead of "Create".
+- **Color** — pick from preset swatches ("Select calendar color:"); the color
+  is written to the server (CalDAV `calendar-color` property) and round-trips
+  through sync.
+- **Delete / unsubscribe** — right-click or `d` on a row. Calendars you own are
+  deleted from the server; shared or subscribed calendars are only
+  unsubscribed — the server's data is left untouched.
+- **Keyboard** — arrows / `Tab` / `Shift+Tab` move the cursor between rows
+  (the **Done** button highlights when the cursor lands on it), `Enter`
+  selects, `d` deletes the row under the cursor.
 
 ## Reminders
 
