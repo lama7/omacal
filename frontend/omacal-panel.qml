@@ -1578,11 +1578,16 @@ Panel {
                 if (root.showDeleteConfirm) return
                 if (root.showCalendars) {
                     // '+' opens the add-calendar mini form; 'd' deletes the
-                    // calendar under the keyboard cursor (same flows as the
-                    // + button and right-click). Routed through handleKey so
-                    // the dialog owns the cursor state.
+                    // calendar under the keyboard cursor; 'e' opens the edit
+                    // mini form for it (owned calendars only) — same flows as
+                    // the + button, right-click, and the row's edit button.
+                    // Routed through handleKey so the dialog owns the cursor
+                    // state. Any other text key is swallowed here (the add/
+                    // edit forms' TextFields receive their characters
+                    // directly via focus, not through this catcher).
                     if (t === "+" || t === "=") calToggle.handleKey({ key: Qt.Key_Plus, text: "+" })
                     else if (t === "d" || t === "D") calToggle.handleKey({ key: Qt.Key_D, text: "d" })
+                    else if (t === "e" || t === "E") calToggle.handleKey({ key: Qt.Key_E, text: "e" })
                     return
                 }
                 if (root.showAddForm) {
