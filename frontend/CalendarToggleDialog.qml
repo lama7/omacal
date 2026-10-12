@@ -63,6 +63,11 @@ Item {
   property int editId: 0
   property string pendingEditName: ""
   property string pendingEditColor: ""
+  // Current name/color of the row being edited (set by the panel when the
+  // form opens): the name pre-populates the text field, the color shows as
+  // a labeled dot so the user can see and keep/revert it.
+  property string editCurrentName: ""
+  property string editCurrentColor: ""
   property alias editNameFieldRef: editNameField
 
   // Color palette for the picker. Swatches "close" to a color already used by
@@ -382,9 +387,10 @@ Item {
                   anchors.right: parent.right
                   anchors.top: parent.top
                   anchors.bottom: parent.bottom
-                  // Room for the edit button at the row's right edge (owned
-                  // rows only) so the toggle knob never sits under it.
-                  anchors.rightMargin: modelData.editable ? rowEditBtn.width + Style.space(8) : 0
+                  // Reserve the edit-button gutter on EVERY row so all
+                  // toggles stay uniform width; the button itself is
+                  // right-justified and only shown on owned (editable) rows.
+                  anchors.rightMargin: rowEditBtn.width + Style.space(8)
                   label: modelData.name
                   description: modelData.enabled ? "Visible" : "Hidden"
                   checked: modelData.enabled
@@ -623,6 +629,32 @@ Item {
           Keys.onReturnPressed: root.editSubmit(root.editId, root.pendingEditName, root.pendingEditColor)
           Keys.onEnterPressed: root.editSubmit(root.editId, root.pendingEditName, root.pendingEditColor)
           Keys.onEscapePressed: { root.pendingEditName = ""; root.editCancel() }
+        }
+
+        Text {
+          Layout.fillWidth: true
+          textFormat: Text.PlainText
+          text: "Current color:"
+          color: root.foreground
+          opacity: 0.6
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+        Rectangle {
+          id: currentColorDot
+          Layout.preferredWidth: Style.space(22)
+          Layout.preferredHeight: Style.space(22)
+          radius: width / 2
+          color: root.editCurrentColor
+          border.color: root.foreground
+          border.width: (root.pendingEditColor === root.editCurrentColor)
+              ? Style.normalBorderWidth + 1 : 0
+          MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.pendingEditColor = root.editCurrentColor
+          }
         }
 
         Text {

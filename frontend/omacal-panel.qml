@@ -745,6 +745,8 @@ Panel {
         calToggle.editId = 0
         calToggle.pendingEditName = ""
         calToggle.pendingEditColor = ""
+        calToggle.editCurrentName = ""
+        calToggle.editCurrentColor = ""
         keyCatcher.forceActiveFocus()
     }
     // Hook for the dialog's "+" button (upper right). Opens the mini form
@@ -856,6 +858,18 @@ Panel {
         calToggle.editId = id
         calToggle.pendingEditName = ""
         calToggle.pendingEditColor = ""
+        // Seed the form with the row's current name/color: the name
+        // pre-populates the text field (so it reads WYSIWYG — Save keeps
+        // it unless retyped) and the color shows as a labeled dot. The
+        // text assignment also flips pendingEditName to the current name,
+        // matching what Save would send if left untouched.
+        var entry = null
+        for (var i = 0; i < calendars.length; i++) {
+            if (calendars[i].id === id) { entry = calendars[i]; break }
+        }
+        calToggle.editCurrentName = entry ? entry.display_name : ""
+        calToggle.editCurrentColor = entry && entry.color ? String(entry.color) : ""
+        calToggle.editNameFieldRef.text = calToggle.editCurrentName
         // Defer a tick: editOpen flips the form's visibility binding first
         // (same pattern as openAddCalendar).
         Qt.callLater(function() {
@@ -891,6 +905,8 @@ Panel {
                     calToggle.editId = 0
                     calToggle.pendingEditName = ""
                     calToggle.pendingEditColor = ""
+                    calToggle.editCurrentName = ""
+                    calToggle.editCurrentColor = ""
                     loadCalendars()
                     keyCatcher.forceActiveFocus()
                 } else {
@@ -910,6 +926,8 @@ Panel {
         calToggle.editId = 0
         calToggle.pendingEditName = ""
         calToggle.pendingEditColor = ""
+        calToggle.editCurrentName = ""
+        calToggle.editCurrentColor = ""
         error = ""
         // The name field still holds activeFocus when the form closes, and a
         // hidden focused TextField swallows ESC/arrows (same fix as
