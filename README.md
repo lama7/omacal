@@ -82,7 +82,8 @@ omarchy plugin remove omacal    # removes the plugin itself
   one-offs for -30/+90 days and syncs every 60s.
 - **Reminders** (CalDAV `VTODO`) with a dedicated section — see [Reminders](#reminders).
 - **Calendar management** — a calendar-select dialog to show/hide calendars, add or
-  subscribe to calendars, delete them, and pick colors — see [Calendars](#calendars).
+  subscribe to calendars, edit owned calendars' name/color, delete them, and
+  pick colors — see [Calendars](#calendars).
 
 ## Calendars
 
@@ -96,12 +97,18 @@ The calendar-select dialog lists every known calendar with a toggle row each.
 - **Color** — pick from preset swatches ("Select calendar color:"); the color
   is written to the server (CalDAV `calendar-color` property) and round-trips
   through sync.
+- **Edit** — the pencil button on a row (or `e` on the row under the cursor)
+  opens a mini form to rename and/or recolour the calendar. Both fields are
+  optional — leave one alone to keep it. Only calendars you own can be edited;
+  shared and subscribed rows never show the button. Changes are written to the
+  server (CalDAV `name` + `calendar-color` properties) and round-trip through
+  sync.
 - **Delete / unsubscribe** — right-click or `d` on a row. Calendars you own are
   deleted from the server; shared or subscribed calendars are only
   unsubscribed — the server's data is left untouched.
 - **Keyboard** — arrows / `Tab` / `Shift+Tab` move the cursor between rows
   (the **Done** button highlights when the cursor lands on it), `Enter`
-  selects, `d` deletes the row under the cursor.
+  selects, `d` deletes, `e` edits the row under the cursor.
 
 ## Reminders
 
