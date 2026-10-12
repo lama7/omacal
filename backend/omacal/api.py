@@ -443,33 +443,6 @@ class OmacalHandler(BaseHTTPRequestHandler):
             return
         self._json(404, {"error": "not found"})
 
-    def do_PUT(self) -> None:
-        parsed = urlparse(self.path)
-        if parsed.path.startswith("/api/calendars/") and len(parsed.path) > len("/api/calendars/"):
-            # PUT /api/calendars/<id> body {name?, color?}: edit an owned
-            # calendar's display-name and/or color (PROPPATCH server-side,
-            # cache refreshed). Ownership-gated in edit_calendar; subscribed
-            # and shared rows are refused.
-            try:
-                calendar_id = int(parsed.path.rsplit("/", 1)[-1])
-                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-                data = json.loads(body) if body else {}
-                name = (data.get("name") or "").strip() or None
-                color = (data.get("color") or "").strip() or None
-                if color and not re.fullmatch(r"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?", color):
-                    self._json(400, {"error": "Bad calendar color"})
-                    return
-                from omacal.sync import edit_calendar
-                result = edit_calendar(self.db_conn, calendar_id, name, color)
-                self._json(200, result)
-            except (ValueError, KeyError) as e:
-                self._json(400, {"error": str(e) if isinstance(e, ValueError) else "Bad request"})
-            except Exception as e:
-                logger.error("PUT /api/calendars failed: %s", e)
-                self._json(500, {"error": str(e)})
-            return
-        self._json(404, {"error": "not found"})
-
     def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path.startswith("/api/calendars/") and len(parsed.path) > len("/api/calendars/"):
@@ -541,6 +514,29 @@ class OmacalHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/calendars/") and len(parsed.path) > len("/api/calendars/"):
+            # PUT /api/calendars/<id> body {name?, color?}: edit an owned
+            # calendar's display-name and/or color (PROPPATCH server-side,
+            # cache refreshed). Ownership-gated in edit_calendar; subscribed
+            # and shared rows are refused.
+            try:
+                calendar_id = int(parsed.path.rsplit("/", 1)[-1])
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                data = json.loads(body) if body else {}
+                name = (data.get("name") or "").strip() or None
+                color = (data.get("color") or "").strip() or None
+                if color and not re.fullmatch(r"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?", color):
+                    self._json(400, {"error": "Bad calendar color"})
+                    return
+                from omacal.sync import edit_calendar
+                result = edit_calendar(self.db_conn, calendar_id, name, color)
+                self._json(200, result)
+            except ValueError as e:
+                self._json(400, {"error": str(e)})
+            except Exception as e:
+                logger.error("PUT /api/calendars failed: %s", e)
+                self._json(500, {"error": str(e)})
+            return
         if parsed.path == "/api/events":
             query = parse_qs(parsed.query)
             uid = query.get("uid", [None])[0]
