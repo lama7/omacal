@@ -705,7 +705,13 @@ Panel {
             calToggleModel.append({ id: calendars[i].id, name: calendars[i].display_name,
                                     enabled: !!calendars[i].enabled,
                                     deletable: !!calendars[i].deletable,
-                                    subscribed: !!calendars[i].subscribed })
+                                    subscribed: !!calendars[i].subscribed,
+                                    // Editable = owned (same gate as deletable) and not
+                                    // URL-subscribed: exactly the backend's edit_calendar
+                                    // gate, so the edit button never shows on a row where
+                                    // PUT /api/calendars/<id> would be rejected.
+                                    editable: !!calendars[i].deletable
+                                            && !calendars[i].subscribed })
         }
     }
     // In-place flip of one row's `enabled`, so the Toggle's Behaviour animations
@@ -735,6 +741,10 @@ Panel {
         calToggle.addOpen = false
         calToggle.pendingAddName = ""
         calToggle.pendingAddColor = ""
+        calToggle.editOpen = false
+        calToggle.editId = 0
+        calToggle.pendingEditName = ""
+        calToggle.pendingEditColor = ""
         keyCatcher.forceActiveFocus()
     }
     // Hook for the dialog's "+" button (upper right). Opens the mini form
@@ -836,6 +846,74 @@ Panel {
         // The name field still holds activeFocus when the form closes, and a
         // hidden focused TextField swallows ESC/arrows before the catcher
         // sees them (same reason dismissAddForm does this). Move focus back.
+        keyCatcher.forceActiveFocus()
+    }
+    // Hook for the row edit button / 'e': opens the edit mini form for that
+    // row (owned calendars only; the dialog gates both entry points with the
+    // model's `editable` flag).
+    function openEditCalendar(id) {
+        calToggle.editOpen = true
+        calToggle.editId = id
+        calToggle.pendingEditName = ""
+        calToggle.pendingEditColor = ""
+        // Defer a tick: editOpen flips the form's visibility binding first
+        // (same pattern as openAddCalendar).
+        Qt.callLater(function() {
+            calToggle.editNameFieldRef.forceActiveFocus()
+        })
+    }
+    // Hook for the edit form's Save (Enter/Save button): PUT /api/calendars/<id>
+    // with only the fields the user actually set — omitted fields stay as-is
+    // server-side. On success the cache is refreshed so the row shows the new
+    // name/color immediately.
+    function submitEditCalendar(id, name, color) {
+        var trimmed = (name || "").trim()
+        var trimmedColor = (color || "").trim()
+        if (trimmed === "" && trimmedColor === "") {
+            error = "Pick a new name or color to save"
+            return
+        }
+        var payload = {}
+        if (trimmed !== "")
+            payload.name = trimmed
+        if (trimmedColor !== "")
+            payload.color = trimmedColor
+        var xhr = new XMLHttpRequest()
+        xhr.open("PUT", apiBase + "/api/calendars/" + id, true)
+        xhr.timeout = 30000   // write op: PROPPATCH round-trip
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
+                var data = null
+                try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
+                if (data && data.ok) {
+                    error = ""
+                    calToggle.editOpen = false
+                    calToggle.editId = 0
+                    calToggle.pendingEditName = ""
+                    calToggle.pendingEditColor = ""
+                    loadCalendars()
+                    keyCatcher.forceActiveFocus()
+                } else {
+                    error = (data && data.error) ? data.error : "Could not edit calendar"
+                    // Keep the form open so the user can retry or cancel.
+                }
+            } else {
+                error = (xhr.status === 0)
+                    ? "omacal API did not respond"
+                    : "Cannot edit calendar (" + xhr.status + ")"
+            }
+        }
+        xhr.send(JSON.stringify(payload))
+    }
+    function cancelEditCalendar() {
+        calToggle.editOpen = false
+        calToggle.editId = 0
+        calToggle.pendingEditName = ""
+        calToggle.pendingEditColor = ""
+        error = ""
+        // The name field still holds activeFocus when the form closes, and a
+        // hidden focused TextField swallows ESC/arrows (same fix as
+        // cancelAddCalendar). Move focus back to the catcher.
         keyCatcher.forceActiveFocus()
     }
 
@@ -2131,6 +2209,9 @@ Panel {
             // panel refetches the calendar list.
             usedColors: root.calendarUsedColors
             onDeleteRequested: root.deleteCalendarRequested(id)
+            onEditRequested: root.openEditCalendar(id)
+            onEditSubmit: root.submitEditCalendar(id, name, color)
+            onEditCancel: root.cancelEditCalendar()
         }
     }
 }
