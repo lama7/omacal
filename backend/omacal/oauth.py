@@ -126,7 +126,9 @@ def _pkce_pair() -> tuple[str, str]:
 def _store_tokens(provider: str, tokens: dict) -> bool:
     """Persist the token set with an absolute expiry timestamp."""
     tokens = dict(tokens)
-    tokens["expires_at"] = time.time() + int(tokens.get("expires_in", 3600)) - _EXPIRY_SKEW_S
+    # Nextcloud returns camelCase "expiresIn"; standard is "expires_in".
+    expires_in = tokens.get("expires_in") or tokens.get("expiresIn") or 3600
+    tokens["expires_at"] = time.time() + int(expires_in) - _EXPIRY_SKEW_S
     return _keyring_set(provider, json.dumps(tokens))
 
 
@@ -157,27 +159,31 @@ def oauth_status(provider: str) -> dict:
 def oauth_login(cfg: dict, provider: str) -> bool:
     """Run the interactive PKCE flow for a provider. True on success.
 
-    Prints the authorize URL; the user opens it in a browser. The loopback
-    redirect URI (http://127.0.0.1:<port>/) must be registered for the
-    client in the provider's console.
+    Confidential clients (Nextcloud) set `client_secret`; PKCE is then
+    skipped since their OAuth stack doesn't implement it.
     """
     spec = (cfg.get("oauth") or {}).get(provider)
     if not spec or not spec.get("client_id"):
         logger.error("No OAuth client configured for provider %r", provider)
         return False
 
-    verifier, challenge = _pkce_pair()
+    confidential = bool(spec.get("client_secret"))
+    verifier = challenge = None
+    if not confidential:
+        verifier, challenge = _pkce_pair()
     state = secrets.token_urlsafe(24)
     port = int(spec.get("redirect_port") or 8642)
+    redirect_uri = f"http://127.0.0.1:{port}/"
     params = {
         "client_id": spec["client_id"],
         "response_type": "code",
-        "redirect_uri": f"http://127.0.0.1:{port}/",
+        "redirect_uri": redirect_uri,
         "scope": " ".join(spec.get("scopes") or []),
-        "code_challenge": challenge,
-        "code_challenge_method": "S256",
         "state": state,
     }
+    if not confidential:
+        params["code_challenge"] = challenge
+        params["code_challenge_method"] = "S256"
     params.update(spec.get("extra_params") or {})
     auth_url = spec["authorize_url"] + "?" + urlencode(params)
 
@@ -205,16 +211,17 @@ def oauth_login(cfg: dict, provider: str) -> bool:
     if not code:
         return False
 
-    status, tokens = _post_form(
-        spec["token_url"],
-        {
-            "grant_type": "authorization_code",
-            "code": code[0],
-            "redirect_uri": f"http://127.0.0.1:{port}/",
-            "client_id": spec["client_id"],
-            "code_verifier": verifier,
-        },
-    )
+    exchange = {
+        "grant_type": "authorization_code",
+        "code": code[0],
+        "redirect_uri": redirect_uri,
+        "client_id": spec["client_id"],
+    }
+    if verifier:
+        exchange["code_verifier"] = verifier
+    if confidential:
+        exchange["client_secret"] = spec["client_secret"]
+    status, tokens = _post_form(spec["token_url"], exchange)
     if status != 200:
         logger.error("Token exchange failed: %s", json.dumps(tokens)[:200])
         return False
@@ -256,14 +263,14 @@ def oauth_token(cfg: dict, provider: str) -> str | None:
         _keyring_delete(provider)
         raise OAuthReauthRequired(f"{provider}: access token expired, no refresh token")
 
-    status, fresh = _post_form(
-        spec["token_url"],
-        {
-            "grant_type": "refresh_token",
-            "refresh_token": refresh,
-            "client_id": spec["client_id"],
-        },
-    )
+    refresh_form = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh,
+        "client_id": spec["client_id"],
+    }
+    if spec.get("client_secret"):
+        refresh_form["client_secret"] = spec["client_secret"]
+    status, fresh = _post_form(spec["token_url"], refresh_form)
     if status != 200:
         # invalid_grant: revoked in account settings or expired under a
         # Testing-status consent screen. Forget the set; demand re-consent.
