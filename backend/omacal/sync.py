@@ -531,6 +531,84 @@ def delete_calendar(
     return {"ok": True, "calendar_id": calendar_id, "display_name": row["display_name"]}
 
 
+def edit_calendar(
+    conn: Any,
+    calendar_id: int,
+    name: str | None = None,
+    color: str | None = None,
+) -> dict[str, Any]:
+    """PROPPATCH a calendar's display-name and/or color (owned calendars only).
+
+    Ownership-gated like delete_calendar(): subscribed (URL-added) rows and
+    shared collections are refused — renaming/recolouring someone else's
+    collection is not ours to do. Writes {DAV:}displayname and the Apple/IIS
+    calendar-color property via set_properties (PROPPATCH), then refreshes the
+    DB cache row so the panel sees the change without waiting for discovery.
+    Raises ValueError for user-facing failures.
+    """
+    if not name and not color:
+        raise ValueError("Nothing to change")
+    row = conn.execute(
+        "SELECT id, url, principal_url, display_name, subscribed FROM calendars WHERE id = ?",
+        (calendar_id,),
+    ).fetchone()
+    if not row:
+        raise ValueError("Calendar not found")
+    if row["subscribed"]:
+        raise ValueError("Subscribed calendars can't be edited")
+    if not calendar_is_deletable(row["url"], row["principal_url"]):
+        raise ValueError("Shared calendar \u2014 can't edit")
+
+    cfg = load_config()
+    entry = next((c for c in cfg["calendars"] if c.get("username")), None)
+    if not entry:
+        raise ValueError("No signed-in calendar account")
+    url, username = entry["url"], entry["username"]
+    from omacal.keyring_store import get_password
+    password = get_password(entry.get("principal_url") or url, username)
+    if not password:
+        raise ValueError("No credentials on file for the signed-in account")
+
+    client = _dav_client(url, username, password)
+    principal = client.principal()
+    target = None
+    for cal in principal.calendars():
+        if str(cal.url).rstrip("/") == str(row["url"]).rstrip("/"):
+            target = cal
+            break
+    if target is None:
+        raise ValueError("Calendar not found on the server")
+
+    from caldav.elements import dav
+
+    props = []
+    if name:
+        props.append(dav.DisplayName(name))
+    if color:
+        class _CalendarColor(dav.BaseElement):
+            tag = "{http://apple.com/ns/ical/}calendar-color"
+
+        props.append(_CalendarColor(value=color))
+    try:
+        target.set_properties(props)
+    except Exception as e:
+        raise ValueError(f"Could not update the calendar: {e}") from e
+
+    # Refresh the cache row so the panel sees the change immediately;
+    # discovery re-reads the same properties later and agrees.
+    if name:
+        conn.execute("UPDATE calendars SET display_name = ? WHERE id = ?", (name, calendar_id))
+    if color:
+        conn.execute("UPDATE calendars SET color = ? WHERE id = ?", (color, calendar_id))
+    conn.commit()
+    return {
+        "ok": True,
+        "calendar_id": calendar_id,
+        "display_name": name or row["display_name"],
+        "color": color,
+    }
+
+
 def add_calendar_named(
     conn: Any,
     name: str,
