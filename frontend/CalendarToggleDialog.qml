@@ -417,7 +417,7 @@ Item {
                   anchors.rightMargin: Style.space(6)
                   anchors.verticalCenter: parent.verticalCenter
                   iconText: "\uDB82\uDCA7"
-                  fontSize: 18
+                  fontSize: 22
                   tooltipText: "Edit calendar"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
