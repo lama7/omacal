@@ -142,13 +142,15 @@ Item {
   // the popup to fit the card, instead of the card being squeezed into the
   // shorter main view. Same terms as the card's own height sum, so the two
   // agree exactly; the card still clamps to the parent as a floor guard.
+  // While the add-calendar mini form is open the list and Done button are
+  // hidden, so the middle term is the form's own height instead.
   readonly property int naturalCardHeight:
       Style.space(16)
       + Math.max(titleText.implicitHeight, addBtn.height)
       + Style.space(10)
-      + estimatedContentHeight
+      + (root.addOpen ? addForm.implicitHeight : estimatedContentHeight)
       + Style.space(10)
-      + doneBtn.height
+      + (root.addOpen ? 0 : doneBtn.height)
       + Style.space(16)
 
   function handleKey(event) {
@@ -252,33 +254,41 @@ Item {
         Layout.fillWidth: true
         spacing: Style.space(8)
 
+        // Title spans the row (minus the + button) and centers within it.
         Text {
           id: titleText
           Layout.fillWidth: true
           textFormat: Text.PlainText
-          text: "Calendars"
+          // While the add-calendar mini form is open the header reads
+          // "Add Calendar" and the + button is hidden (it opened the form).
+          text: root.addOpen ? "Add Calendar" : "Calendars"
           color: root.foreground
           font.family: root.fontFamily
-          font.pixelSize: Style.font.title
+          font.pixelSize: 24
           font.bold: true
+          horizontalAlignment: Text.AlignHCenter
           wrapMode: Text.WordWrap
         }
 
-        Item { Layout.fillWidth: true }   // spacer pushes + to the right
-
-        // "+" button, same glyph as the day-view Add Event button (U+002B).
-        // Same component as the panel's header buttons (PanelActionButton):
-        // borderless, foreground-tint hover fill, PanelToolTip on hover.
-        // Click-only for now (no keyboard route in handleKey); emits
-        // addRequested() so the panel owns whatever adding a calendar entails.
+        // Add-Calendar button: same glyph as the day-view Add Event button
+        // (U+F00F3, surrogate pair so it renders on every JS engine).
         PanelActionButton {
           id: addBtn
-          iconText: "\u002b"
+          iconText: "\uDB80\uDCF3"
+          fontSize: 22
           tooltipText: "Add Calendar"
           foreground: root.foreground
           fontFamily: root.fontFamily
+          visible: !root.addOpen
+          enabled: !root.addOpen
           onClicked: root.addRequested()
         }
+      }
+
+      // Horizontal separator under the header, same as the month/day views.
+      PanelSeparator {
+        Layout.fillWidth: true
+        foreground: root.foreground
       }
 
       // Scrollable list so many calendars never push the card off-screen.
@@ -461,9 +471,19 @@ Item {
             Layout.preferredWidth: Style.space(96)
             height: Style.space(38)
             radius: root.cornerRadius
-            color: "transparent"
-            border.color: root.accent
-            border.width: Style.normalBorderWidth
+            // Hover highlight: same fill/border treatment as the Done button's
+            // cursor cue, so the add-form buttons read like the other controls.
+            readonly property bool hot: createHover.containsMouse
+            color: hot
+              ? Style.controlFill(false, true, root.foreground, root.accent)
+              : "transparent"
+            border.color: hot
+              ? Style.controlBorder(false, true, root.foreground, root.accent)
+              : root.accent
+            border.width: hot
+              ? Style.controlBorderWidth(false, true)
+              : Style.normalBorderWidth
+            Behavior on color { ColorAnimation { duration: 100 } }
             Text {
               textFormat: Text.PlainText
               anchors.centerIn: parent
@@ -476,6 +496,7 @@ Item {
               font.bold: true
             }
             MouseArea {
+              id: createHover
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
@@ -487,9 +508,19 @@ Item {
             Layout.preferredWidth: Style.space(96)
             height: Style.space(38)
             radius: root.cornerRadius
-            color: "transparent"
-            border.color: root.accent
-            border.width: Style.normalBorderWidth
+            // Hover highlight: same fill/border treatment as the Done button's
+            // cursor cue, so the add-form buttons read like the other controls.
+            readonly property bool hot: cancelHover.containsMouse
+            color: hot
+              ? Style.controlFill(false, true, root.foreground, root.accent)
+              : "transparent"
+            border.color: hot
+              ? Style.controlBorder(false, true, root.foreground, root.accent)
+              : root.accent
+            border.width: hot
+              ? Style.controlBorderWidth(false, true)
+              : Style.normalBorderWidth
+            Behavior on color { ColorAnimation { duration: 100 } }
             Text {
               textFormat: Text.PlainText
               anchors.centerIn: parent
@@ -500,6 +531,7 @@ Item {
               font.bold: true
             }
             MouseArea {
+              id: cancelHover
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
@@ -527,8 +559,9 @@ Item {
           // use for hasCursor, so the keyboard position is visible. (Done
           // lives in the button row outside the Flickable, so it is always
           // on screen; the highlight is the whole fix.)
+          // hoverHot mirrors the Toggles' hasCursor hover highlight.
           readonly property bool hot: root.opened && !root.addOpen
-              && root.selectedIndex === root.doneIndex
+              && (root.selectedIndex === root.doneIndex || doneHover.containsMouse)
           color: hot
             ? Style.controlFill(false, true, root.foreground, root.accent)
             : "transparent"
@@ -551,6 +584,7 @@ Item {
           }
 
           MouseArea {
+            id: doneHover
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor

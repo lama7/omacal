@@ -1527,7 +1527,9 @@ Panel {
                         width: contentColumn.width
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.verticalCenter: parent.verticalCenter
-                        height: Style.space(22)
+                        // space(30): with fontSize 22 the button boxes
+                        // grow to max(space(22), 22 + sm*2) = 30px.
+                        height: Style.space(30)
 
                         PanelActionButton {
                             id: leftAction
@@ -1536,6 +1538,7 @@ Panel {
                             anchors.left: parent.left
                             anchors.verticalCenter: parent.verticalCenter
                             iconText: "\u2190"
+                            fontSize: 22
                             tooltipText: (root.viewMode === "day" && root.dayDate) ? "Previous Day" : "Previous Month"
                             foreground: root.contentForeground
                             fontFamily: root.contentFontFamily
@@ -1546,11 +1549,11 @@ Panel {
                             id: calendarsAction
                             anchors.left: leftAction.right
                             anchors.verticalCenter: parent.verticalCenter
-                            // U+F0E18 (md-calendar_month_outline), embedded as a
-                            // UTF-16 surrogate pair so the glyph renders on every
-                            // JS engine in the panel; \u{...}/8-hex forms are not
-                            // uniformly supported for 5-hex astrals in QML JS.
-                            iconText: "\uDB83\uDE18"
+                            // U+F00F2 (md-calendar_month_outline variant),
+                            // embedded as a UTF-16 surrogate pair so the glyph
+                            // renders on every JS engine in the panel.
+                            iconText: "\uDB80\uDCF2"
+                            fontSize: 22
                             tooltipText: "Choose which calendars to show"
                             visible: !root.showAddForm
                             enabled: !root.showAddForm
@@ -1564,7 +1567,10 @@ Panel {
                             enabled: !root.showAddForm
                             visible: root.viewMode === "day" && !root.showAddForm
                             anchors.left: calendarsAction.right
-                            iconText: "\u2191"
+                            // U+F0E18 (md-calendar_month_outline): the glyph the
+                            // calendar-select button used before the U+F00F2 swap.
+                            iconText: "\uDB83\uDE18"
+                            fontSize: 22
                             tooltipText: "Back to Month"
                             foreground: root.contentForeground
                             fontFamily: root.contentFontFamily
@@ -1581,7 +1587,7 @@ Panel {
                             anchors.verticalCenter: parent.verticalCenter
                             horizontalAlignment: Text.AlignHCenter
                             font.family: root.contentFontFamily
-                            font.pixelSize: (root.viewMode === "day" && root.dayDate) ? 22 : 28
+                            font.pixelSize: (root.viewMode === "day" && root.dayDate) ? 24 : 28
                             font.bold: true
                             font.letterSpacing: 0.5
                             color: Qt.darker(root.contentForeground, 1.3)
@@ -1599,7 +1605,10 @@ Panel {
                             visible: root.viewMode === "day" && !root.showAddForm
                             anchors.right: rightAction.left
                             anchors.verticalCenter: parent.verticalCenter
-                            iconText: "\u002b"
+                            // U+F00F3 (md event-add glyph), embedded as a UTF-16
+                            // surrogate pair so it renders on every JS engine.
+                            iconText: "\uDB80\uDCF3"
+                            fontSize: 22
                             tooltipText: "Add Event"
                             foreground: root.contentForeground
                             fontFamily: root.contentFontFamily
@@ -1612,6 +1621,7 @@ Panel {
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
                             iconText: "\u2192"
+                            fontSize: 22
                             tooltipText: (root.viewMode === "day" && root.dayDate) ? "Next Day" : "Next Month"
                             foreground: root.contentForeground
                             fontFamily: root.contentFontFamily
