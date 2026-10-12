@@ -261,6 +261,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
             cur.execute("ALTER TABLE calendars ADD COLUMN subscribed INTEGER NOT NULL DEFAULT 0")
         cur.execute("INSERT INTO schema_version VALUES (11)")
 
+    if version < 12:
+        # Calendar provenance (2026-10, google branch). 'caldav' rows are the
+        # existing DAV-backed calendars; 'google' rows are backed by the
+        # Google Calendar API v3 adapter and carry the Google calendar id in
+        # `uid`. Drives which sync/edit/delete/event path a row takes.
+        cols = {r[1] for r in cur.execute("PRAGMA table_info(calendars)")}
+        if "provider" not in cols:
+            cur.execute("ALTER TABLE calendars ADD COLUMN provider TEXT NOT NULL DEFAULT 'caldav'")
+        cur.execute("INSERT INTO schema_version VALUES (12)")
+
     conn.commit()
 
 
@@ -275,15 +285,18 @@ def add_calendar(
     principal_url: str | None = None,
     supports_todo: int = 0,
     subscribed: int = 0,
+    provider: str = "caldav",
 ) -> int:
     # The password is never stored in the DB — it lives in the keyring. The
     # column is kept for schema stability but always written as NULL.
     # `subscribed` is deliberately NOT in the ON CONFLICT update: discovery
     # (which passes 0) must never clear the flag of a URL-added row.
+    # `provider` likewise: discovery passes 'caldav' and must never rewrite
+    # the provenance of an existing google row.
     cur = conn.execute(
         """INSERT INTO calendars
-           (uid, display_name, url, username, password, color, principal_url, last_sync, enabled, supports_todo, subscribed)
-           VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, 1, ?, ?)
+           (uid, display_name, url, username, password, color, principal_url, last_sync, enabled, supports_todo, subscribed, provider)
+           VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, 1, ?, ?, ?)
         ON CONFLICT(uid) DO UPDATE SET
            display_name = excluded.display_name,
            url = excluded.url,
@@ -293,7 +306,7 @@ def add_calendar(
            principal_url = excluded.principal_url,
            supports_todo = excluded.supports_todo
         RETURNING id""",
-        (uid, display_name, url, username, color, principal_url, supports_todo, subscribed),
+        (uid, display_name, url, username, color, principal_url, supports_todo, subscribed, provider),
     )
     row = cur.fetchone()
     conn.commit()
@@ -302,7 +315,7 @@ def add_calendar(
 
 def list_calendars(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     cur = conn.execute(
-        "SELECT id, uid, display_name, color, url, username, password, principal_url, last_sync, sync_token, enabled, supports_todo, subscribed FROM calendars ORDER BY display_name"
+        "SELECT id, uid, display_name, color, url, username, password, principal_url, last_sync, sync_token, enabled, supports_todo, subscribed, provider FROM calendars ORDER BY display_name"
     )
     return [dict(r) for r in cur.fetchall()]
 
