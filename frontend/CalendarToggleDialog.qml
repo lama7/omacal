@@ -35,6 +35,9 @@ Item {
   signal addCancel()
   signal navRequested(int dx)
   signal deleteRequested(int id)
+  signal editRequested(int id)
+  signal editSubmit(int id, string name, string color)
+  signal editCancel()
 
   // Hex colors already used by the visible calendars (set by the panel from
   // the /api/calendars response). The add-calendar color picker hides palette
@@ -51,6 +54,16 @@ Item {
   property string pendingAddColor: ""
   property string pendingAddUrl: ""
   property alias nameFieldRef: nameField
+
+  // Edit-calendar mini form state. The panel flips editOpen on the row edit
+  // button / 'e'; the form lives in the card while true (the list hides, like
+  // the add form). editId is the row being edited; the PUT stays in the panel
+  // (editSubmit carries the typed name/color to it).
+  property bool editOpen: false
+  property int editId: 0
+  property string pendingEditName: ""
+  property string pendingEditColor: ""
+  property alias editNameFieldRef: editNameField
 
   // Color palette for the picker. Swatches "close" to a color already used by
   // a visible calendar are hidden so a new calendar never looks like an
@@ -148,9 +161,9 @@ Item {
       Style.space(16)
       + Math.max(titleText.implicitHeight, addBtn.height)
       + Style.space(10)
-      + (root.addOpen ? addForm.implicitHeight : estimatedContentHeight)
+      + ((root.addOpen || root.editOpen) ? (root.addOpen ? addForm.implicitHeight : editForm.implicitHeight) : estimatedContentHeight)
       + Style.space(10)
-      + (root.addOpen ? 0 : doneBtn.height)
+      + ((root.addOpen || root.editOpen) ? 0 : doneBtn.height)
       + Style.space(16)
 
   function handleKey(event) {
@@ -160,6 +173,22 @@ Item {
     // navigate months in the panel behind the dialog (the focused TextField
     // swallows arrows as caret moves first; these reach here only when the
     // field does NOT hold focus).
+    // While the edit-calendar mini form is open: Escape cancels (back to the
+    // list), Enter submits if a name or color was picked; arrows navigate
+    // months in the panel behind the dialog (same routing as the add form).
+    if (root.editOpen) {
+      if (event.key === Qt.Key_Escape) { root.editCancel(); return true }
+      if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+        if (root.pendingEditName !== "" || root.pendingEditColor !== "")
+          root.editSubmit(root.editId, root.pendingEditName, root.pendingEditColor)
+        return true
+      }
+      if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+        root.navRequested(event.key === Qt.Key_Left ? -1 : 1)
+        return true
+      }
+      return false
+    }
     if (root.addOpen) {
       if (event.key === Qt.Key_Escape) { root.addCancel(); return true }
       if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
@@ -193,6 +222,12 @@ Item {
       // right-click). Only for calendars in the signed-in user's namespace.
       var m = root.model.get(root.selectedIndex)
       if (m && m.deletable) root.deleteRequested(m.id)
+      return true
+    } else if (event.key === Qt.Key_E || event.text === "e" || event.text === "E") {
+      // 'e' opens the edit mini form for the row under the keyboard cursor
+      // (owned calendars only; same flow as the row's edit button).
+      var m = root.model.get(root.selectedIndex)
+      if (m && m.editable) root.editRequested(m.id)
       return true
     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
       if (root.selectedIndex === root.doneIndex) root.closed()
@@ -261,7 +296,7 @@ Item {
           textFormat: Text.PlainText
           // While the add-calendar mini form is open the header reads
           // "Add Calendar" and the + button is hidden (it opened the form).
-          text: root.addOpen ? "Add Calendar" : "Calendars"
+          text: root.addOpen ? "Add Calendar" : root.editOpen ? "Edit Calendar" : "Calendars"
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: 24
@@ -279,8 +314,8 @@ Item {
           tooltipText: "Add Calendar"
           foreground: root.foreground
           fontFamily: root.fontFamily
-          visible: !root.addOpen
-          enabled: !root.addOpen
+          visible: !root.addOpen && !root.editOpen
+          enabled: !root.addOpen && !root.editOpen
           onClicked: root.addRequested()
         }
       }
@@ -296,7 +331,7 @@ Item {
       // the list; the card height stays put since it is model-count driven).
       Flickable {
         id: listArea
-        visible: !root.addOpen
+        visible: !root.addOpen && !root.editOpen
         Layout.fillWidth: true
         Layout.fillHeight: true
         boundsBehavior: Flickable.StopAtBounds
@@ -343,7 +378,13 @@ Item {
 
                 Toggle {
                   id: rowToggle
-                  anchors.fill: parent
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.top: parent.top
+                  anchors.bottom: parent.bottom
+                  // Room for the edit button at the row's right edge (owned
+                  // rows only) so the toggle knob never sits under it.
+                  anchors.rightMargin: modelData.editable ? rowEditBtn.width + Style.space(8) : 0
                   label: modelData.name
                   description: modelData.enabled ? "Visible" : "Hidden"
                   checked: modelData.enabled
@@ -364,6 +405,25 @@ Item {
                   anchors.fill: parent
                   acceptedButtons: Qt.RightButton
                   onClicked: if (modelData.deletable) root.deleteRequested(modelData.id)
+                }
+
+                // Edit button: Material Symbols "edit_calendar" (U+F08A7,
+                // surrogate pair so it renders on every JS engine). Owned
+                // calendars only (editable flag from the panel); shared and
+                // subscribed rows never show it.
+                PanelActionButton {
+                  id: rowEditBtn
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(6)
+                  anchors.verticalCenter: parent.verticalCenter
+                  iconText: "\uDB82\uDCA7"
+                  fontSize: 18
+                  tooltipText: "Edit calendar"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  visible: modelData.editable
+                  enabled: modelData.editable
+                  onClicked: root.editRequested(modelData.id)
                 }
               }
             }
@@ -541,10 +601,147 @@ Item {
         }
       }
 
+      // Edit-calendar mini form: replaces the list once a row's edit button
+      // (or 'e') fires. Name and color are both optional — leave one alone to
+      // keep it; Save needs at least one (the panel guards the empty case).
+      // The panel owns the PUT via editSubmit(id, name, color).
+      ColumnLayout {
+        id: editForm
+        visible: root.editOpen
+        Layout.fillWidth: true
+        spacing: Style.space(8)
+
+        TextField {
+          id: editNameField
+          Layout.fillWidth: true
+          Layout.preferredHeight: Math.max(implicitHeight, Style.spacing.controlHeight)
+          placeholderText: "New calendar name"
+          foreground: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.subtitle
+          onTextChanged: if (text !== "") root.pendingEditName = text
+          Keys.onReturnPressed: root.editSubmit(root.editId, root.pendingEditName, root.pendingEditColor)
+          Keys.onEnterPressed: root.editSubmit(root.editId, root.pendingEditName, root.pendingEditColor)
+          Keys.onEscapePressed: { root.pendingEditName = ""; root.editCancel() }
+        }
+
+        Text {
+          Layout.fillWidth: true
+          textFormat: Text.PlainText
+          text: "Select calendar color:"
+          color: root.foreground
+          opacity: 0.6
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+        RowLayout {
+          id: editSwatchRow
+          Layout.fillWidth: true
+          spacing: Style.space(8)
+
+          Repeater {
+            model: root.availableSwatches
+
+            Rectangle {
+              required property string modelData
+              required property int index
+              Layout.preferredWidth: Style.space(22)
+              Layout.preferredHeight: Style.space(22)
+              radius: width / 2
+              color: modelData
+              border.color: root.foreground
+              border.width: (root.pendingEditColor === modelData)
+                  ? Style.normalBorderWidth + 1 : 0
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.pendingEditColor = modelData
+              }
+            }
+          }
+        }
+
+        RowLayout {
+          id: editBtnRow
+          Layout.fillWidth: true
+          spacing: Style.space(10)
+
+          Item { Layout.fillWidth: true }   // spacer pushes Save/Cancel right
+
+          Rectangle {
+            id: saveBtn
+            Layout.preferredWidth: Style.space(96)
+            height: Style.space(38)
+            radius: root.cornerRadius
+            readonly property bool hot: saveHover.containsMouse
+            color: hot
+              ? Style.controlFill(false, true, root.foreground, root.accent)
+              : "transparent"
+            border.color: hot
+              ? Style.controlBorder(false, true, root.foreground, root.accent)
+              : root.accent
+            border.width: hot
+              ? Style.controlBorderWidth(false, true)
+              : Style.normalBorderWidth
+            Behavior on color { ColorAnimation { duration: 100 } }
+            Text {
+              textFormat: Text.PlainText
+              anchors.centerIn: parent
+              text: "Save"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.subtitle
+              font.bold: true
+            }
+            MouseArea {
+              id: saveHover
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.editSubmit(root.editId, root.pendingEditName, root.pendingEditColor)
+            }
+          }
+          Rectangle {
+            id: editCancelBtn
+            Layout.preferredWidth: Style.space(96)
+            height: Style.space(38)
+            radius: root.cornerRadius
+            readonly property bool hot: editCancelHover.containsMouse
+            color: hot
+              ? Style.controlFill(false, true, root.foreground, root.accent)
+              : "transparent"
+            border.color: hot
+              ? Style.controlBorder(false, true, root.foreground, root.accent)
+              : root.accent
+            border.width: hot
+              ? Style.controlBorderWidth(false, true)
+              : Style.normalBorderWidth
+            Behavior on color { ColorAnimation { duration: 100 } }
+            Text {
+              textFormat: Text.PlainText
+              anchors.centerIn: parent
+              text: "Cancel"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.subtitle
+              font.bold: true
+            }
+            MouseArea {
+              id: editCancelHover
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.editCancel()
+            }
+          }
+        }
+      }
+
       RowLayout {
         id: buttonRow
         Layout.fillWidth: true
-        visible: !root.addOpen
+        visible: !root.addOpen && !root.editOpen
         spacing: Style.space(10)
 
         Item { Layout.fillWidth: true }   // spacer pushes Done to the right
