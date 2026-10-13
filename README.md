@@ -121,10 +121,17 @@ the OAuth token set:
 ```
 
 Sign in first (`omacal oauth login google`), with the `oauth.google` client
-section configured (installed-app PKCE, loopback redirect,
-`access_type=offline` + `prompt=consent` — see the OAuth notes).
+section configured: Google's installed-app clients still demand the
+`client_secret` in the token exchange (confidential mode — PKCE alone gets
+"client_secret is missing"), and the scope must be the broad
+`https://www.googleapis.com/auth/calendar` — the granular
+`calendar.calendars`/`calendar.events` do NOT cover `calendarList` (403).
+`access_type=offline` + `prompt=consent` give a refresh token; note
+unverified consent screens expire refresh tokens after ~7 days, then the
+re-consent prompt fires automatically. The Calendar API library itself must
+be ENABLED in the Cloud project (403 "API has not been used" otherwise).
 
-- **Discovery** — the user's calendar list (`/users/@calendarlist`) becomes
+- **Discovery** — the user's calendar list (`/users/me/calendarList`) becomes
   cache rows with `provider: "google"` provenance (schema v12) and the Google
   calendar id as `uid`; the cache URL is namespaced `google:<id>`.
 - **Sync** — one events fetch per calendar with Google's own syncToken
