@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import logging
 import time as _time
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -102,6 +103,13 @@ def _api_request(token: str, path: str, method: str = "GET",
                 last_err = f"HTTP {e.code}"
                 continue
             last_err = f"HTTP {e.code}"
+            try:
+                detail = json.loads(e.read().decode("utf-8", "replace"))
+                msg = (detail.get("error") or {}).get("message")
+                if msg:
+                    last_err += f" ({msg})"
+            except (OSError, ValueError):
+                pass
             break
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             if attempt < _RETRY_ATTEMPTS - 1:
@@ -272,6 +280,32 @@ def google_url(calendar_id: str) -> str:
 # edits/deletes JUST that occurrence — the same semantics the panel offers
 # for CalDAV series, without EXDATE/RECURRENCE-ID surgery.
 
+def _iana_zone(dt: datetime) -> str | None:
+    """IANA zone name for a datetime: ZoneInfo.key, astimezone's zone_name,
+    else the machine's local zone when only a UTC offset is attached.
+
+    Google accepts bare offsets in dateTime, but recurring events need the
+    explicit timeZone field ("Missing time zone definition for start time",
+    HTTP 400) — offsets alone are ambiguous across DST for a series.
+    """
+    tz = getattr(dt, "tzinfo", None)
+    if tz is None:
+        return None
+    key = getattr(tz, "key", None) or getattr(tz, "zone_name", None)
+    if key:
+        return str(key)
+    # Offset-only tzinfo (astimezone on this Python): resolve the machine's
+    # IANA zone from TZ env or the /etc/localtime symlink.
+    tz_env = os.environ.get("TZ")
+    if tz_env:
+        return tz_env
+    target = os.path.realpath("/etc/localtime")
+    if "zoneinfo/" in target:
+        # Filenames escape real "/" in zone names as "+" (e.g. America/Argentina/Buenos+Aires)
+        return target.rsplit("zoneinfo/", 1)[-1].replace("+", "/")
+    return None
+
+
 def create_event(token: str, calendar_id: str, summary: str,
                  start: datetime, end: datetime | None,
                  all_day: bool, location: str | None = None,
@@ -295,7 +329,15 @@ def create_event(token: str, calendar_id: str, summary: str,
     else:
         if end is None:
             end = start + timedelta(hours=1)
-        body["start"], body["end"] = {"dateTime": start.isoformat()}, {"dateTime": end.isoformat()}
+        z = _iana_zone(start)
+        body["start"] = {"dateTime": start.isoformat()}
+        body["end"] = {"dateTime": end.isoformat()}
+        if z:
+            # Recurring inserts demand the zone INSIDE start/end (start.timeZone
+            # is "required for recurring events"); a top-level timeZone is
+            # ignored there -> "Missing time zone definition for start time".
+            body["start"]["timeZone"] = z
+            body["end"]["timeZone"] = z
     if rrule:
         body["recurrence"] = [f"RRULE:{rrule}"]
     return _api_request(token, f"/calendars/{_q(calendar_id)}/events", "POST", None, body)
@@ -327,7 +369,12 @@ def patch_event(token: str, calendar_id: str, event_id: str,
         else:
             if end is None:
                 end = start + timedelta(hours=1)
-            body["start"], body["end"] = {"dateTime": start.isoformat()}, {"dateTime": end.isoformat()}
+            body["start"] = {"dateTime": start.isoformat()}
+            body["end"] = {"dateTime": end.isoformat()}
+            z = _iana_zone(start)
+            if z:
+                body["start"]["timeZone"] = z
+                body["end"]["timeZone"] = z
     if not body:
         return {}
     return _api_request(token, f"/calendars/{_q(calendar_id)}/events/{_q(event_id)}",
