@@ -140,9 +140,16 @@ be ENABLED in the Cloud project (403 "API has not been used" otherwise).
   [-30, +90] days: Google exposes recurring series as **instances**
   (`recurringEventId`), never the master RRULE, so instances cache as
   one-off rows and the window is their visibility.
-- **Scope (in progress)** — read side only for now: Google rows show
-  `writable: false` and the panel gates edits on that. Create/edit/delete
-  over the API and Tasks-backed reminders are later chunks.
+- **Write side** — create/edit/delete route by provider: Google rows report
+  `writable: true` and go through the Calendar API (insert/patch/delete/move)
+  instead of CalDAV PUT. Google's instance ids are first-class, so editing or
+  deleting one occurrence of a series is a PATCH/DELETE on the instance row —
+  no EXDATE/RECURRENCE-ID surgery. Deleting a whole series deletes the master
+  (and prunes its instance rows). Recurring creates need the IANA zone inside
+  `start.timeZone`/`end.timeZone` (Google ignores a top-level `timeZone` there
+  and rejects the insert with "Missing time zone definition for start time").
+  Cross-provider moves (Google ↔ CalDAV) are refused; reminders on Google
+  calendars need the Tasks API and raise a clear error until wired.
 
 ## Reminders
 
