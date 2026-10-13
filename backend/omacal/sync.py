@@ -1063,6 +1063,26 @@ def sync_source(
     return total_events, urls_synced, urls_failed
 
 
+def _google_row(conn, calendar_id: int) -> tuple[str, str] | None:
+    """(google_calendar_id, access_token) if the cached calendar is Google-backed, else None.
+
+    Write-path dispatch: google rows carry url="google:<id>" and provider="google";
+    the access token comes from the OAuth token set (raises OAuthReauthRequired
+    when the refresh token died -- callers surface it as an error).
+    """
+    from omacal.oauth import oauth_token
+
+    row = conn.execute("SELECT url, provider FROM calendars WHERE id = ?",
+                       (calendar_id,)).fetchone()
+    if not row or row["provider"] != "google":
+        return None
+    gcal_id = (row["url"] or "")[len("google:"):]
+    token = oauth_token(load_config(), "google")
+    if not token:
+        raise ValueError('Google OAuth consent needed (run "omacal oauth login google")')
+    return gcal_id, token
+
+
 def create_event(
     conn: Any,
     calendar_id: int,
@@ -1084,6 +1104,34 @@ def create_event(
     server accepts it.  Returns the inserted row as a dict (same shape as
     get_events rows) on success.
     """
+    g = _google_row(conn, calendar_id)
+    if g:
+        from omacal.google_cal import create_event as gc_create
+        from omacal.db import add_event
+
+        gcal_id, token = g
+        created = gc_create(token, gcal_id, summary, start, end, all_day,
+                            location, description, rrule)
+        uid = created.get("id")
+        if not uid:
+            raise ValueError("Google create returned no event id")
+        if all_day:
+            sd = start.date() if isinstance(start, datetime) else start
+            ed = end.date() if isinstance(end, datetime) else end
+            if ed is None or ed <= sd:
+                ed = sd + timedelta(days=1)
+            start_iso = datetime(sd.year, sd.month, sd.day, tzinfo=timezone.utc).isoformat()
+            end_iso = datetime(ed.year, ed.month, ed.day, tzinfo=timezone.utc).isoformat()
+        else:
+            if end is None:
+                end = start + timedelta(hours=1)
+            start_iso, end_iso = start.isoformat(), end.isoformat()
+        # Cache under Google's own id so later edits/deletes address the same
+        # resource; recurring series land as instances on the next sync.
+        return add_event(conn, calendar_id, uid, summary, start_iso, end_iso,
+                         1 if all_day else 0, location, description=description,
+                         rrule=rrule, tzid=_tzid_of(start, start))
+
     from uuid import uuid4
 
     from omacal.db import add_event
@@ -1151,6 +1199,37 @@ def delete_event(
     A recurring event with neither `occurrence` nor `series=True` raises: a
     right-click on one occurrence must never silently wipe the series.
     """
+    g = _google_row(conn, calendar_id)
+    if g:
+        from omacal.google_cal import delete_event as gc_delete, get_event as gc_get, GoogleAPIError
+        from omacal.db import delete_event as db_delete_event
+
+        gcal_id, token = g
+        try:
+            res = gc_get(token, gcal_id, uid)
+        except GoogleAPIError as e:
+            raise ValueError(f"event not found on Google calendar: {e}") from None
+        master_id = res.get("recurringEventId")
+        if master_id and occurrence is None and not series:
+            raise ValueError(
+                "this is a repeating event: pass occurrence=<ISO datetime> to "
+                "delete one occurrence, or series=true to delete the whole series"
+            )
+        if master_id and series:
+            gc_delete(token, gcal_id, master_id)
+            # Our cache stores each instance as its own row (uid = <master>_<stamp>);
+            # deleting the master on Google kills every instance, so drop them all.
+            conn.execute("DELETE FROM events WHERE calendar_id = ? AND (uid = ? OR uid LIKE ?)",
+                         (calendar_id, master_id, master_id + "_%"))
+            conn.commit()
+            return {"status": "deleted", "scope": "series", "uid": uid}
+        # Instance id = that occurrence only; plain id = the whole one-off event.
+        gc_delete(token, gcal_id, uid)
+        db_delete_event(conn, calendar_id, uid)
+        return {"status": "deleted",
+                "scope": "occurrence" if occurrence is not None else "event",
+                "uid": uid}
+
     from omacal.db import delete_event as db_delete_event, set_event_exdates
     from omacal.recur import parse_dt
 
@@ -1226,6 +1305,48 @@ def update_event(
     writing a detached RECURRENCE-ID override (the same mechanism the phone
     uses), leaving the rest of the series untouched.
     """
+    g = _google_row(conn, calendar_id)
+    if g:
+        from omacal.google_cal import (patch_event as gc_patch, get_event as gc_get,
+                                       move_event as gc_move, GoogleAPIError)
+        from omacal.db import add_event as db_add_event
+
+        gcal_id, token = g
+        try:
+            gc_get(token, gcal_id, uid)
+            on_target = True
+        except GoogleAPIError:
+            on_target = False
+        if not on_target:
+            # uid not on the target calendar: google->google uses the move
+            # endpoint (keeps the id); cross-provider moves are refused.
+            row = conn.execute("SELECT calendar_id FROM events WHERE uid = ?", (uid,)).fetchone()
+            old_id = row["calendar_id"] if row else None
+            old = _google_row(conn, old_id) if old_id is not None else None
+            if old:
+                gc_move(token, old[0], uid, gcal_id)
+            else:
+                raise ValueError("moving events between providers is not supported yet")
+        # occurrence is advisory for Google rows: the uid IS the instance
+        # (Google's own per-occurrence model), no RECURRENCE-ID surgery needed.
+        gc_patch(token, gcal_id, uid, summary=summary, start=start, end=end,
+                 all_day=all_day, location=location, description=description)
+        prev = conn.execute(
+            "SELECT rrule, exdates, status, transparency FROM events WHERE uid = ? ORDER BY start DESC LIMIT 1", (uid,)
+        ).fetchone()
+        conn.execute("DELETE FROM events WHERE uid = ?", (uid,))
+        conn.commit()
+        return db_add_event(
+            conn, calendar_id, uid, summary,
+            start.isoformat(), end.isoformat() if end else None,
+            1 if all_day else 0, location, description=description,
+            status=prev["status"] if prev else "CONFIRMED",
+            transparency=prev["transparency"] if prev else None,
+            rrule=prev["rrule"] if prev else None,
+            exdates=prev["exdates"] if prev else None,
+            tzid=_tzid_of(start, start),
+        )
+
     from omacal.db import update_event as db_update_event
 
     url, username, password = _calendar_creds(conn, calendar_id)
@@ -1503,6 +1624,9 @@ def create_reminder(
     (alarm_time "HH:MM", default 09:00). Pushes first; only caches if the
     server accepts it. Returns the cached row as a dict.
     """
+    if _google_row(conn, calendar_id):
+        raise ValueError("reminders on Google calendars use the Tasks API (not wired yet)")
+
     from uuid import uuid4
 
     from omacal.db import add_reminder

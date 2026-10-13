@@ -148,16 +148,23 @@ class OmacalHandler(BaseHTTPRequestHandler):
             from omacal.sync import calendar_is_deletable
             calendars = db_get_calendars(self.db_conn)
             for c in calendars:
-                # Writability = we hold a password for this calendar in the
-                # keyring. The password is keyed by the principal URL (the
-                # configured URL); fall back to the calendar URL.
-                key = c.get("principal_url") or c.get("url", "")
-                c["writable"] = bool(c.get("username")) and has_password(key, c.get("username"))
-                # Deletable = owned by the signed-in user's namespace (not a
-                # *_shared_by_* collection); the server is the final arbiter.
-                # Subscribed (URL-added) rows are always deletable: the server
-                # treats that as unsubscribe (local cache removal only).
-                c["deletable"] = bool(c.get("subscribed")) or calendar_is_deletable(c.get("url"), c.get("principal_url"))
+                if c.get("provider") == "google":
+                    # Google rows write through the Calendar API with the OAuth
+                    # token — no keyring password involved. calendarList only
+                    # returns calendars the user manages, so edits are allowed.
+                    c["writable"] = True
+                    c["deletable"] = True
+                else:
+                    # Writability = we hold a password for this calendar in the
+                    # keyring. The password is keyed by the principal URL (the
+                    # configured URL); fall back to the calendar URL.
+                    key = c.get("principal_url") or c.get("url", "")
+                    c["writable"] = bool(c.get("username")) and has_password(key, c.get("username"))
+                    # Deletable = owned by the signed-in user's namespace (not a
+                    # *_shared_by_* collection); the server is the final arbiter.
+                    # Subscribed (URL-added) rows are always deletable: the server
+                    # treats that as unsubscribe (local cache removal only).
+                    c["deletable"] = bool(c.get("subscribed")) or calendar_is_deletable(c.get("url"), c.get("principal_url"))
                 c.pop("password", None)
                 c.pop("username", None)
                 c.pop("sync_token", None)
