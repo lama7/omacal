@@ -149,7 +149,9 @@ be ENABLED in the Cloud project (403 "API has not been used" otherwise).
   `start.timeZone`/`end.timeZone` (Google ignores a top-level `timeZone` there
   and rejects the insert with "Missing time zone definition for start time").
   Cross-provider moves (Google ↔ CalDAV) are refused; reminders on Google
-  calendars need the Tasks API and raise a clear error until wired.
+  calendars need the Tasks API and raise a clear error until wired. Calendar
+  rename/recolour PATCH the calendarList entry (`summary`/`colorRgbHex`;
+  Google wants #RRGGBB, the panel's alpha pair is dropped).
 
 ## Reminders
 

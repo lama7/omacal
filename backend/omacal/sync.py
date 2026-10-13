@@ -549,11 +549,30 @@ def edit_calendar(
     if not name and not color:
         raise ValueError("Nothing to change")
     row = conn.execute(
-        "SELECT id, url, principal_url, display_name, subscribed FROM calendars WHERE id = ?",
+        "SELECT id, url, principal_url, display_name, subscribed, provider FROM calendars WHERE id = ?",
         (calendar_id,),
     ).fetchone()
     if not row:
         raise ValueError("Calendar not found")
+    if row["provider"] == "google":
+        # Google rows: PATCH calendarList (summary/colorRgbHex), no keyring.
+        from omacal.google_cal import patch_calendar, GoogleAPIError
+        from omacal.oauth import oauth_token
+        gcal_id = (row["url"] or "")[len("google:"):]
+        token = oauth_token(load_config(), "google")
+        if not token:
+            raise ValueError('Google OAuth consent needed (run "omacal oauth login google")')
+        try:
+            patch_calendar(token, gcal_id, name, color)
+        except GoogleAPIError as e:
+            raise ValueError(f"Could not update the calendar: {e}") from e
+        if name:
+            conn.execute("UPDATE calendars SET display_name = ? WHERE id = ?", (name, calendar_id))
+        if color:
+            conn.execute("UPDATE calendars SET color = ? WHERE id = ?", (color, calendar_id))
+        conn.commit()
+        return {"ok": True, "calendar_id": calendar_id,
+                "display_name": name or row["display_name"], "color": color}
     if row["subscribed"]:
         raise ValueError("Subscribed calendars can't be edited")
     if not calendar_is_deletable(row["url"], row["principal_url"]):

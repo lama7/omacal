@@ -306,6 +306,23 @@ def _iana_zone(dt: datetime) -> str | None:
     return None
 
 
+def patch_calendar(token: str, calendar_id: str,
+                   name: str | None = None, color: str | None = None) -> dict:
+    """PATCH /calendars/<id> — rename (summary) and/or recolour (colorRgbHex).
+
+    Google wants #RRGGBB for colorRgbHex; our panel offers #RRGGBB[AA], so
+    the alpha pair is dropped.
+    """
+    body = {}
+    if name:
+        body["summary"] = name
+    if color:
+        body["colorRgbHex"] = color[:7]
+    if not body:
+        return {}
+    return _api_request(token, f"/calendars/{_q(calendar_id)}", "PATCH", None, body)
+
+
 def create_event(token: str, calendar_id: str, summary: str,
                  start: datetime, end: datetime | None,
                  all_day: bool, location: str | None = None,
