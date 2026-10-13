@@ -58,26 +58,39 @@ class GoogleAPIError(Exception):
     """A Google API call failed after retries. Message carries detail."""
 
 
-def _api_get(token: str, path: str, params: dict | None = None) -> dict:
-    """GET a Google Calendar API v3 path with a Bearer token; return JSON.
+def _api_request(token: str, path: str, method: str = "GET",
+                 params: dict | None = None, body: dict | None = None) -> dict:
+    """Call a Google Calendar API v3 path with a Bearer token; return JSON.
 
     Retries 429/5xx with exponential backoff (honouring Retry-After when
     sane). 410 raises SyncTokenExpired; other failures raise GoogleAPIError.
+
+    Retry safety for writes: 429 (quota) never executed the request, so it
+    is retried for every method; 5xx retries are limited to idempotent
+    methods (GET/PUT/PATCH/DELETE) — a POST create that 500s is NOT retried
+    because it may already have executed server-side (duplicate event).
     """
     url = _API_BASE + path
     if params:
         url += "?" + urllib.parse.urlencode(params)
+    payload = None
+    if body is not None:
+        payload = json.dumps(body).encode("utf-8")
     last_err = "unknown"
     for attempt in range(_RETRY_ATTEMPTS):
-        req = urllib.request.Request(url)
+        req = urllib.request.Request(url, data=payload, method=method)
+        if payload is not None:
+            req.headers["Content-Type"] = "application/json"
         req.headers["Authorization"] = f"Bearer {token}"
+        retryable_5xx = method in ("GET", "PUT", "PATCH", "DELETE")
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read())
+                return json.loads(resp.read() or b"{}")
         except urllib.error.HTTPError as e:
             if e.code == 410:
                 raise SyncTokenExpired(f"{path}: syncToken expired") from None
-            if e.code in (429, 500, 502, 503) and attempt < _RETRY_ATTEMPTS - 1:
+            codes = (429, 500, 502, 503) if retryable_5xx else (429,)
+            if e.code in codes and attempt < _RETRY_ATTEMPTS - 1:
                 delay = _RETRY_MAX_DELAY_S
                 ra = e.headers.get("Retry-After")
                 if ra and ra.isdigit():
@@ -100,6 +113,15 @@ def _api_get(token: str, path: str, params: dict | None = None) -> dict:
             last_err = str(e)
             break
     raise GoogleAPIError(f"{path}: {last_err}")
+
+
+def _api_get(token: str, path: str, params: dict | None = None) -> dict:
+    return _api_request(token, path, "GET", params)
+
+
+def _q(s: str) -> str:
+    """URL-quote a calendar/event id (they contain @ # . chars)."""
+    return urllib.parse.quote(s, safe="")
 
 
 def list_user_calendars(token: str) -> list[dict]:
@@ -243,3 +265,88 @@ def google_url(calendar_id: str) -> str:
     """Cache URL for a Google calendar row — namespaced so the stale prune
     and ownership checks never mistake it for a DAV collection URL."""
     return f"google:{calendar_id}"
+
+
+# --- Write side (panel edits routed here by provider) -----------------------
+# Google instances are first-class: PATCH/DELETE on an instance event id
+# edits/deletes JUST that occurrence — the same semantics the panel offers
+# for CalDAV series, without EXDATE/RECURRENCE-ID surgery.
+
+def create_event(token: str, calendar_id: str, summary: str,
+                 start: datetime, end: datetime | None,
+                 all_day: bool, location: str | None = None,
+                 description: str | None = None, rrule: str | None = None) -> dict:
+    """POST a new event; returns the created event resource (id, etag...).
+
+    all_day -> date-valued halves (Google's all-day end is EXCLUSIVE, same
+    iCalendar convention as our cache); rrule -> recurrence ["RRULE:..."].
+    """
+    body: dict = {"summary": summary}
+    if description:
+        body["description"] = description
+    if location:
+        body["location"] = location
+    if all_day:
+        sd = (start.date() if isinstance(start, datetime) else start)
+        ed = (end.date() if isinstance(end, datetime) else end)
+        if ed is None or ed <= sd:
+            ed = sd + timedelta(days=1)
+        body["start"], body["end"] = {"date": sd.isoformat()}, {"date": ed.isoformat()}
+    else:
+        if end is None:
+            end = start + timedelta(hours=1)
+        body["start"], body["end"] = {"dateTime": start.isoformat()}, {"dateTime": end.isoformat()}
+    if rrule:
+        body["recurrence"] = [f"RRULE:{rrule}"]
+    return _api_request(token, f"/calendars/{_q(calendar_id)}/events", "POST", None, body)
+
+
+def patch_event(token: str, calendar_id: str, event_id: str,
+                summary: str | None = None, start: datetime | None = None,
+                end: datetime | None = None, all_day: bool | None = None,
+                location: str | None = None, description: str | None = None) -> dict:
+    """PATCH one event (master or instance id) with only the given fields.
+
+    An instance id edits just that occurrence (Google's own model). start/end
+    must come as a pair when moving/resizing; all_day switches the field form.
+    """
+    body: dict = {}
+    if summary is not None:
+        body["summary"] = summary
+    if description is not None:
+        body["description"] = description
+    if location is not None:
+        body["location"] = location
+    if start is not None:
+        if all_day:
+            sd = (start.date() if isinstance(start, datetime) else start)
+            ed = (end.date() if isinstance(end, datetime) else end)
+            if ed is None or ed <= sd:
+                ed = sd + timedelta(days=1)
+            body["start"], body["end"] = {"date": sd.isoformat()}, {"date": ed.isoformat()}
+        else:
+            if end is None:
+                end = start + timedelta(hours=1)
+            body["start"], body["end"] = {"dateTime": start.isoformat()}, {"dateTime": end.isoformat()}
+    if not body:
+        return {}
+    return _api_request(token, f"/calendars/{_q(calendar_id)}/events/{_q(event_id)}",
+                        "PATCH", None, body)
+
+
+def delete_event(token: str, calendar_id: str, event_id: str) -> dict:
+    """DELETE one event resource (instance id = that occurrence only)."""
+    return _api_request(token, f"/calendars/{_q(calendar_id)}/events/{_q(event_id)}",
+                        "DELETE")
+
+
+def get_event(token: str, calendar_id: str, event_id: str) -> dict:
+    """GET one event resource; recurringEventId present for instances."""
+    return _api_request(token, f"/calendars/{_q(calendar_id)}/events/{_q(event_id)}",
+                        "GET")
+
+
+def move_event(token: str, from_cal: str, event_id: str, to_cal: str) -> dict:
+    """Move an event between calendars (keeps its id; google->google only)."""
+    return _api_request(token, f"/calendars/{_q(to_cal)}/events/{_q(from_cal)}/{_q(event_id)}/move",
+                        "POST")
