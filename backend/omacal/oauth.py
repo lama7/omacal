@@ -119,7 +119,10 @@ def _pkce_pair() -> tuple[str, str]:
     """Return (verifier, S256 challenge) per RFC 7636."""
     verifier = secrets.token_urlsafe(64)
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
-    challenge = base64.b64encode(digest).decode("ascii").rstrip("=")
+    # PKCE (RFC 7636) demands the BASE64URL alphabet, unpadded: Google
+    # strictly rejects a challenge containing '+' or '/' (Nextcloud
+    # tolerated it, which is why the bug survived the NC test).
+    challenge = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
     return verifier, challenge
 
 

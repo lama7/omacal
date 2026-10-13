@@ -40,10 +40,10 @@ _API_BASE = "https://www.googleapis.com/calendar/v3"
 
 # Panel navigates ±12 months; Google instances are cached as one-offs, so the
 # fetch window must cover that, not the CalDAV [-30, +90] day window.
-_WINDOW_DAYS = 365
+WINDOW_DAYS = 365
 
 _MAX_PAGED_ITEMS = 2500  # events.list maxResults cap
-_CALENDARLIST_MAX = 250  # users/@calendarlist maxResults cap
+_CALENDARLIST_MAX = 250  # users/me/calendarList maxResults cap
 
 # Retry budget for quota/5xx at this layer.
 _RETRY_ATTEMPTS = 4
@@ -110,7 +110,7 @@ def list_user_calendars(token: str) -> list[dict]:
         params = {"maxResults": _CALENDARLIST_MAX}
         if page_token:
             params["pageToken"] = page_token
-        data = _api_get(token, "/users/@calendarlist", params)
+        data = _api_get(token, "/users/me/calendarList", params)
         for it in data.get("items", []):
             if it.get("id"):
                 items.append({
