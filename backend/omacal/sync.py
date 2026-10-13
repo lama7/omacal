@@ -877,6 +877,123 @@ def _sync_calendar_incremental(
     return len(events) + len(reminders), len(res.deleted)
 
 
+def sync_google_source(conn: Any, cfg: dict, cal_entry: dict) -> tuple[int, list[str], list[str]]:
+    """Sync one configured Google provider source (Calendar API v3, not DAV).
+
+    Config entry: {"provider": "google", "display_name": "Google"} — no URL
+    needed: the account is the OAuth token set, discovery is the user's
+    calendar list. Mirrors sync_source's contract: returns
+    (events_stored, urls_replaced, failed_calendar_ids) and raises on a
+    source-level failure (no consent / discovery failure) so the caller
+    skips the stale prune. Reminders (Google Tasks) are a separate API —
+    out of scope for this adapter.
+
+    Google hands back recurring series INSTANCES (no master RRULE is exposed),
+    so instances cache as one-off rows and the fetch window is ±WINDOW_DAYS
+    (the panel's navigation), not the CalDAV [-30, +90] days.
+    """
+    from omacal.oauth import oauth_token, OAuthReauthRequired
+    from omacal.google_cal import (list_user_calendars, list_events,
+                                   to_cache_event, is_deleted, google_url,
+                                   WINDOW_DAYS, SyncTokenExpired, GoogleAPIError)
+    from omacal.db import (add_calendar, get_sync_token, set_sync_token,
+                           set_last_sync, upsert_events)
+
+    try:
+        token = oauth_token(cfg, "google")
+    except OAuthReauthRequired as e:
+        # Refresh token dead: surface like a source-level failure; the
+        # caller reports error and the stale prune is skipped.
+        raise ValueError(f"Google re-consent needed: {e}") from None
+    if not token:
+        raise ValueError('Google OAuth consent needed (run "omacal oauth login google")')
+
+    try:
+        gcal_list = list_user_calendars(token)
+    except (GoogleAPIError, SyncTokenExpired) as e:
+        raise ValueError(f"Google calendar discovery failed: {e}") from None
+
+    now = datetime.now(timezone.utc)
+    time_min = now - timedelta(days=WINDOW_DAYS)
+    time_max = now + timedelta(days=WINDOW_DAYS)
+
+    total = 0
+    urls: list[str] = []
+    failed: list[str] = []
+
+    for gc in gcal_list:
+        cal_id = add_calendar(
+            conn,
+            uid=gc["id"],
+            display_name=gc["display_name"],
+            url=google_url(gc["id"]),
+            color=gc["color"],
+            provider="google",
+        )
+        stored = get_sync_token(conn, cal_id)
+        try:
+            items, new_token = list_events(token, gc["id"], time_min, time_max,
+                                           sync_token=stored)
+        except SyncTokenExpired:
+            # Dead token: retry this calendar as a full fetch (no token),
+            # which replaces the whole cache set for it.
+            logger.warning("Google syncToken dead for %s; full fetch", gc["id"])
+            stored = None
+            try:
+                items, new_token = list_events(token, gc["id"], time_min, time_max,
+                                               sync_token=None)
+            except GoogleAPIError as e:
+                logger.error("Google full fetch failed for %s: %s", gc["id"], e)
+                failed.append(gc["id"])
+                continue
+        except GoogleAPIError as e:
+            logger.error("Google fetch failed for %s: %s", gc["id"], e)
+            failed.append(gc["id"])
+            continue
+
+        changed: list[dict] = []
+        deleted_uids: list[str] = []
+        for it in items:
+            if is_deleted(it):
+                deleted_uids.append(it["id"])
+                continue
+            row = to_cache_event(it)
+            if row:
+                changed.append(row)
+
+        # Apply atomically per calendar, mirroring _sync_calendar_incremental:
+        # no token means the fetch was full (wipe-then-insert, so instances
+        # deleted before the new token existed cannot linger); with a token
+        # deletions come back as flagged items matched by uid (href == uid on
+        # Google rows, so either column works).
+        cur = conn.cursor()
+        try:
+            if stored is None:
+                cur.execute("DELETE FROM events WHERE calendar_id=?", (cal_id,))
+                cur.execute("DELETE FROM event_overrides WHERE calendar_id=?", (cal_id,))
+            elif deleted_uids:
+                placeholders = ",".join("?" for _ in deleted_uids)
+                cur.execute(
+                    f"DELETE FROM events WHERE calendar_id=? AND uid IN ({placeholders})",
+                    [cal_id] + deleted_uids,
+                )
+            if changed:
+                upsert_events(conn, cal_id, changed, commit=False)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            failed.append(gc["id"])
+            logger.error("Google cache apply failed for %s", gc["id"])
+            continue
+
+        set_sync_token(conn, cal_id, new_token)
+        set_last_sync(conn, cal_id)
+        urls.append(google_url(gc["id"]))
+        total += len(changed)
+
+    return total, urls, failed
+
+
 def sync_source(
     conn: Any,
     url: str,
@@ -1690,21 +1807,28 @@ def _sync_all_locked(config_path: Path | None = None) -> dict[str, Any]:
         if not cal.get("enabled", True):
             continue
         name = cal.get("display_name", cal.get("url", "unknown"))
-        # Password comes from the keyring, never from config.json.
-        from omacal.keyring_store import get_password
-
-        username = cal.get("username")
-        password = get_password(cal["url"], username) if username else None
+        # Provider dispatch (google branch): a config entry with
+        # provider="google" syncs over the Calendar API v3 adapter; the
+        # CalDAV path stays the default for everything else.
+        provider = cal.get("provider", "caldav")
         try:
-            n, urls, failed = sync_source(
-                conn,
-                cal["url"],
-                username,
-                password,
-                cal.get("calendar_uid"),
-                cal.get("display_name"),
-                cal.get("color"),
-            )
+            if provider == "google":
+                n, urls, failed = sync_google_source(conn, cfg, cal)
+            else:
+                # Password comes from the keyring, never from config.json.
+                from omacal.keyring_store import get_password
+
+                username = cal.get("username")
+                password = get_password(cal["url"], username) if username else None
+                n, urls, failed = sync_source(
+                    conn,
+                    cal["url"],
+                    username,
+                    password,
+                    cal.get("calendar_uid"),
+                    cal.get("display_name"),
+                    cal.get("color"),
+                )
             results[name] = {"status": "ok", "events": n}
             total += n
             synced_urls.update(urls)
