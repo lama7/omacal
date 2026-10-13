@@ -110,6 +110,33 @@ The calendar-select dialog lists every known calendar with a toggle row each.
   (the **Done** button highlights when the cursor lands on it), `Enter`
   selects, `d` deletes, `e` edits the row under the cursor.
 
+## Google calendars (provider support)
+
+Calendars can come from the Google Calendar API v3 instead of a CalDAV
+server. A config entry names the provider; no URL is needed — the account is
+the OAuth token set:
+
+```json
+{ "provider": "google", "display_name": "Google" }
+```
+
+Sign in first (`omacal oauth login google`), with the `oauth.google` client
+section configured (installed-app PKCE, loopback redirect,
+`access_type=offline` + `prompt=consent` — see the OAuth notes).
+
+- **Discovery** — the user's calendar list (`/users/@calendarlist`) becomes
+  cache rows with `provider: "google"` provenance (schema v12) and the Google
+  calendar id as `uid`; the cache URL is namespaced `google:<id>`.
+- **Sync** — one events fetch per calendar with Google's own syncToken
+  (incremental; a dead token falls back to a full fetch), quota/429 backoff
+  handled in the adapter. The fetch window is ±12 months, not the CalDAV
+  [-30, +90] days: Google exposes recurring series as **instances**
+  (`recurringEventId`), never the master RRULE, so instances cache as
+  one-off rows and the window is their visibility.
+- **Scope (in progress)** — read side only for now: Google rows show
+  `writable: false` and the panel gates edits on that. Create/edit/delete
+  over the API and Tasks-backed reminders are later chunks.
+
 ## Reminders
 
 Reminders are CalDAV `VTODO` items — the same add/edit/delete flow as events,
