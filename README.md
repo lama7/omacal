@@ -161,11 +161,17 @@ be ENABLED in the Cloud project (403 "API has not been used" otherwise).
   the POST carries provider=google and add_calendar_named honors an explicit provider
   over the presence heuristic (provider=caldav requires a configured CalDAV account).
 - **Account settings** — the header's U+2261 button (left of Calendar Select) opens an
-  Account Settings dialog: one tab per provider key in config.json's oauth section,
-  each showing that provider's settings as key: value lines straight from the JSON. Data
-  comes from GET /api/account, which returns the oauth section with any *secret* values
-  redacted server-side ('[configured]' in place); the dialog is read-only. 'Back to Month'
-  moved to the header's right side, right of 'Add Event'.
+  Account Settings dialog: one row per provider key in config.json's oauth section, each
+  with a qs.Ui Toggle (Enabled/Disabled) plus that provider's settings as key: value lines
+  straight from the JSON (any *secret* values redacted server-side via GET /api/account;
+  an 'enabled' flag per provider is injected with default true). Toggling a provider is a
+  SOFT disable: POST /api/account/toggle persists the flag in config.json's oauth section
+  and flips the enabled column on every cached row of that provider (oauth key google maps
+  to google rows; any other oauth key, e.g. nextcloud, maps to the caldav rows). Disabled
+  providers' calendars are neither viewed nor altered (event/reminder queries filter on
+  c.enabled = 1), their sync sources are skipped (status 'disabled' in the sync summary),
+  and the stale prune protects their rows so a disable never hard-deletes anything —
+  re-enabling is instant, no re-sync. Settings lines stay read-only display for now.
   Calendar rename PATCHes the calendar resource (`summary`); recolour PATCHes the
   calendarList ITEM (`/users/me/calendarList/<id>`) with `backgroundColor` +
   `foregroundColor` and `colorRgbFormat=true` as a QUERY PARAM — colour is a
