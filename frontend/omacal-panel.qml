@@ -1019,6 +1019,28 @@ Panel {
         xhr.send(JSON.stringify({ calendar_id: id, enabled: enabled }))
     }
 
+    function toggleProvider(pname, enabled) {
+        var xhr = new XMLHttpRequest()
+        xhr.open("POST", apiBase + "/api/account/toggle", true)
+        xhr.timeout = 15000
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
+                // Soft disable: the backend flipped the provider flag and the
+                // enabled column on all of its calendar rows. Re-fetch the
+                // account settings (dialog row state) and the calendars (month
+                // view + calendar dialog) — event queries already filter c.enabled.
+                fetchAccountSettings()
+                loadCalendars()
+            } else {
+                error = (xhr.status === 0)
+                    ? "omacal API did not respond"
+                    : "Cannot toggle provider (" + xhr.status + ")"
+                fetchAccountSettings()
+            }
+        }
+        xhr.send(JSON.stringify({ provider: pname, enabled: enabled }))
+    }
+
     function deleteEvent() {
         if (!pendingDeleteEvent) return
         var ev = pendingDeleteEvent
@@ -2327,6 +2349,7 @@ Panel {
             foreground: root.contentForeground
             accent: root.accent
             fontFamily: root.contentFontFamily
+            onProviderToggled: root.toggleProvider(pname, enabled)
             onClosed: root.dismissAccountSettings()
         }
     }

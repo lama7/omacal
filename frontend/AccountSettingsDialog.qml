@@ -5,12 +5,19 @@ import qs.Commons
 import qs.Ui
 
 // Account settings dialog: opened by the header's U+2261 (triple-bar) button.
-// Shows the OAuth account settings straight from config.json — the panel
-// supplies them via GET /api/account, which returns the config.json "oauth"
-// section with client secrets redacted server-side (nothing sensitive ever
-// leaves the backend). One tab per provider key in that JSON section;
-// clicking a tab shows that provider's settings as "key: value" lines.
-// Read-only: this dialog never writes anything back.
+// Lists one row per provider key in config.json's "oauth" section (supplied
+// by the panel via GET /api/account, client secrets redacted server-side).
+// Each row: a qs.Ui Toggle (Enabled/Disabled, same control as the calendar
+// rows) plus that provider's settings as "key: value" lines. Toggling fires
+// providerToggled(name, enabled); the panel owns the POST /api/account/toggle,
+// so this dialog stays presentational (like CalendarToggleDialog).
+//
+// Soft-disable semantics: toggling a provider off flips the enabled flag on
+// every DB row of that provider (view/edit queries already filter on
+// c.enabled = 1) and gates its sync source; nothing is deleted, so toggling
+// back on restores instantly without re-syncing.
+//
+// Settings lines are read-only display for now (first pass).
 
 Item {
   id: root
@@ -27,16 +34,36 @@ Item {
   property int cornerRadius: Style.cornerRadius
 
   signal closed()
+  signal providerToggled(string pname, bool enabled)
 
-  // Keyboard/mouse tab cursor: which provider tab is active.
-  property int tabIndex: 0
+  // Keyboard cursor: which provider row is selected (0..count-1).
+  property int selectedIndex: 0
 
   // Provider names come straight from the JSON keys (e.g. "nextcloud",
-  // "google"). Bindings re-evaluate whenever accountData or tabIndex change.
+  // "google"). Bindings re-evaluate whenever accountData changes.
   property var providerNames: Object.keys(accountData)
-  property string currentProvider: tabIndex < providerNames.length ? providerNames[tabIndex] : ""
-  property var currentSettings: accountData[currentProvider] || ({})
-  property var currentKeys: Object.keys(currentSettings)
+
+  // Enabled state: the backend injects an "enabled" key per provider;
+  // absent means enabled (fresh config predates the flag).
+  function enabledOf(name) {
+    var s = accountData[name] || ({})
+    return s["enabled"] === undefined ? true : (s["enabled"] ? true : false)
+  }
+
+  // Settings keys to display per provider (the "enabled" control key drives
+  // the Toggle instead of getting its own text line).
+  property var displayKeys: {
+    var out = ({})
+    for (var i = 0; i < providerNames.length; i++) {
+      var p = providerNames[i]
+      var ks = []
+      var s = accountData[p] || ({})
+      for (var k in s)
+        if (k !== "enabled") ks.push(k)
+      out[p] = ks
+    }
+    return out
+  }
 
   // Render JSON values as display strings: arrays joined, nested objects
   // flattened to k=v pairs, scalars stringified.
@@ -52,41 +79,49 @@ Item {
   }
 
   // Stable content estimates (same discipline as CalendarToggleDialog): the
-  // card height uses the TALLEST provider across all tabs, so switching tabs
-  // never blips the card, and never reads live layout implicit heights.
-  property var maxRows: {
-    var m = 1
-    for (var i = 0; i < providerNames.length; i++) {
-      var n = Object.keys(accountData[providerNames[i]] || ({})).length
-      if (n > m) m = n
-    }
+  // card height is derived from the model alone — per provider: one toggle
+  // row + its settings lines — never from live layout implicit heights.
+  property int totalSettingRows: {
+    var m = 0
+    for (var i = 0; i < providerNames.length; i++)
+      m += displayKeys[providerNames[i]].length
     return m
   }
   readonly property int rowFont: 14
-  readonly property int rowPitch: Style.space(26)
-  readonly property int tabRowHeight: Style.space(34)
+  readonly property int rowPitch: Style.space(24)
+  readonly property int toggleRowHeight: Style.space(40)
+  readonly property int providerGap: Style.space(14)
   readonly property int naturalCardHeight:
       Style.space(16)
       + Math.max(titleText.implicitHeight, doneBtn.height)
       + Style.space(10)
-      + tabRowHeight
-      + Style.space(10)
-      + maxRows * rowPitch
-      + Style.space(16)
+      + Style.space(12)
+      + providerNames.length * (toggleRowHeight + providerGap)
+      + totalSettingRows * rowPitch
+      + doneBtn.height
+      + Style.space(26)
 
-  // Keyboard: arrows/Tab move between tabs, Enter selects the current tab
-  // (no-op visually), Escape closes the dialog. Everything else is swallowed
-  // while open so stray keys never drive the month view behind the scrim.
+  // Keyboard: arrows/Tab move between provider rows, Enter/Space toggles the
+  // selected row (mirrors the calendar dialog), Escape closes. Everything
+  // else is swallowed while open so stray keys never drive the month view.
   function handleKey(event) {
     if (!root.opened) return false
     if (event.key === Qt.Key_Escape) { root.closed(); return true }
     var n = Math.max(providerNames.length, 1)
     if (event.key === Qt.Key_Left || event.key === Qt.Key_Backtab) {
-      tabIndex = (tabIndex + n - 1) % n
+      selectedIndex = (selectedIndex + n - 1) % n
       return true
     }
     if (event.key === Qt.Key_Right || event.key === Qt.Key_Tab) {
-      tabIndex = (tabIndex + 1) % n
+      selectedIndex = (selectedIndex + 1) % n
+      return true
+    }
+    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+        || event.key === Qt.Key_Space) {
+      if (selectedIndex < providerNames.length) {
+        var p = providerNames[selectedIndex]
+        root.providerToggled(p, !root.enabledOf(p))
+      }
       return true
     }
     return true
@@ -146,70 +181,60 @@ Item {
         foreground: root.foreground
       }
 
-      // Tab bar: one tab per provider key in config.json's oauth section.
-      RowLayout {
-        id: tabRow
-        Layout.fillWidth: true
-        spacing: Style.space(8)
+      // One row-block per provider: Toggle + that provider's settings lines.
+      Repeater {
+        model: root.providerNames
 
-        Repeater {
-          model: root.providerNames
+        Item {
+          id: provBlock
+          property int myIndex: index
+          Layout.fillWidth: true
+          Layout.preferredHeight: block.implicitHeight
 
-          Item {
-            Layout.fillWidth: true
-            property int myIndex: index
-            Rectangle {
-              anchors.horizontalCenter: parent.horizontalCenter
-              anchors.verticalCenter: parent.verticalCenter
-              width: labelText.width + Style.space(20)
-              height: labelText.height + Style.space(10)
-              radius: root.cornerRadius
-              property bool selected: myIndex === root.tabIndex
-              color: selected ? Util.alpha(root.accent, 0.25) : "transparent"
-              border.color: selected ? root.accent : "transparent"
-              border.width: selected ? Style.normalBorderWidth : 0
+          Column {
+            id: block
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(4)
+
+            Toggle {
+              id: rowToggle
+              label: root.providerNames[provBlock.myIndex]
+              description: root.enabledOf(root.providerNames[provBlock.myIndex])
+                ? "Enabled" : "Disabled"
+              checked: root.enabledOf(root.providerNames[provBlock.myIndex])
+              hasCursor: provBlock.myIndex === root.selectedIndex
+              foreground: root.foreground
+              accent: root.accent
+              fontFamily: root.fontFamily
+              onClicked: {
+                var p = root.providerNames[provBlock.myIndex]
+                root.providerToggled(p, !root.enabledOf(p))
+              }
+            }
+
+            Repeater {
+              model: root.displayKeys[root.providerNames[provBlock.myIndex]]
+
               Text {
-                id: labelText
-                anchors.centerIn: parent
+                property string myKey: modelData
+                width: block.width - Style.space(8)
+                x: Style.space(4)
                 textFormat: Text.PlainText
-                text: root.providerNames[myIndex]
-                color: selected ? root.accent : root.foreground
+                text: {
+                  var p = root.providerNames[provBlock.myIndex]
+                  var v = root.fmtVal(accountData[p][myKey])
+                  return myKey + ": " + (v === "" ? "(none)" : v)
+                }
+                // Disabled providers read dimmed but stay legible.
+                color: root.enabledOf(root.providerNames[provBlock.myIndex])
+                  ? root.foreground : Util.alpha(root.foreground, 0.45)
                 font.family: root.fontFamily
                 font.pixelSize: root.rowFont
-                font.bold: selected
-              }
-              MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.tabIndex = myIndex
+                wrapMode: Text.WordWrap
               }
             }
-          }
-        }
-      }
-
-      // The selected provider's settings, one "key: value" line per JSON key.
-      Column {
-        id: rowsArea
-        Layout.fillWidth: true
-        spacing: rowPitch - root.rowFont
-
-        Repeater {
-          model: root.currentKeys
-
-          Text {
-            property int myIndex: index
-            width: rowsArea.width
-            textFormat: Text.PlainText
-            text: {
-              var k = root.currentKeys[myIndex]
-              var v = root.fmtVal(root.currentSettings[k])
-              return k + ": " + (v === "" ? "(none)" : v)
-            }
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: root.rowFont
-            wrapMode: Text.WordWrap
           }
         }
       }
