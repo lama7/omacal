@@ -16,6 +16,9 @@ Item {
   id: root
   property bool opened: false
   property var accountData: ({})
+  // Whole dialog (scrim + card) only renders while open — same gate as
+  // CalendarToggleDialog; otherwise the card would always cover the view.
+  visible: opened
   property color background: Color.background
   property color foreground: Color.foreground
   property color accent: Color.accent
