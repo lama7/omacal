@@ -14,6 +14,8 @@ Endpoints:
                                    signed-in user (reuses keyring creds)
     PUT  /api/calendars/<id>    → edit an owned calendar's name and/or
                                    color ({name?, color?}; PROPPATCH)
+    GET  /api/account           → per-provider account settings (config.json
+                                   oauth section; client secrets redacted)
 """
 
 from __future__ import annotations
@@ -174,6 +176,23 @@ class OmacalHandler(BaseHTTPRequestHandler):
         if path == "/api/config":
             cfg_names = [c.get("display_name") for c in self._cfg_calendars() if c.get("enabled") and c.get("display_name")]
             self._json(200, {"calendar_names": cfg_names})
+            return
+
+        if path == "/api/account":
+            # Per-provider account settings straight from config.json's oauth
+            # section. Any key containing "secret" is redacted here so the panel
+            # can display the settings without the secret ever leaving the API.
+            oauth = getattr(OmacalHandler, "cfg_oauth", None) or {}
+            shown = {}
+            for name, settings in oauth.items():
+                red = {}
+                for key, val in (settings or {}).items():
+                    if "secret" in key.lower():
+                        red[key] = "[configured]" if val else ""
+                    else:
+                        red[key] = val
+                shown[name] = red
+            self._json(200, shown)
             return
 
         if path == "/api/events/today":
@@ -693,6 +712,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
         save_config(cfg=cfg)
         # Pick up the new config in the running server.
         OmacalHandler.cfg_calendars = cfg["calendars"]
+        OmacalHandler.cfg_oauth = cfg.get("oauth", {})
 
         # 4. Return OK immediately. The initial sync is deliberately NOT run
         #    here: the frontend shows "Found server — syncing…" and then calls
@@ -788,6 +808,7 @@ class OmacalServer:
         conn = self._get_conn()
         OmacalHandler.db_conn = conn
         OmacalHandler.cfg_calendars = self.cfg.get("calendars", [])
+        OmacalHandler.cfg_oauth = self.cfg.get("oauth", {})
 
         # Create the HTTP server first so bind failures crash the process
         # before the periodic sync timer gets a chance to keep it alive.

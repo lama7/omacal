@@ -29,6 +29,7 @@ Panel {
     readonly property string calendarsUrl: apiBase + "/api/calendars"
     readonly property string eventsUrl: apiBase + "/api/events"
     readonly property string remindersUrl: apiBase + "/api/reminders"
+    readonly property string accountUrl: apiBase + "/api/account"
 
     property var calendars: []
     property var events: []
@@ -36,6 +37,8 @@ Panel {
     property bool loadingCalendars: false
     property bool loadingEvents: false
     property string error: ""
+    property bool showAccountSettings: false
+    property var accountData: ({})
 
     // Backend-update detection: `omarchy plugin update` only syncs the plugin
     // files, never the ~/.local/omacal/venv. The panel compares the installed
@@ -750,6 +753,32 @@ Panel {
         // and the preview pane should read "Hover a day to preview" while the
         // calendar dialog — including its add-calendar mini form — is up).
         hoveredDate = null
+    }
+    function openAccountSettings() {
+        fetchAccountSettings()
+        showAccountSettings = true
+        hoveredDate = null
+    }
+    function dismissAccountSettings() {
+        showAccountSettings = false
+        keyCatcher.forceActiveFocus()
+    }
+    function fetchAccountSettings() {
+        // GET /api/account: the config.json "oauth" section, per provider,
+        // with client secrets redacted server-side. Bound into the dialog.
+        accountData = ({})
+        var xhr = new XMLHttpRequest()
+        xhr.open("GET", accountUrl, true)
+        xhr.timeout = 30000
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                if (xhr.status === 200)
+                    accountData = JSON.parse(xhr.responseText)
+                else
+                    error = "Account settings unavailable"
+            }
+        }
+        xhr.send()
     }
     function dismissCalendars() {
         showCalendars = false
@@ -1558,7 +1587,8 @@ Panel {
         // +48 matches the card's parent clamp margins (24 top + 24 bottom).
         contentHeight: panel.fittedContentHeight(Math.max(
             contentColumn.implicitHeight,
-            root.showCalendars ? calToggle.naturalCardHeight + Style.space(48) : 0))
+            root.showCalendars ? calToggle.naturalCardHeight + Style.space(48) : 0,
+            root.showAccountSettings ? accountSettings.naturalCardHeight + Style.space(48) : 0))
 
         PanelKeyCatcher {
             id: keyCatcher
@@ -1571,6 +1601,10 @@ Panel {
                 }
                 if (root.showCalendars) {
                     if (dx !== 0) calToggle.handleKey({ key: dx < 0 ? Qt.Key_Left : Qt.Key_Right })
+                    return
+                }
+                if (root.showAccountSettings) {
+                    if (dx !== 0) accountSettings.handleKey({ key: dx < 0 ? Qt.Key_Left : Qt.Key_Right })
                     return
                 }
                 if (root.showAddForm) return
@@ -1587,15 +1621,18 @@ Panel {
                 if (root.viewMode === "setup") { setupForm.submit(); return }
                 if (root.showDeleteConfirm) { deleteConfirm.handleKey({ key: Qt.Key_Return }); return }
                 if (root.showCalendars) { calToggle.handleKey({ key: Qt.Key_Return }); return }
+                if (root.showAccountSettings) { accountSettings.handleKey({ key: Qt.Key_Return }); return }
                 if (root.showAddForm) root.submitAddEvent()
                 else root.close()
             }
             onCloseRequested: root.showDeleteConfirm ? deleteConfirm.handleKey({ key: Qt.Key_Escape })
                 : (root.showCalendars ? calToggle.handleKey({ key: Qt.Key_Escape })
-                     : (root.showAddForm ? root.dismissAddForm() : root.close()))
+                     : (root.showAccountSettings ? accountSettings.handleKey({ key: Qt.Key_Escape })
+                     : (root.showAddForm ? root.dismissAddForm() : root.close())))
             onTabRequested: function(direction) {
                 if (root.showDeleteConfirm) { deleteConfirm.handleKey({ key: direction < 0 ? Qt.Key_Backtab : Qt.Key_Tab }); return }
                 if (root.showCalendars) { calToggle.handleKey({ key: direction < 0 ? Qt.Key_Backtab : Qt.Key_Tab }); return }
+                if (root.showAccountSettings) { accountSettings.handleKey({ key: direction < 0 ? Qt.Key_Backtab : Qt.Key_Tab }); return }
                 root.switchPanel(direction)
             }
             onTextKey: function(t) {
@@ -1615,6 +1652,7 @@ Panel {
                     else if (t === "e" || t === "E") calToggle.handleKey({ key: Qt.Key_E, text: "e" })
                     return
                 }
+                if (root.showAccountSettings) return
                 if (root.showAddForm) {
                     if (t === "\b" || t === "\x7F") root.dismissAddForm()
                     return
@@ -1672,8 +1710,23 @@ Panel {
                         }
 
                         PanelActionButton {
-                            id: calendarsAction
+                            id: settingsAction
                             anchors.left: leftAction.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            // U+2261 (triple bar) — account settings button.
+                            iconText: "\u2261"
+                            fontSize: 22
+                            tooltipText: "Account Settings"
+                            foreground: root.contentForeground
+                            fontFamily: root.contentFontFamily
+                            visible: !root.showAddForm
+                            enabled: !root.showAddForm
+                            onClicked: root.openAccountSettings()
+                        }
+
+                        PanelActionButton {
+                            id: calendarsAction
+                            anchors.left: settingsAction.right
                             anchors.verticalCenter: parent.verticalCenter
                             // U+F00F2 (md-calendar_month_outline variant),
                             // embedded as a UTF-16 surrogate pair so the glyph
@@ -1692,7 +1745,7 @@ Panel {
                             id: left2Action
                             enabled: !root.showAddForm
                             visible: root.viewMode === "day" && !root.showAddForm
-                            anchors.left: calendarsAction.right
+                            anchors.right: rightAction.left
                             // U+F0E18 (md-calendar_month_outline): the glyph the
                             // calendar-select button used before the U+F00F2 swap.
                             iconText: "\uDB83\uDE18"
@@ -1706,7 +1759,7 @@ Panel {
                         Text {
                             id: headerLabel
                             textFormat: Text.PlainText
-                            anchors.left: root.viewMode === "day" ? left2Action.right : calendarsAction.right
+                            anchors.left: calendarsAction.right
                             anchors.right: root.viewMode === "day" ? right2Action.left : rightAction.left
                             anchors.leftMargin: Style.space(6)
                             anchors.rightMargin: Style.space(6)
@@ -1729,7 +1782,7 @@ Panel {
                             id: right2Action
                             enabled: !root.showAddForm
                             visible: root.viewMode === "day" && !root.showAddForm
-                            anchors.right: rightAction.left
+                            anchors.right: left2Action.left
                             anchors.verticalCenter: parent.verticalCenter
                             // U+F00F3 (md event-add glyph), embedded as a UTF-16
                             // surrogate pair so it renders on every JS engine.
@@ -2260,6 +2313,21 @@ Panel {
             onEditRequested: root.openEditCalendar(id)
             onEditSubmit: root.submitEditCalendar(id, name, color)
             onEditCancel: root.cancelEditCalendar()
+        }
+
+        // Account settings dialog (header U+2261 button): one tab per
+        // provider in config.json's oauth section; data from GET /api/account
+        // with secrets redacted server-side. Overlay: sibling of the Flickable.
+        AccountSettingsDialog {
+            id: accountSettings
+            anchors.fill: parent
+            z: 12
+            opened: root.showAccountSettings
+            accountData: root.accountData
+            foreground: root.contentForeground
+            accent: root.accent
+            fontFamily: root.contentFontFamily
+            onClosed: root.dismissAccountSettings()
         }
     }
 }
