@@ -73,6 +73,10 @@ Column {
                 fontSize: Style.font.title
                 horizontalPadding: Style.spacing.controlPaddingX * 2
                 onClicked: {
+                    if (panel.editingUid && panel.calendarProviderOf(panel.newEventCalendarId) === "google") {
+                        panel.error = "Reminders on Google calendars use the Tasks API (not wired yet)"
+                        return
+                    }
                     panel.newEventIsReminder = true
                     // Default a new reminder to All Day (matches how existing
                     // reminders are stored -- date-only) and route it to the
@@ -132,7 +136,7 @@ Column {
             height: Style.spacing.controlHeight
             showLabel: false
             value: ""
-            options: panel.calendars.filter(function(c) { return c.writable }).map(function(c) {
+            options: panel.calendars.filter(function(c) { return c.writable && (panel.editProviderFilter === "" || c.provider === panel.editProviderFilter) }).map(function(c) {
                 return { value: String(c.id), label: c.display_name }
             })
             foreground: panel.contentForeground

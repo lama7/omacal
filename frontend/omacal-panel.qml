@@ -137,6 +137,7 @@ Panel {
     property bool editingIsRecurring: false
     property bool editThisOccurrence: true  // scope toggle: true = this occurrence, false = whole series
     property bool deleteWholeSeries: false  // delete scope: true = whole series, false = this occurrence
+    property string editProviderFilter: ""  // provider of the calendar being edited ('' = add form, no filter)
     property var pendingDeleteEvent: null
     property var pendingDeleteCalendar: null   // {id, name} for calendar deletes
     // Hex colors used by the visible calendars (feeds the calendar dialog's
@@ -297,9 +298,21 @@ Panel {
     // VTODO-capable (task) calendar. Falls back to the first writable calendar
     // if none advertises VTODO (e.g. a server that doesn't report it).
     function defaultReminderCalendarId() {
-        var writable = calendars.filter(function(c) { return c.writable })
+        // Reminders are CalDAV VTODOs; Google reminders would need the Tasks
+        // API (not wired) — never route a reminder to a Google calendar.
+        var writable = calendars.filter(function(c) {
+            return c.writable && (c.provider || "caldav") !== "google"
+        })
         var task = writable.find(function(c) { return c.supports_todo })
         return task ? task.id : (writable.length > 0 ? writable[0].id : 0)
+    }
+
+    // Provider of a calendar by id ('caldav' when unset) — the panel routes
+    // writes per provider: the backend dispatches create/edit/delete by the
+    // calendar row's provider, and cross-provider event moves are refused.
+    function calendarProviderOf(id) {
+        var c = calendars.find(function(x) { return x.id === id })
+        return c ? (c.provider || "caldav") : ""
     }
 
     function openAddForm() {
@@ -319,6 +332,7 @@ Panel {
         newEventAllDay = false
         newEventIsReminder = false
         newEventRepeat = ""
+        editProviderFilter = ""  // add form: any writable calendar (per-provider, incl. Google events)
         addEventForm.repeatDropdown.value = ""
         newEventEnds = "never"
         newEventCount = 5
@@ -375,6 +389,7 @@ Panel {
         newEventAllDay = false
         newEventIsReminder = false
         newEventRepeat = ""
+        editProviderFilter = ""  // add form: any writable calendar (per-provider, incl. Google events)
         addEventForm.repeatDropdown.value = ""
         newEventEnds = "never"
         newEventCount = 5
@@ -606,6 +621,9 @@ Panel {
         newEventEndMinute = end.getMinutes()
         newEventCalendarId = ev.calendar_id
         addEventForm.calendarDropdown.value = String(ev.calendar_id)
+        // Editing: the Calendar dropdown offers same-provider calendars only
+        // (cross-provider moves are refused by the backend).
+        editProviderFilter = calendarProviderOf(ev.calendar_id)
         newEventAllDay = !!ev.all_day
         newEventRepeat = ev.rrule || ""
         addEventForm.repeatDropdown.value = newEventRepeat

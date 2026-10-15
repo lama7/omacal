@@ -1741,6 +1741,9 @@ def delete_reminder(conn: Any, calendar_id: int, uid: str) -> dict[str, Any]:
     Whole-reminder delete (the task, and its series, is removed) -- matches how
     you delete a task. Per-occurrence delete can be added later if needed.
     """
+    if _google_row(conn, calendar_id):
+        raise ValueError("reminders on Google calendars use the Tasks API (not wired yet)")
+
     from omacal.db import delete_reminder as db_delete_reminder
 
     url, username, password = _calendar_creds(conn, calendar_id)
@@ -1787,6 +1790,9 @@ def update_reminder(
     Whole-reminder edit this pass (per-occurrence via RECURRENCE-ID can follow
     later). The resource keeps its RRULE/EXDATE, so the cached row does too.
     """
+    if _google_row(conn, calendar_id):
+        raise ValueError("reminders on Google calendars use the Tasks API (not wired yet)")
+
     from omacal.db import add_reminder as db_add_reminder
 
     url, username, password = _calendar_creds(conn, calendar_id)
