@@ -217,6 +217,16 @@ def _google_dt(ev: dict, which: str) -> tuple[datetime | None, bool]:
     return None, False
 
 
+def _orig_stamp(ev: dict) -> str | None:
+    """Google's originalStartTime for a recurring instance.
+
+    Feeds recurrence_id so the panel renders the row as a series occurrence
+    (is_recurring) and sends occurrence=<stamp> on a single-instance delete.
+    """
+    orig = ev.get("originalStartTime") or {}
+    return orig.get("dateTime") or orig.get("date") or None
+
+
 def to_cache_event(ev: dict) -> dict | None:
     """Map one Google event instance to the cache event dict shape.
 
@@ -257,7 +267,7 @@ def to_cache_event(ev: dict) -> dict | None:
         "start": start.isoformat(),
         "end": end.isoformat(),
         "all_day": 1 if all_day else 0,
-        "recurrence_id": None,
+        "recurrence_id": _orig_stamp(ev),
         "status": status,
         "transparency": "OPAQUE",
         "rrule": None,

@@ -710,6 +710,9 @@ class OmacalHandler(BaseHTTPRequestHandler):
         rows = db_get_window(self.db_conn, start, end, calendar_ids)
         if not rows:
             return []
+        for r in rows:
+            if r.get("recurrence_id") and not r.get("is_recurring"):
+                r["is_recurring"] = 1   # Google instance: uid IS the occurrence
         if not any(r.get("rrule") for r in rows):
             return rows                      # nothing recurring in this window
         overrides = db_get_overrides(self.db_conn, calendar_ids)

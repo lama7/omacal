@@ -1229,11 +1229,8 @@ def delete_event(
         except GoogleAPIError as e:
             raise ValueError(f"event not found on Google calendar: {e}") from None
         master_id = res.get("recurringEventId")
-        if master_id and occurrence is None and not series:
-            raise ValueError(
-                "this is a repeating event: pass occurrence=<ISO datetime> to "
-                "delete one occurrence, or series=true to delete the whole series"
-            )
+        # No guard: the uid of a Google row IS the occurrence, so a bare
+        # delete removes exactly that instance; series=true targets the master.
         if master_id and series:
             gc_delete(token, gcal_id, master_id)
             # Our cache stores each instance as its own row (uid = <master>_<stamp>);
@@ -1332,9 +1329,10 @@ def update_event(
 
         gcal_id, token = g
         try:
-            gc_get(token, gcal_id, uid)
+            probe = gc_get(token, gcal_id, uid)
             on_target = True
         except GoogleAPIError:
+            probe = None
             on_target = False
         if not on_target:
             # uid not on the target calendar: google->google uses the move
