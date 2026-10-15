@@ -759,6 +759,7 @@ Panel {
         calToggle.addOpen = false
         calToggle.pendingAddName = ""
         calToggle.pendingAddColor = ""
+        calToggle.pendingAddProvider = ""
         calToggle.editOpen = false
         calToggle.editId = 0
         calToggle.pendingEditName = ""
@@ -774,6 +775,7 @@ Panel {
         calToggle.pendingAddName = ""
         calToggle.pendingAddColor = ""
         calToggle.pendingAddUrl = ""
+        calToggle.pendingAddProvider = ""
         calToggle.addOpen = true
         // Defer a tick: addOpen flips the form's visibility binding, and
         // forceActiveFocus on a still-hidden field is a silent no-op
@@ -782,7 +784,7 @@ Panel {
             calToggle.nameFieldRef.forceActiveFocus()
         })
     }
-    function submitAddCalendar(name, color, url) {
+    function submitAddCalendar(name, color, url, provider) {
         var trimmed = (name || "").trim()
         var trimmedUrl = (url || "").trim()
         if (trimmedUrl !== "") {
@@ -807,6 +809,7 @@ Panel {
                         calToggle.pendingAddName = ""
                         calToggle.pendingAddColor = ""
                         calToggle.pendingAddUrl = ""
+                        calToggle.pendingAddProvider = ""
                         loadCalendars()
                         keyCatcher.forceActiveFocus()
                     } else {
@@ -826,6 +829,8 @@ Panel {
         var payload = { name: trimmed }
         if (color && color !== "")
             payload.color = color
+        if (provider && provider !== "")
+            payload.provider = provider
         var xhr = new XMLHttpRequest()
         xhr.open("POST", apiBase + "/api/calendars/add", true)
         xhr.timeout = 30000   // write op: server round-trip
@@ -841,6 +846,7 @@ Panel {
                     calToggle.addOpen = false
                     calToggle.pendingAddName = ""
                     calToggle.pendingAddColor = ""
+                    calToggle.pendingAddProvider = ""
                     loadCalendars()
                     // Same focus release as cancelAddCalendar: the name field
                     // held focus when Create was clicked.
@@ -862,6 +868,7 @@ Panel {
         calToggle.pendingAddName = ""
         calToggle.pendingAddColor = ""
         calToggle.pendingAddUrl = ""
+        calToggle.pendingAddProvider = ""
         error = ""
         // The name field still holds activeFocus when the form closes, and a
         // hidden focused TextField swallows ESC/arrows before the catcher
@@ -2238,7 +2245,7 @@ Panel {
             onClosed: root.dismissCalendars()
             onToggled: root.toggleCalendar(id, enabled)
             onAddRequested: root.openAddCalendar()
-            onAddSubmit: root.submitAddCalendar(name, color, url)
+            onAddSubmit: root.submitAddCalendar(name, color, url, provider)
             onAddCancel: root.cancelAddCalendar()
             // Arrows while the mini form is open navigate months in the
             // panel behind the dialog (the dialog routes them here instead

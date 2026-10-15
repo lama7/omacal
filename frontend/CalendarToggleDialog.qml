@@ -31,7 +31,7 @@ Item {
   signal closed()
   signal toggled(int id, bool enabled)
   signal addRequested()
-  signal addSubmit(string name, string color, string url)
+  signal addSubmit(string name, string color, string url, string provider)
   signal addCancel()
   signal navRequested(int dx)
   signal deleteRequested(int id)
@@ -53,6 +53,7 @@ Item {
   property string pendingAddName: ""
   property string pendingAddColor: ""
   property string pendingAddUrl: ""
+  property string pendingAddProvider: ""
   property alias nameFieldRef: nameField
 
   // Edit-calendar mini form state. The panel flips editOpen on the row edit
@@ -197,7 +198,7 @@ Item {
     if (root.addOpen) {
       if (event.key === Qt.Key_Escape) { root.addCancel(); return true }
       if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-        if (root.pendingAddName !== "" || root.pendingAddUrl !== "") root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl)
+        if (root.pendingAddName !== "" || root.pendingAddUrl !== "") root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddProvider)
         return true
       }
       if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
@@ -459,9 +460,9 @@ Item {
           font.family: root.fontFamily
           font.pixelSize: Style.font.subtitle
           onTextChanged: if (text !== "") root.pendingAddName = text
-          Keys.onReturnPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl)
-          Keys.onEnterPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl)
-          Keys.onEscapePressed: { root.pendingAddName = ""; root.pendingAddUrl = ""; root.addCancel() }
+          Keys.onReturnPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddProvider)
+          Keys.onEnterPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddProvider)
+          Keys.onEscapePressed: { root.pendingAddName = ""; root.pendingAddUrl = ""; root.pendingAddProvider = ""; root.addCancel() }
         }
 
         TextField {
@@ -477,9 +478,24 @@ Item {
           font.family: root.fontFamily
           font.pixelSize: Style.font.subtitle
           onTextChanged: if (text !== "") root.pendingAddUrl = text
-          Keys.onReturnPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl)
-          Keys.onEnterPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl)
-          Keys.onEscapePressed: { root.pendingAddUrl = ""; root.addCancel() }
+          Keys.onReturnPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddProvider)
+          Keys.onEnterPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddProvider)
+          Keys.onEscapePressed: { root.pendingAddUrl = ""; root.pendingAddProvider = ""; root.addCancel() }
+        }
+
+        // Provider switch: checked creates the calendar on the consented Google
+        // account instead of the configured CalDAV server. Unchecked keeps the
+        // default (CalDAV when an account is configured). Consent errors come
+        // from the backend with a clear message.
+        CheckBox {
+          id: googleBtn
+          Layout.fillWidth: true
+          text: "Create on Google"
+          checked: root.pendingAddProvider === "google"
+          foreground: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.subtitle
+          onCheckedStateChanged: root.pendingAddProvider = checked ? "google" : ""
         }
 
         // Color picker: preset swatches (Google-Calendar style). Click one to
@@ -566,7 +582,7 @@ Item {
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl)
+              onClicked: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddProvider)
             }
           }
           Rectangle {

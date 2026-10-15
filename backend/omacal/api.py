@@ -383,7 +383,8 @@ class OmacalHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/calendars/add":
             # Create a NEW named calendar on the signed-in user's server,
             # reusing the keyring credentials (no new login). Body: {name,
-            # color?} — color is #RRGGBB or #RRGGBBAA.
+            # color?, provider?} — provider is 'caldav'|'google'; absent keeps
+            # the presence heuristic (CalDAV account wins if configured).
             try:
                 body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
                 data = json.loads(body)
@@ -395,8 +396,12 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 if color and not re.fullmatch(r"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?", color):
                     self._json(400, {"error": "Bad calendar color"})
                     return
+                provider = (data.get("provider") or "").strip().lower()
+                if provider not in ("", "caldav", "google"):
+                    self._json(400, {"error": "Unknown provider"})
+                    return
                 from omacal.sync import add_calendar_named
-                result = add_calendar_named(self.db_conn, name, color)
+                result = add_calendar_named(self.db_conn, name, color, provider or None)
                 self._json(200, result)
             except ValueError as e:
                 self._json(400, {"error": str(e)})

@@ -649,6 +649,7 @@ def add_calendar_named(
     conn: Any,
     name: str,
     color: str | None = None,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Create a NEW named calendar for the signed-in user and cache it.
 
@@ -662,15 +663,20 @@ def add_calendar_named(
     that rejects the property still gets the calendar, and the chosen color
     is cached in the DB either way so the panel renders it. Returns {ok,
     calendar_id, display_name}; raises ValueError for user-facing failures.
+
+    `provider` ('google' | 'caldav' | None) picks the account explicitly:
+    'google' creates on the consented Google account; 'caldav' requires the
+    configured CalDAV account; None keeps the presence heuristic (CalDAV if
+    an account exists, else Google).
     """
     from omacal.config import load_config
     from omacal.keyring_store import get_password
 
     cfg = load_config()
     entries = [c for c in cfg.get("calendars", []) if c.get("username")]
-    if not entries:
-        # Google-only install: create the calendar on the consented account.
-        if cfg.get("oauth", {}).get("google"):
+    if provider == "google" or not entries:
+        # Google path: explicit provider request, or Google-only install.
+        if provider == "google" or cfg.get("oauth", {}).get("google"):
             from omacal.oauth import oauth_token
             from omacal.google_cal import create_calendar, GoogleAPIError
             token = oauth_token(cfg, "google")
