@@ -157,9 +157,15 @@ be ENABLED in the Cloud project (403 "API has not been used" otherwise).
   calendars need the Tasks API and raise a clear error until wired. The panel mirrors
   this: reminder routing skips Google calendars, the edit-form Calendar dropdown
   offers same-provider calendars only, and the REMINDER type toggle is blocked
-  while editing a Google event. Add Calendar offers a 'Create on Google' checkbox:
+  while editing a Google event. Add Calendar offers a 'Create on Google' toggle:
   the POST carries provider=google and add_calendar_named honors an explicit provider
   over the presence heuristic (provider=caldav requires a configured CalDAV account).
+- **Account settings** — the header's U+2261 button (left of Calendar Select) opens an
+  Account Settings dialog: one tab per provider key in config.json's oauth section,
+  each showing that provider's settings as key: value lines straight from the JSON. Data
+  comes from GET /api/account, which returns the oauth section with any *secret* values
+  redacted server-side ('[configured]' in place); the dialog is read-only. 'Back to Month'
+  moved to the header's right side, right of 'Add Event'.
   Calendar rename PATCHes the calendar resource (`summary`); recolour PATCHes the
   calendarList ITEM (`/users/me/calendarList/<id>`) with `backgroundColor` +
   `foregroundColor` and `colorRgbFormat=true` as a QUERY PARAM — colour is a
