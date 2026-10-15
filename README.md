@@ -154,8 +154,10 @@ be ENABLED in the Cloud project (403 "API has not been used" otherwise).
   `start.timeZone`/`end.timeZone` (Google ignores a top-level `timeZone` there
   and rejects the insert with "Missing time zone definition for start time").
   Cross-provider moves (Google ↔ CalDAV) are refused; reminders on Google
-  calendars need the Tasks API and raise a clear error until wired. Calendar
-  rename PATCHes the calendar resource (`summary`); recolour PATCHes the
+  calendars need the Tasks API and raise a clear error until wired. The panel mirrors
+  this: reminder routing skips Google calendars, the edit-form Calendar dropdown
+  offers same-provider calendars only, and the REMINDER type toggle is blocked
+  while editing a Google event. Calendar rename PATCHes the calendar resource (`summary`); recolour PATCHes the
   calendarList ITEM (`/users/me/calendarList/<id>`) with `backgroundColor` +
   `foregroundColor` and `colorRgbFormat=true` as a QUERY PARAM — colour is a
   per-list-user subscription property, and without the flag the colour fields
