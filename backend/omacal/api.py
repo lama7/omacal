@@ -15,7 +15,11 @@ Endpoints:
     PUT  /api/calendars/<id>    → edit an owned calendar's name and/or
                                    color ({name?, color?}; PROPPATCH)
     GET  /api/account           → per-provider account settings (config.json
-                                   oauth section; client secrets redacted)
+                                   oauth section; client secrets redacted; an
+                                   "enabled" flag per provider)
+    POST /api/account/toggle    → soft-enable/disable a provider ({provider,
+                                   enabled}: config flag + enabled column on
+                                   all its calendar rows)
 """
 
 from __future__ import annotations
@@ -187,10 +191,13 @@ class OmacalHandler(BaseHTTPRequestHandler):
             for name, settings in oauth.items():
                 red = {}
                 for key, val in (settings or {}).items():
+                    if key == "enabled":
+                        continue  # injected below with the default applied
                     if "secret" in key.lower():
                         red[key] = "[configured]" if val else ""
                     else:
                         red[key] = val
+                red["enabled"] = bool((settings or {}).get("enabled", True))
                 shown[name] = red
             self._json(200, shown)
             return
@@ -470,6 +477,38 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(e)})
             except Exception as e:
                 logger.error("POST /api/calendars/toggle failed: %s", e)
+                self._json(500, {"error": str(e)})
+            return
+        if parsed.path == "/api/account/toggle":
+            # Soft-enable/disable a provider: persist the flag in config.json's
+            # oauth section (survives DB wipes; absent means enabled) and flip
+            # the enabled column on every cached row of that provider. OAuth
+            # key "google" maps to DB provider google; any other oauth key (the
+            # configured CalDAV account, e.g. nextcloud) maps to caldav rows.
+            try:
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                data = json.loads(body)
+                pname = str(data["provider"])
+                enabled = bool(data.get("enabled", True))
+                from omacal.config import load_config, save_config
+                cfg = load_config()
+                oauth = cfg.get("oauth", {})
+                if pname not in oauth:
+                    self._json(400, {"error": f"unknown provider '{pname}'"})
+                    return
+                oauth[pname]["enabled"] = enabled
+                cfg["oauth"] = oauth
+                save_config(cfg=cfg)
+                OmacalHandler.cfg_oauth = oauth
+                from omacal.db import set_provider_enabled
+                updated = set_provider_enabled(
+                    self.db_conn, "google" if pname == "google" else "caldav", enabled)
+                self._json(200, {"ok": True, "provider": pname, "enabled": enabled,
+                                  "calendars_updated": updated})
+            except (ValueError, KeyError, TypeError) as e:
+                self._json(400, {"error": str(e)})
+            except Exception as e:
+                logger.error("POST /api/account/toggle failed: %s", e)
                 self._json(500, {"error": str(e)})
             return
         self._json(404, {"error": "not found"})

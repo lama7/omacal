@@ -355,6 +355,18 @@ def set_calendar_enabled(conn: sqlite3.Connection, calendar_id: int, enabled: bo
     return cur.rowcount > 0
 
 
+def set_provider_enabled(conn: sqlite3.Connection, provider: str, enabled: bool) -> int:
+    """Flip the enabled flag on every cached calendar row of one provider
+    ('caldav'|'google'). Soft disable: rows and events stay in the DB; the
+    event/reminder queries filter on c.enabled = 1, so a disabled provider's
+    calendars are neither viewed nor altered until re-enabled — and re-enabling
+    is instant because sync_token/last_sync survive the disable."""
+    cur = conn.execute("UPDATE calendars SET enabled = ? WHERE provider = ?",
+                       (1 if enabled else 0, provider))
+    conn.commit()
+    return cur.rowcount
+
+
 def upsert_events(conn: sqlite3.Connection, calendar_id: int, events: list[dict], commit: bool = True) -> int:
     """Insert or replace events for a calendar. Returns count of rows touched.
 
