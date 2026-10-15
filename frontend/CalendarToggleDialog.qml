@@ -487,15 +487,16 @@ Item {
         // account instead of the configured CalDAV server. Unchecked keeps the
         // default (CalDAV when an account is configured). Consent errors come
         // from the backend with a clear message.
-        CheckBox {
+        Toggle {
           id: googleBtn
           Layout.fillWidth: true
-          text: "Create on Google"
-          checked: root.pendingAddProvider === "google"
+          label: "Create on Google"
+          description: "Create the calendar on the consented Google account instead of the configured CalDAV server."
           foreground: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.subtitle
-          onCheckedStateChanged: root.pendingAddProvider = checked ? "google" : ""
+          accent: root.accent
+          fontFamily: root.fontFamily
+          checked: root.pendingAddProvider === "google"
+          onClicked: root.pendingAddProvider = root.pendingAddProvider === "google" ? "" : "google"
         }
 
         // Color picker: preset swatches (Google-Calendar style). Click one to
