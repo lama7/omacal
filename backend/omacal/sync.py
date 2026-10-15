@@ -1985,6 +1985,20 @@ def _sync_all_locked(config_path: Path | None = None) -> dict[str, Any]:
     results = {}
     total = 0
 
+    # Provider soft-disable (POST /api/account/toggle): an oauth section entry
+    # with enabled=false skips its sync source AND protects its cached rows from
+    # the stale prune below — a skipped source contributes no URLs to synced_urls,
+    # so without this protection the prune would DELETE the disabled provider's
+    # calendars and events, turning the soft-disable into a hard one. OAuth key
+    # "google" maps to DB provider google; any other oauth key (the configured
+    # CalDAV account, e.g. nextcloud) maps to the caldav rows.
+    oauth_cfg = cfg.get("oauth", {})
+    disabled_providers = {
+        ("google" if k == "google" else "caldav")
+        for k, v in oauth_cfg.items()
+        if not (v or {}).get("enabled", True)
+    }
+
     # Track which calendar URLs this run actually replaced, and which sources
     # finished cleanly. The stale prune below must never run on partial
     # information -- it used to re-discover calendars itself (a second call,
@@ -2000,6 +2014,9 @@ def _sync_all_locked(config_path: Path | None = None) -> dict[str, Any]:
         # provider="google" syncs over the Calendar API v3 adapter; the
         # CalDAV path stays the default for everything else.
         provider = cal.get("provider", "caldav")
+        if provider in disabled_providers:
+            results[name] = {"status": "disabled"}
+            continue
         try:
             if provider == "google":
                 n, urls, failed = sync_google_source(conn, cfg, cal)
@@ -2044,8 +2061,11 @@ def _sync_all_locked(config_path: Path | None = None) -> dict[str, Any]:
         # Remove stale calendar entries that are no longer discovered.
         # Subscribed rows are exempt: they are not part of any source's
         # discovery, so "not in synced_urls" does not mean stale for them.
-        cur = conn.execute("SELECT id, url, subscribed FROM calendars")
-        stale = [row["id"] for row in cur.fetchall() if not row["subscribed"] and row["url"] not in synced_urls]
+        cur = conn.execute("SELECT id, url, subscribed, provider FROM calendars")
+        stale = [row["id"] for row in cur.fetchall()
+                 if not row["subscribed"]
+                 and row["url"] not in synced_urls
+                 and row["provider"] not in disabled_providers]
         if stale:
             placeholders = ",".join("?" for _ in stale)
             conn.execute(f"DELETE FROM calendars WHERE id IN ({placeholders})", stale)
