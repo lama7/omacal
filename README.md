@@ -144,14 +144,25 @@ be ENABLED in the Cloud project (403 "API has not been used" otherwise).
   `writable: true` and go through the Calendar API (insert/patch/delete/move)
   instead of CalDAV PUT. Google's instance ids are first-class, so editing or
   deleting one occurrence of a series is a PATCH/DELETE on the instance row —
-  no EXDATE/RECURRENCE-ID surgery. Deleting a whole series deletes the master
-  (and prunes its instance rows). Recurring creates need the IANA zone inside
+  no EXDATE/RECURRENCE-ID surgery. The panel sends `occurrence=<stamp>` on a
+  single-instance edit; without it, an edit PATCHes the master
+  (`recurringEventId`) and renames the whole series, and `series=true` on a
+  delete does the same. Instance rows carry `recurrence_id` from Google's
+  `originalStartTime` so the panel renders them as series occurrences.
+  Deleting a whole series deletes the master (and prunes its instance rows).
+  Recurring creates need the IANA zone inside
   `start.timeZone`/`end.timeZone` (Google ignores a top-level `timeZone` there
   and rejects the insert with "Missing time zone definition for start time").
   Cross-provider moves (Google ↔ CalDAV) are refused; reminders on Google
   calendars need the Tasks API and raise a clear error until wired. Calendar
-  rename/recolour PATCH the calendarList entry (`summary`/`colorRgbHex`;
-  Google wants #RRGGBB, the panel's alpha pair is dropped).
+  rename PATCHes the calendar resource (`summary`); recolour PATCHes the
+  calendarList ITEM (`/users/me/calendarList/<id>`) with `backgroundColor` +
+  `foregroundColor` and `colorRgbFormat=true` as a QUERY PARAM — colour is a
+  per-list-user subscription property, and without the flag the colour fields
+  in the body are silently ignored (`colorRgbHex` on the calendar resource is
+  not writable at all; Google auto-matches the nearest `colorId`). The read
+  side prefers `backgroundColor` (`colorRgbHex` is usually absent). Panel
+  colours are #RRGGBB[AA]; the alpha pair is dropped.
 
 ## Reminders
 
