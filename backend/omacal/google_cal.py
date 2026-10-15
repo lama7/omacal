@@ -146,7 +146,8 @@ def list_user_calendars(token: str) -> list[dict]:
                 items.append({
                     "id": it["id"],
                     "display_name": it.get("summary") or "Calendar",
-                    "color": it.get("color"),
+                    "color": it.get("backgroundColor") or it.get("colorRgbHex")
+                    or it.get("colorXSS"),
                     "time_zone": it.get("timeZone"),
                 })
         page_token = data.get("nextPageToken")
@@ -316,21 +317,49 @@ def _iana_zone(dt: datetime) -> str | None:
     return None
 
 
+def _contrast_fg(hex6: str) -> str:
+    """Black/white foreground for a background hex (Google wants both)."""
+    r, g, b = (int(hex6[i:i + 2], 16) for i in (1, 3, 5))
+    lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    return "#000000" if lum > 0.55 else "#ffffff"
+
+
 def patch_calendar(token: str, calendar_id: str,
                    name: str | None = None, color: str | None = None) -> dict:
-    """PATCH /calendars/<id> — rename (summary) and/or recolour (colorRgbHex).
+    """Rename (summary) and/or recolour a calendar.
 
-    Google wants #RRGGBB for colorRgbHex; our panel offers #RRGGBB[AA], so
-    the alpha pair is dropped.
+    Rename: PATCH the calendar resource (/calendars/<id>, summary).
+    Recolour: PATCH the calendarList ITEM (/users/me/calendarList/<id>) with
+    backgroundColor + foregroundColor and colorRgbFormat=true as a QUERY
+    PARAM — colour is a per-list-user subscription property, and without the
+    flag the colour fields in the body are silently ignored (colorRgbHex is
+    not a writable field at all; Google auto-matches the nearest colorId).
+    Panel colours are #RRGGBB[AA]; the alpha pair is dropped.
     """
-    body = {}
+    result: dict = {}
     if name:
-        body["summary"] = name
+        result = _api_request(token, f"/calendars/{_q(calendar_id)}", "PATCH",
+                              None, {"summary": name})
     if color:
-        body["colorRgbHex"] = color[:7]
-    if not body:
-        return {}
-    return _api_request(token, f"/calendars/{_q(calendar_id)}", "PATCH", None, body)
+        hex6 = color[:7]
+        _api_request(token, f"/users/me/calendarList/{_q(calendar_id)}",
+                     "PATCH", {"colorRgbFormat": "true"},
+                     {"backgroundColor": hex6, "foregroundColor": _contrast_fg(hex6)})
+    return result
+
+
+def create_calendar(token: str, name: str, color: str | None = None) -> dict:
+    """POST a new calendar; then recolour its calendarList item (the
+    calendar resource itself carries no colour — it is a list property)."""
+    created = _api_request(token, "/calendars", "POST", None, {"summary": name})
+    if color and created.get("id"):
+        patch_calendar(token, created["id"], None, color)
+    return created
+
+
+def delete_calendar(token: str, calendar_id: str) -> None:
+    """DELETE /calendars/<id> — only works for calendars the user created."""
+    _api_request(token, f"/calendars/{_q(calendar_id)}", "DELETE")
 
 
 def create_event(token: str, calendar_id: str, summary: str,

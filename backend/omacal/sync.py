@@ -485,11 +485,28 @@ def delete_calendar(
     only, never touch the server.
     """
     row = conn.execute(
-        "SELECT id, url, principal_url, uid, display_name, subscribed FROM calendars WHERE id = ?",
+        "SELECT id, url, principal_url, uid, display_name, subscribed, provider FROM calendars WHERE id = ?",
         (calendar_id,),
     ).fetchone()
     if not row:
         raise ValueError("Calendar not found")
+    if row["provider"] == "google":
+        from omacal.oauth import oauth_token
+        from omacal.google_cal import delete_calendar as gc_delete_cal, GoogleAPIError
+        gcal_id = (row["url"] or "")[len("google:"):]
+        token = oauth_token(load_config(), "google")
+        if not token:
+            raise ValueError('Google OAuth consent needed (run "omacal oauth login google")')
+        try:
+            gc_delete_cal(token, gcal_id)
+        except GoogleAPIError as e:
+            raise ValueError(f"Google refused to delete the calendar: {e}") from e
+        conn.execute("DELETE FROM calendars WHERE id = ?", (calendar_id,))
+        conn.execute("DELETE FROM events WHERE calendar_id = ?", (calendar_id,))
+        conn.execute("DELETE FROM reminders WHERE calendar_id = ?", (calendar_id,))
+        conn.commit()
+        logger.info("Deleted Google calendar %r (%s)", row["display_name"], gcal_id)
+        return {"ok": True, "calendar_id": calendar_id, "display_name": row["display_name"]}
     if row["subscribed"]:
         # Unsubscribe: local-only removal (see docstring).
         conn.execute("DELETE FROM calendars WHERE id = ?", (calendar_id,))
@@ -652,6 +669,22 @@ def add_calendar_named(
     cfg = load_config()
     entries = [c for c in cfg.get("calendars", []) if c.get("username")]
     if not entries:
+        # Google-only install: create the calendar on the consented account.
+        if cfg.get("oauth", {}).get("google"):
+            from omacal.oauth import oauth_token
+            from omacal.google_cal import create_calendar, GoogleAPIError
+            token = oauth_token(cfg, "google")
+            if not token:
+                raise ValueError('Google OAuth consent needed (run "omacal oauth login google")')
+            try:
+                cal = create_calendar(token, name, color)
+            except GoogleAPIError as e:
+                raise ValueError(f"Could not create the calendar: {e}") from e
+            gcal_id = cal.get("id") or ""
+            cal_id = add_calendar(conn, uid=gcal_id, display_name=cal.get("summary") or name,
+                                  url=f"google:{gcal_id}", color=color, provider="google")
+            logger.info("Created Google calendar %r (id=%d)", name, cal_id)
+            return {"ok": True, "calendar_id": cal_id, "display_name": name}
         raise ValueError("No signed-in calendar server configured")
     entry = entries[0]
     url, username = entry["url"], entry["username"]
@@ -1344,9 +1377,12 @@ def update_event(
                 gc_move(token, old[0], uid, gcal_id)
             else:
                 raise ValueError("moving events between providers is not supported yet")
-        # occurrence is advisory for Google rows: the uid IS the instance
-        # (Google's own per-occurrence model), no RECURRENCE-ID surgery needed.
-        gc_patch(token, gcal_id, uid, summary=summary, start=start, end=end,
+        # Google rows are instances: occurrence=<dt> edits just that instance;
+        # no occurrence means the whole series, which targets the master.
+        target = uid
+        if occurrence is None and probe and probe.get("recurringEventId"):
+            target = probe["recurringEventId"]
+        gc_patch(token, gcal_id, target, summary=summary, start=start, end=end,
                  all_day=all_day, location=location, description=description)
         prev = conn.execute(
             "SELECT rrule, exdates, status, transparency FROM events WHERE uid = ? ORDER BY start DESC LIMIT 1", (uid,)
