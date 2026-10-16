@@ -156,6 +156,10 @@ Panel {
     property bool showDeleteConfirm: false
     property bool showCalendars: false
     property ListModel calToggleModel: ListModel {}
+    // Account-settings provider rows: a ListModel of { name, enabled, lines }
+    // (mirrors calToggleModel). A toggle flips one row via setProperty so the
+    // dialog's Toggle animates instead of being re-created by a model rebuild.
+    property ListModel accountModel: ListModel {}
 
     readonly property var hourOptions: (function() {
         var a = []; for (var h = 0; h < 24; h++) a.push({value: String(h), label: h < 10 ? " " + h : String(h)}); return a
@@ -765,20 +769,76 @@ Panel {
     }
     function fetchAccountSettings() {
         // GET /api/account: the config.json "oauth" section, per provider,
-        // with client secrets redacted server-side. Bound into the dialog.
+        // with client secrets redacted server-side. Rebuilds the dialog's
+        // ListModel once the response lands — a rebuild here is safe because
+        // nothing is animating (a TOGGLE does an in-place setProperty instead;
+        // see toggleProvider).
         accountData = ({})
+        buildAccountModel()
         var xhr = new XMLHttpRequest()
         xhr.open("GET", accountUrl, true)
         xhr.timeout = 30000
         xhr.onreadystatechange = function() {
             if (xhr.readyState === XMLHttpRequest.DONE) {
-                if (xhr.status === 200)
-                    accountData = JSON.parse(xhr.responseText)
-                else
+                if (xhr.status === 200) {
+                    try { accountData = JSON.parse(xhr.responseText) }
+                    catch (e) { accountData = ({}) }
+                    buildAccountModel()
+                } else {
                     error = "Account settings unavailable"
+                }
             }
         }
         xhr.send()
+    }
+    // True unless the backend explicitly flagged the provider disabled (a
+    // fresh config predates the flag).
+    function accountProviderEnabled(name) {
+        var s = accountData[name] || ({})
+        return s["enabled"] === undefined ? true : !!s["enabled"]
+    }
+    // JSON value -> display string: arrays joined, nested objects flattened to
+    // k=v pairs, scalars stringified.
+    function fmtAccountVal(v) {
+        if (Array.isArray(v)) return v.join(" ")
+        if (v === null || v === undefined) return ""
+        if (typeof v === "object") {
+            var parts = []
+            for (var k in v) parts.push(k + "=" + fmtAccountVal(v[k]))
+            return parts.join(" ")
+        }
+        return String(v)
+    }
+    // Build the dialog's provider rows once per account fetch: name, enabled
+    // flag, and the provider's settings pre-rendered as one newline-joined
+    // string (a single Text per row — a nested Repeater over a ListModel
+    // var-array role renders the row object's QQmlDMAbstractItemModelData, not
+    // the strings, so the lines are flattened here instead).
+    function buildAccountModel() {
+        accountModel.clear()
+        var names = Object.keys(accountData || ({}))
+        for (var i = 0; i < names.length; i++) {
+            var name = names[i]
+            var s = accountData[name] || ({})
+            var lines = []
+            for (var k in s) {
+                if (k === "enabled") continue
+                var v = fmtAccountVal(s[k])
+                lines.push(k + ": " + (v === "" ? "(none)" : v))
+            }
+            accountModel.append({ name: name, enabled: accountProviderEnabled(name),
+                                  settings: lines.join("\n") })
+        }
+    }
+    // In-place flip of one provider row's `enabled`, so the dialog's Toggle
+    // animates on a living delegate (not a model rebuild). Matches by name.
+    function updateProviderState(name, enabled) {
+        for (var i = 0; i < accountModel.count; i++) {
+            if (accountModel.get(i).name === name) {
+                accountModel.setProperty(i, "enabled", enabled)
+                break
+            }
+        }
     }
     function dismissCalendars() {
         showCalendars = false
@@ -829,7 +889,8 @@ Panel {
             subXhr.open("POST", apiBase + "/api/calendars/subscribe", true)
             subXhr.timeout = 30000   // write op: server round-trip
             subXhr.onreadystatechange = function() {
-                if (subXhr.readyState === XMLHttpRequest.DONE && subXhr.status === 200) {
+                if (subXhr.readyState !== XMLHttpRequest.DONE) return
+                if (subXhr.status === 200) {
                     var data = null
                     try { data = JSON.parse(subXhr.responseText) } catch (e) { data = null }
                     if (data && data.ok) {
@@ -864,7 +925,8 @@ Panel {
         xhr.open("POST", apiBase + "/api/calendars/add", true)
         xhr.timeout = 30000   // write op: server round-trip
         xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (xhr.status === 200) {
                 var data = null
                 try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
                 if (data && data.ok) {
@@ -950,7 +1012,8 @@ Panel {
         xhr.open("PUT", apiBase + "/api/calendars/" + id, true)
         xhr.timeout = 30000   // write op: PROPPATCH round-trip
         xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (xhr.status === 200) {
                 var data = null
                 try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
                 if (data && data.ok) {
@@ -996,7 +1059,8 @@ Panel {
         xhr.open("POST", apiBase + "/api/calendars/toggle", true)
         xhr.timeout = 15000
         xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (xhr.status === 200) {
                 // Update the cache, flip the one dialog row in place (animates on
                 // the living delegate), and re-fetch events/reminders — both now
                 // filter on c.enabled = 1. Deliberately do NOT rebuild the whole
@@ -1024,12 +1088,16 @@ Panel {
         xhr.open("POST", apiBase + "/api/account/toggle", true)
         xhr.timeout = 15000
         xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (xhr.status === 200) {
                 // Soft disable: the backend flipped the provider flag and the
-                // enabled column on all of its calendar rows. Re-fetch the
-                // account settings (dialog row state) and the calendars (month
-                // view + calendar dialog) — event queries already filter c.enabled.
-                fetchAccountSettings()
+                // enabled column on all of its calendar rows. Flip the one
+                // dialog row in place (animates on the living delegate) and
+                // re-fetch the calendars (month view + calendar dialog) —
+                // event queries already filter c.enabled. Deliberately do NOT
+                // rebuild the model here: it would tear down every row, killing
+                // the knob animation.
+                updateProviderState(pname, enabled)
                 loadCalendars()
             } else {
                 error = (xhr.status === 0)
@@ -2345,7 +2413,7 @@ Panel {
             anchors.fill: parent
             z: 12
             opened: root.showAccountSettings
-            accountData: root.accountData
+            model: root.accountModel
             foreground: root.contentForeground
             accent: root.accent
             fontFamily: root.contentFontFamily

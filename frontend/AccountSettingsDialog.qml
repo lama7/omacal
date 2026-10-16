@@ -5,24 +5,36 @@ import qs.Commons
 import qs.Ui
 
 // Account settings dialog: opened by the header's U+2261 (triple-bar) button.
-// Lists one row per provider key in config.json's "oauth" section (supplied
-// by the panel via GET /api/account, client secrets redacted server-side).
-// Each row: a qs.Ui Toggle (Enabled/Disabled, same control as the calendar
-// rows) plus that provider's settings as "key: value" lines. Toggling fires
-// providerToggled(name, enabled); the panel owns the POST /api/account/toggle,
-// so this dialog stays presentational (like CalendarToggleDialog).
+// First pass shows one Toggle row per provider key in config.json's "oauth"
+// section (supplied by the panel via GET /api/account), matching the calendar
+// dialog's control. Toggling fires providerToggled(name, enabled); the panel
+// owns the POST /api/account/toggle, so this dialog stays presentational.
+//
+// `model` is a ListModel of { name, enabled } built by the panel (the panel
+// also carries each provider's `settings` string; this pass renders only the
+// toggles). It is a ListModel (not a plain JS array) so a toggle flips ONE row
+// in place via setProperty() — a plain-array rebuild would tear down every
+// delegate, and a re-created Toggle appears already-checked so its knob never
+// animates.
+//
+// Height discipline (the "flashing Done button" bug): every row has a FIXED
+// height and the card height is derived from model.count alone, never from a
+// live layout implicitHeight. A toggle's setProperty re-evaluates one
+// delegate; if a row were sized by live content, its height could change for a
+// frame and shift every row below it — including the Done button — which is
+// the flash. Same reasoning as CalendarToggleDialog's estimatedContentHeight.
 //
 // Soft-disable semantics: toggling a provider off flips the enabled flag on
 // every DB row of that provider (view/edit queries already filter on
 // c.enabled = 1) and gates its sync source; nothing is deleted, so toggling
 // back on restores instantly without re-syncing.
-//
-// Settings lines are read-only display for now (first pass).
 
 Item {
   id: root
   property bool opened: false
-  property var accountData: ({})
+  // Provider rows as a ListModel of { name, enabled } (panel-built).
+  property var model: null
+  readonly property int providerCount: model ? model.count : 0
   // Whole dialog (scrim + card) only renders while open — same gate as
   // CalendarToggleDialog; otherwise the card would always cover the view.
   visible: opened
@@ -39,67 +51,22 @@ Item {
   // Keyboard cursor: which provider row is selected (0..count-1).
   property int selectedIndex: 0
 
-  // Provider names come straight from the JSON keys (e.g. "nextcloud",
-  // "google"). Bindings re-evaluate whenever accountData changes.
-  property var providerNames: Object.keys(accountData)
+  // Stable content estimate (same discipline as CalendarToggleDialog): one
+  // fixed-height toggle row per provider, plus a small gap between rows. The
+  // card height and the rows region are both derived from this, so a toggle
+  // press never changes them.
+  readonly property int rowHeight: Style.space(58)
+  readonly property int rowGap: Style.space(4)
+  readonly property int estimatedRowsHeight:
+      providerCount * rowHeight + Math.max(providerCount - 1, 0) * rowGap
 
-  // Enabled state: the backend injects an "enabled" key per provider;
-  // absent means enabled (fresh config predates the flag).
-  function enabledOf(name) {
-    var s = accountData[name] || ({})
-    return s["enabled"] === undefined ? true : (s["enabled"] ? true : false)
-  }
-
-  // Settings keys to display per provider (the "enabled" control key drives
-  // the Toggle instead of getting its own text line).
-  property var displayKeys: {
-    var out = ({})
-    for (var i = 0; i < providerNames.length; i++) {
-      var p = providerNames[i]
-      var ks = []
-      var s = accountData[p] || ({})
-      for (var k in s)
-        if (k !== "enabled") ks.push(k)
-      out[p] = ks
-    }
-    return out
-  }
-
-  // Render JSON values as display strings: arrays joined, nested objects
-  // flattened to k=v pairs, scalars stringified.
-  function fmtVal(v) {
-    if (Array.isArray(v)) return v.join(" ")
-    if (v === null || v === undefined) return ""
-    if (typeof v === "object") {
-      var parts = []
-      for (var k in v) parts.push(k + "=" + fmtVal(v[k]))
-      return parts.join(" ")
-    }
-    return String(v)
-  }
-
-  // Stable content estimates (same discipline as CalendarToggleDialog): the
-  // card height is derived from the model alone — per provider: one toggle
-  // row + its settings lines — never from live layout implicit heights.
-  property int totalSettingRows: {
-    var m = 0
-    for (var i = 0; i < providerNames.length; i++)
-      m += displayKeys[providerNames[i]].length
-    return m
-  }
-  readonly property int rowFont: 14
-  readonly property int rowPitch: Style.space(24)
-  readonly property int toggleRowHeight: Style.space(40)
-  readonly property int providerGap: Style.space(14)
   readonly property int naturalCardHeight:
-      Style.space(16)
-      + Math.max(titleText.implicitHeight, doneBtn.height)
-      + Style.space(10)
-      + Style.space(12)
-      + providerNames.length * (toggleRowHeight + providerGap)
-      + totalSettingRows * rowPitch
+      Style.space(16) * 2
+      + titleText.implicitHeight
+      + sep.implicitHeight
       + doneBtn.height
-      + Style.space(26)
+      + estimatedRowsHeight
+      + Style.space(10) * 4   // gaps: title|sep|rows|spacer|Done
 
   // Keyboard: arrows/Tab move between provider rows, Enter/Space toggles the
   // selected row (mirrors the calendar dialog), Escape closes. Everything
@@ -107,7 +74,7 @@ Item {
   function handleKey(event) {
     if (!root.opened) return false
     if (event.key === Qt.Key_Escape) { root.closed(); return true }
-    var n = Math.max(providerNames.length, 1)
+    var n = Math.max(providerCount, 1)
     if (event.key === Qt.Key_Left || event.key === Qt.Key_Backtab) {
       selectedIndex = (selectedIndex + n - 1) % n
       return true
@@ -118,9 +85,9 @@ Item {
     }
     if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
         || event.key === Qt.Key_Space) {
-      if (selectedIndex < providerNames.length) {
-        var p = providerNames[selectedIndex]
-        root.providerToggled(p, !root.enabledOf(p))
+      if (selectedIndex < providerCount) {
+        var m = model.get(selectedIndex)
+        root.providerToggled(m.name, !m.enabled)
       }
       return true
     }
@@ -177,66 +144,54 @@ Item {
 
       // Horizontal separator under the header, same as the other views.
       PanelSeparator {
+        id: sep
         Layout.fillWidth: true
         foreground: root.foreground
       }
 
-      // One row-block per provider: Toggle + that provider's settings lines.
+      // One fixed-height Toggle row per provider. Bound to the panel's
+      // ListModel; a toggle flips one row via setProperty so this delegate is
+      // NOT re-created and the knob animates. The row's height is a constant
+      // (rowHeight), never the Toggle's live implicitHeight, so a toggle press
+      // cannot move the rows below it or the Done button.
       Repeater {
-        model: root.providerNames
+        model: root.model
 
         Item {
-          id: provBlock
-          property int myIndex: index
+          id: provRow
+          required property var modelData
+          required property int index
+          // implicitWidth matters: the ColumnLayout derives its own width from
+          // children's implicit widths, and a bare Item is 0.
+          implicitWidth: rowToggle.implicitWidth
           Layout.fillWidth: true
-          Layout.preferredHeight: block.implicitHeight
+          Layout.preferredHeight: root.rowHeight
 
-          Column {
-            id: block
+          Toggle {
+            id: rowToggle
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(4)
-
-            Toggle {
-              id: rowToggle
-              label: root.providerNames[provBlock.myIndex]
-              description: root.enabledOf(root.providerNames[provBlock.myIndex])
-                ? "Enabled" : "Disabled"
-              checked: root.enabledOf(root.providerNames[provBlock.myIndex])
-              hasCursor: provBlock.myIndex === root.selectedIndex
-              foreground: root.foreground
-              accent: root.accent
-              fontFamily: root.fontFamily
-              onClicked: {
-                var p = root.providerNames[provBlock.myIndex]
-                root.providerToggled(p, !root.enabledOf(p))
-              }
-            }
-
-            Repeater {
-              model: root.displayKeys[root.providerNames[provBlock.myIndex]]
-
-              Text {
-                property string myKey: modelData
-                width: block.width - Style.space(8)
-                x: Style.space(4)
-                textFormat: Text.PlainText
-                text: {
-                  var p = root.providerNames[provBlock.myIndex]
-                  var v = root.fmtVal(accountData[p][myKey])
-                  return myKey + ": " + (v === "" ? "(none)" : v)
-                }
-                // Disabled providers read dimmed but stay legible.
-                color: root.enabledOf(root.providerNames[provBlock.myIndex])
-                  ? root.foreground : Util.alpha(root.foreground, 0.45)
-                font.family: root.fontFamily
-                font.pixelSize: root.rowFont
-                wrapMode: Text.WordWrap
-              }
-            }
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            label: provRow.modelData.name
+            description: provRow.modelData.enabled ? "Enabled" : "Disabled"
+            checked: provRow.modelData.enabled
+            hasCursor: provRow.index === root.selectedIndex
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
+            onClicked: root.providerToggled(provRow.modelData.name,
+                                            !provRow.modelData.enabled)
           }
         }
+      }
+
+      // Flexible spacer: absorbs any slack between the model-count estimate and
+      // the real layout, pinning the Done button to the bottom of the card so
+      // it never moves as rows change state.
+      Item {
+        Layout.fillWidth: true
+        Layout.fillHeight: true
       }
 
       RowLayout {
