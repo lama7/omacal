@@ -549,77 +549,23 @@ Item {
 
           Item { Layout.fillWidth: true }   // spacer pushes Create/Cancel right
 
-          Rectangle {
+          DialogButton {
             id: createBtn
-            Layout.preferredWidth: Style.space(96)
-            height: Style.space(38)
-            radius: root.cornerRadius
-            // Hover highlight: same fill/border treatment as the Done button's
-            // cursor cue, so the add-form buttons read like the other controls.
-            readonly property bool hot: createHover.containsMouse
-            color: hot
-              ? Style.controlFill(false, true, root.foreground, root.accent)
-              : "transparent"
-            border.color: hot
-              ? Style.controlBorder(false, true, root.foreground, root.accent)
-              : root.accent
-            border.width: hot
-              ? Style.controlBorderWidth(false, true)
-              : Style.normalBorderWidth
-            Behavior on color { ColorAnimation { duration: 100 } }
-            Text {
-              textFormat: Text.PlainText
-              anchors.centerIn: parent
-              // Subscribe mode: a URL was typed, so the action is subscribing
-              // to an existing calendar, not creating a new one.
-              text: root.pendingAddUrl !== "" ? "Subscribe" : "Create"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.subtitle
-              font.bold: true
-            }
-            MouseArea {
-              id: createHover
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddProvider)
-            }
+            // Subscribe mode: a URL was typed, so the action is subscribing
+            // to an existing calendar, not creating a new one.
+            text: root.pendingAddUrl !== "" ? "Subscribe" : "Create"
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
+            onClicked: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddProvider)
           }
-          Rectangle {
+          DialogButton {
             id: cancelBtn
-            Layout.preferredWidth: Style.space(96)
-            height: Style.space(38)
-            radius: root.cornerRadius
-            // Hover highlight: same fill/border treatment as the Done button's
-            // cursor cue, so the add-form buttons read like the other controls.
-            readonly property bool hot: cancelHover.containsMouse
-            color: hot
-              ? Style.controlFill(false, true, root.foreground, root.accent)
-              : "transparent"
-            border.color: hot
-              ? Style.controlBorder(false, true, root.foreground, root.accent)
-              : root.accent
-            border.width: hot
-              ? Style.controlBorderWidth(false, true)
-              : Style.normalBorderWidth
-            Behavior on color { ColorAnimation { duration: 100 } }
-            Text {
-              textFormat: Text.PlainText
-              anchors.centerIn: parent
-              text: "Cancel"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.subtitle
-              font.bold: true
-            }
-            MouseArea {
-              id: cancelHover
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.addCancel()
-            }
+            text: "Cancel"
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
+            onClicked: root.addCancel()
           }
         }
       }
@@ -718,71 +664,21 @@ Item {
 
           Item { Layout.fillWidth: true }   // spacer pushes Save/Cancel right
 
-          Rectangle {
+          DialogButton {
             id: saveBtn
-            Layout.preferredWidth: Style.space(96)
-            height: Style.space(38)
-            radius: root.cornerRadius
-            readonly property bool hot: saveHover.containsMouse
-            color: hot
-              ? Style.controlFill(false, true, root.foreground, root.accent)
-              : "transparent"
-            border.color: hot
-              ? Style.controlBorder(false, true, root.foreground, root.accent)
-              : root.accent
-            border.width: hot
-              ? Style.controlBorderWidth(false, true)
-              : Style.normalBorderWidth
-            Behavior on color { ColorAnimation { duration: 100 } }
-            Text {
-              textFormat: Text.PlainText
-              anchors.centerIn: parent
-              text: "Save"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.subtitle
-              font.bold: true
-            }
-            MouseArea {
-              id: saveHover
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.editSubmit(root.editId, root.pendingEditName, root.pendingEditColor)
-            }
+            text: "Save"
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
+            onClicked: root.editSubmit(root.editId, root.pendingEditName, root.pendingEditColor)
           }
-          Rectangle {
+          DialogButton {
             id: editCancelBtn
-            Layout.preferredWidth: Style.space(96)
-            height: Style.space(38)
-            radius: root.cornerRadius
-            readonly property bool hot: editCancelHover.containsMouse
-            color: hot
-              ? Style.controlFill(false, true, root.foreground, root.accent)
-              : "transparent"
-            border.color: hot
-              ? Style.controlBorder(false, true, root.foreground, root.accent)
-              : root.accent
-            border.width: hot
-              ? Style.controlBorderWidth(false, true)
-              : Style.normalBorderWidth
-            Behavior on color { ColorAnimation { duration: 100 } }
-            Text {
-              textFormat: Text.PlainText
-              anchors.centerIn: parent
-              text: "Cancel"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.subtitle
-              font.bold: true
-            }
-            MouseArea {
-              id: editCancelHover
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.editCancel()
-            }
+            text: "Cancel"
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
+            onClicked: root.editCancel()
           }
         }
       }
@@ -795,47 +691,20 @@ Item {
 
         Item { Layout.fillWidth: true }   // spacer pushes Done to the right
 
-        Rectangle {
+        DialogButton {
           id: doneBtn
-          width: Style.space(96)
-          height: Style.space(38)
-          radius: root.cornerRadius
+          text: "Done"
+          foreground: root.foreground
+          accent: root.accent
+          fontFamily: root.fontFamily
           // Keyboard-cursor cue: when Tab/Shift+Tab parks the cursor on the
           // Done slot, paint the same hover-cursor fill/border the Toggles
           // use for hasCursor, so the keyboard position is visible. (Done
           // lives in the button row outside the Flickable, so it is always
-          // on screen; the highlight is the whole fix.)
-          // hoverHot mirrors the Toggles' hasCursor hover highlight.
-          readonly property bool hot: root.opened && !root.addOpen
-              && (root.selectedIndex === root.doneIndex || doneHover.containsMouse)
-          color: hot
-            ? Style.controlFill(false, true, root.foreground, root.accent)
-            : "transparent"
-          border.color: hot
-            ? Style.controlBorder(false, true, root.foreground, root.accent)
-            : root.accent
-          border.width: hot
-            ? Style.controlBorderWidth(false, true)
-            : Style.normalBorderWidth
-          Behavior on color { ColorAnimation { duration: 100 } }
-
-          Text {
-            textFormat: Text.PlainText
-            anchors.centerIn: parent
-            text: "Done"
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.subtitle
-            font.bold: true
-          }
-
-          MouseArea {
-            id: doneHover
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.closed()
-          }
+          // on screen; the highlight is the whole fix.) Mouse hover is lit by
+          // the component itself.
+          hot: root.opened && !root.addOpen && root.selectedIndex === root.doneIndex
+          onClicked: root.closed()
         }
       }
     }

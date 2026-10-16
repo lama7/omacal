@@ -25,7 +25,6 @@ Item {
   property color background: Color.background
   property color foreground: Color.foreground
   property color scrim: Util.alpha(Color.background, 0.7)
-  property color selectedBackground: Util.alpha(Color.foreground, 0.08)
   property color selectedText: Color.accent
   property string fontFamily: Style.font.family
   property int cornerRadius: Style.cornerRadius
@@ -64,7 +63,7 @@ Item {
     height: Style.space(18) * 2
             + messageText.implicitHeight
             + (root.showScope ? scopeRow.implicitHeight + Style.space(12) : 0)
-            + Style.space(20) + Style.space(34)
+            + Style.space(20) + Style.space(38)
     // Anchor the card's top to the panel top (not centered) so a tall card on a
     // short panel stays on screen instead of pushing its top off the top edge.
     anchors.top: parent.top
@@ -117,42 +116,23 @@ Item {
         Repeater {
           model: [root.cancelText, root.confirmText]
 
-          Rectangle {
+          DialogButton {
             required property int index
             required property string modelData
 
-            readonly property bool selected: root.selectedIndex === index
-            readonly property bool destructive: index === 1
-
-            width: Style.space(88)
-            height: Style.space(34)
-            color: selected
-              ? (destructive ? Util.alpha(Color.urgent, 0.22) : root.selectedBackground)
-              : "transparent"
-            border.color: destructive
-              ? (selected ? Color.urgent : Util.alpha(Color.urgent, 0.56))
-              : (selected ? root.selectedText : Util.alpha(root.foreground, 0.38))
-            border.width: Style.normalBorderWidth
-            radius: 0
-
-            Text {
-              textFormat: Text.PlainText
-              anchors.centerIn: parent
-              text: modelData
-              color: destructive ? (selected ? Color.urgent : root.foreground) : (selected ? root.selectedText : root.foreground)
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            MouseArea {
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onEntered: root.selectedIndex = index
-              onClicked: {
-                if (index === 0) root.canceled()
-                else root.confirmed()
-              }
+            // Keyboard cursor: the panel's handleKey() moves selectedIndex and
+            // mouse hover follows it here (onEntered), so the two agree — the
+            // same cue the Calendars dialog paints on its Done slot.
+            hot: root.selectedIndex === index
+            destructive: index === 1
+            text: modelData
+            foreground: root.foreground
+            accent: root.selectedText
+            fontFamily: root.fontFamily
+            onEntered: root.selectedIndex = index
+            onClicked: {
+              if (index === 0) root.canceled()
+              else root.confirmed()
             }
           }
         }

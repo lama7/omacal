@@ -335,39 +335,13 @@ Item {
 
         Item { Layout.fillWidth: true }   // spacer pushes Done to the right
 
-        Rectangle {
+        DialogButton {
           id: doneBtn
-          width: Style.space(96)
-          height: Style.space(38)
-          radius: root.cornerRadius
-          color: doneHover.containsMouse
-            ? Style.controlFill(false, true, root.foreground, root.accent)
-            : "transparent"
-          border.color: doneHover.containsMouse
-            ? Style.controlBorder(false, true, root.foreground, root.accent)
-            : root.accent
-          border.width: doneHover.containsMouse
-            ? Style.controlBorderWidth(false, true)
-            : Style.normalBorderWidth
-          Behavior on color { ColorAnimation { duration: 100 } }
-
-          Text {
-            textFormat: Text.PlainText
-            anchors.centerIn: parent
-            text: "Done"
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.subtitle
-            font.bold: true
-          }
-
-          MouseArea {
-            id: doneHover
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.closed()
-          }
+          text: "Done"
+          foreground: root.foreground
+          accent: root.accent
+          fontFamily: root.fontFamily
+          onClicked: root.closed()
         }
       }
 
@@ -584,19 +558,28 @@ Item {
 
           Item { Layout.fillWidth: true }   // spacer pushes buttons right
 
-          Button {
+          DialogButton {
             text: "Back"
             visible: root.addStage !== ""
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
             onClicked: root.navBack()
           }
-          Button {
+          DialogButton {
             text: "Cancel"
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
             onClicked: root.addCancel()
           }
-          Button {
+          DialogButton {
             text: root.addStage === "signin" ? "Sign in" : "Add account"
             visible: root.addStage !== ""
             enabled: !root.addBusy
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
             onClicked: root.addStage === "signin"
               ? root.ncSignInRequested(root.pendingServer)
               : root.caldavAddSubmit(root.pendingServer, root.pendingName,

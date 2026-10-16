@@ -511,18 +511,24 @@ Column {
 
     Row {
         width: dayContent.width
-        height: Math.max(Style.spacing.controlHeight, Style.font.body + Style.spacing.controlPaddingY * 2) + 2
+        height: Style.space(38)
         spacing: Style.space(4)
 
-        Button {
+        DialogButton {
             text: "Cancel"
             width: (dayContent.width - Style.space(4)) / 2
+            foreground: panel.contentForeground
+            accent: panel.accent
+            fontFamily: panel.contentFontFamily
             onClicked: panel.dismissAddForm()
         }
 
-        Button {
+        DialogButton {
             text: "Save"
             width: (dayContent.width - Style.space(4)) / 2
+            foreground: panel.contentForeground
+            accent: panel.accent
+            fontFamily: panel.contentFontFamily
             onClicked: panel.submitAddEvent()
         }
     }
