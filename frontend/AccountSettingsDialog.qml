@@ -5,17 +5,15 @@ import qs.Commons
 import qs.Ui
 
 // Account settings dialog: opened by the header's U+2261 (triple-bar) button.
-// First pass shows one Toggle row per provider key in config.json's "oauth"
-// section (supplied by the panel via GET /api/account), matching the calendar
-// dialog's control. Toggling fires providerToggled(name, enabled); the panel
-// owns the POST /api/account/toggle, so this dialog stays presentational.
+// Shows one Toggle row per provider key in config.json's "oauth" section
+// (supplied by the panel via GET /api/account), matching the calendar dialog's
+// control. Toggling fires providerToggled(name, enabled); the panel owns the
+// POST /api/account/toggle, so this dialog stays presentational.
 //
-// `model` is a ListModel of { name, enabled } built by the panel (the panel
-// also carries each provider's `settings` string; this pass renders only the
-// toggles). It is a ListModel (not a plain JS array) so a toggle flips ONE row
-// in place via setProperty() — a plain-array rebuild would tear down every
-// delegate, and a re-created Toggle appears already-checked so its knob never
-// animates.
+// `model` is a ListModel of { name, enabled } built by the panel. It is a
+// ListModel (not a plain JS array) so a toggle flips ONE row in place via
+// setProperty() — a plain-array rebuild would tear down every delegate, and a
+// re-created Toggle appears already-checked so its knob never animates.
 //
 // Height discipline (the "flashing Done button" bug): every row has a FIXED
 // height and the card height is derived from model.count alone, never from a
@@ -23,6 +21,15 @@ import qs.Ui
 // delegate; if a row were sized by live content, its height could change for a
 // frame and shift every row below it — including the Done button — which is
 // the flash. Same reasoning as CalendarToggleDialog's estimatedContentHeight.
+//
+// Add Provider (the header "+" button, or the first-run notice's Continue):
+// an in-place mini form that replaces the list while addOpen is true, exactly
+// like CalendarToggleDialog's add-calendar form. Stage "" is a provider
+// chooser; "signin" runs Nextcloud Login Flow v2 (browser sign-in, no OAuth
+// client registration, no admin rights); "credentials" adds any CalDAV account
+// from server + username + password (a Nextcloud app password works here too).
+// The panel owns every POST and flips addOpen/addStage and the pending fields,
+// so this dialog stays presentational. Google (BYO client) is a later stage.
 //
 // Soft-disable semantics: toggling a provider off flips the enabled flag on
 // every DB row of that provider (view/edit queries already filter on
@@ -49,6 +56,40 @@ Item {
   signal providerToggled(string pname, bool enabled)
   signal providerEditRequested(string pname)
 
+  // --- Add-provider form (panel-driven, like CalendarToggleDialog's) --------
+  property bool addOpen: false
+  // "" = provider chooser; "signin" = Nextcloud browser sign-in;
+  // "credentials" = CalDAV server + username + password.
+  property string addStage: ""
+  // Keyboard cursor within the provider chooser (this panel is keyboard-driven).
+  property int chooserIndex: 0
+  // Pending field values. The server field is shared between the two Nextcloud
+  // stages, so switching stage carries the typed server over.
+  property string pendingServer: ""
+  property string pendingName: ""
+  property string pendingUser: ""
+  property string pendingPass: ""
+  property alias serverFieldRef: serverField
+  property alias caldavServerFieldRef: caldavServerField
+  // Feedback shown by the panel while the flow runs / on failure.
+  property bool addBusy: false
+  property string addStatus: ""
+  property string addError: ""
+  // Chooser options, in cursor order.
+  readonly property var providerChoices: [
+    { key: "signin", title: "Nextcloud",
+      detail: "Sign in with your browser \u2014 no server password to type." },
+    { key: "credentials", title: "CalDAV server",
+      detail: "Enter a server, username and password or app password." },
+  ]
+
+  signal addRequested()
+  signal addCancel()
+  signal providerChoiceRequested(string key)
+  signal navBack()
+  signal ncSignInRequested(string server)
+  signal caldavAddSubmit(string url, string displayName, string user, string pass)
+
   // Keyboard cursor: which provider row is selected (0..count-1).
   property int selectedIndex: 0
 
@@ -61,19 +102,68 @@ Item {
   readonly property int estimatedRowsHeight:
       providerCount * rowHeight + Math.max(providerCount - 1, 0) * rowGap
 
+  readonly property int gap: Style.space(10)
   readonly property int naturalCardHeight:
       Style.space(16) * 2
       + titleText.implicitHeight
       + sep.implicitHeight
-      + doneBtn.height
-      + estimatedRowsHeight
-      + Style.space(10) * 4   // gaps: title|sep|rows|spacer|Done
+      + (root.addOpen
+          ? addForm.implicitHeight + gap * 2
+          : estimatedRowsHeight + doneBtn.height + gap * 4)
+
+  // Reset the add form to its chooser stage (the panel calls this when it
+  // opens the form, so a previous attempt never leaks into a fresh one).
+  function resetAddForm() {
+    addStage = ""
+    chooserIndex = 0
+    pendingServer = ""
+    pendingName = ""
+    pendingUser = ""
+    pendingPass = ""
+    addBusy = false
+    addStatus = ""
+    addError = ""
+  }
+  function chooseProvider(key) {
+    root.providerChoiceRequested(key)
+  }
 
   // Keyboard: arrows/Tab move between provider rows, Enter/Space toggles the
   // selected row (mirrors the calendar dialog), Escape closes. Everything
   // else is swallowed while open so stray keys never drive the month view.
   function handleKey(event) {
     if (!root.opened) return false
+    if (root.addOpen) {
+      // Escape leaves the form (back to the chooser, then back to the list).
+      if (event.key === Qt.Key_Escape) {
+        if (root.addStage === "") root.addCancel()
+        else root.navBack()
+        return true
+      }
+      if (root.addStage === "") {
+        // Chooser: arrows/Tab move the cursor, Enter activates the choice.
+        if (event.key === Qt.Key_Left || event.key === Qt.Key_Up
+            || event.key === Qt.Key_Backtab) {
+          chooserIndex = (chooserIndex + providerChoices.length - 1)
+              % providerChoices.length
+          return true
+        }
+        if (event.key === Qt.Key_Right || event.key === Qt.Key_Down
+            || event.key === Qt.Key_Tab) {
+          chooserIndex = (chooserIndex + 1) % providerChoices.length
+          return true
+        }
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+            || event.key === Qt.Key_Space) {
+          root.chooseProvider(providerChoices[chooserIndex].key)
+          return true
+        }
+      }
+      // In a sub-form the focused TextField owns Enter (its Keys.onReturnPressed
+      // submits) and Escape (back to the chooser); unhandled keys fall through
+      // so the fields receive their characters.
+      return false
+    }
     if (event.key === Qt.Key_Escape) { root.closed(); return true }
     var n = Math.max(providerCount, 1)
     if (event.key === Qt.Key_Left || event.key === Qt.Key_Backtab) {
@@ -128,18 +218,35 @@ Item {
       RowLayout {
         id: titleRow
         Layout.fillWidth: true
+        spacing: Style.space(8)
 
         Text {
           id: titleText
           Layout.fillWidth: true
           textFormat: Text.PlainText
-          text: "Account Settings"
+          // While the add-provider form is open the header reads "Add Provider"
+          // and the + button is hidden (it opened the form).
+          text: root.addOpen ? "Add Provider" : "Account Settings"
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: 24
           font.bold: true
           horizontalAlignment: Text.AlignHCenter
           wrapMode: Text.WordWrap
+        }
+
+        // Add-Provider button: same glyph as the Calendars dialog's add button
+        // and the day-view Add Event button (U+F00F3).
+        PanelActionButton {
+          id: addBtn
+          iconText: "\uDB80\uDCF3"
+          fontSize: 22
+          tooltipText: "Add Provider"
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          visible: !root.addOpen
+          enabled: !root.addOpen
+          onClicked: root.addRequested()
         }
       }
 
@@ -162,6 +269,7 @@ Item {
           id: provRow
           required property var modelData
           required property int index
+          visible: !root.addOpen
           // implicitWidth matters: the ColumnLayout derives its own width from
           // children's implicit widths, and a bare Item is 0.
           implicitWidth: rowToggle.implicitWidth
@@ -213,12 +321,14 @@ Item {
       Item {
         Layout.fillWidth: true
         Layout.fillHeight: true
+        visible: !root.addOpen
       }
 
       RowLayout {
         id: buttonRow
         Layout.fillWidth: true
         spacing: Style.space(10)
+        visible: !root.addOpen
 
         Item { Layout.fillWidth: true }   // spacer pushes Done to the right
 
@@ -254,6 +364,240 @@ Item {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: root.closed()
+          }
+        }
+      }
+
+      // Add-provider mini form: replaces the list while addOpen is true. The
+      // panel owns every POST; this only emits and displays the stage state.
+      ColumnLayout {
+        id: addForm
+        visible: root.addOpen
+        Layout.fillWidth: true
+        spacing: Style.space(8)
+
+        // ---- Stage "": provider chooser ----
+        ColumnLayout {
+          Layout.fillWidth: true
+          spacing: Style.space(6)
+          visible: root.addStage === ""
+
+          Text {
+            Layout.fillWidth: true
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            text: "Connect a calendar account"
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            font.bold: true
+          }
+
+          Repeater {
+            model: root.providerChoices
+
+            Rectangle {
+              id: choiceRow
+              required property var modelData
+              required property int index
+              Layout.fillWidth: true
+              readonly property bool hot: hover.containsMouse
+                  || (root.chooserIndex === choiceRow.index)
+              implicitHeight: choiceCol.implicitHeight + Style.space(16)
+              radius: root.cornerRadius
+              color: hot
+                ? Style.controlFill(false, true, root.foreground, root.accent)
+                : "transparent"
+              border.color: hot
+                ? Style.controlBorder(false, true, root.foreground, root.accent)
+                : root.accent
+              border.width: hot
+                ? Style.controlBorderWidth(false, true)
+                : Style.normalBorderWidth
+              Behavior on color { ColorAnimation { duration: 100 } }
+
+              Column {
+                id: choiceCol
+                anchors.fill: parent
+                anchors.margins: Style.space(8)
+                spacing: Style.space(2)
+                Text {
+                  textFormat: Text.PlainText
+                  text: choiceRow.modelData.title
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.subtitle
+                  font.bold: true
+                }
+                Text {
+                  textFormat: Text.PlainText
+                  width: choiceCol.width
+                  wrapMode: Text.Wrap
+                  text: choiceRow.modelData.detail
+                  color: root.foreground
+                  opacity: 0.6
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+              }
+
+              MouseArea {
+                id: hover
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.chooseProvider(choiceRow.modelData.key)
+              }
+            }
+          }
+        }
+
+        // ---- Stage "signin": Nextcloud Login Flow v2 ----
+        ColumnLayout {
+          Layout.fillWidth: true
+          spacing: Style.space(8)
+          visible: root.addStage === "signin"
+
+          Text {
+            Layout.fillWidth: true
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            text: "Sign in to Nextcloud. We'll open your browser to authenticate "
+                + "(2-factor codes included) and you'll get a per-device app "
+                + "password you can revoke later."
+            color: root.foreground
+            opacity: 0.7
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          TextField {
+            id: serverField
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.max(implicitHeight, Style.spacing.controlHeight)
+            placeholderText: "Nextcloud server (e.g. cloud.example.com)"
+            foreground: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.subtitle
+            onTextChanged: root.pendingServer = text
+            Keys.onReturnPressed: root.ncSignInRequested(root.pendingServer)
+            Keys.onEnterPressed: root.ncSignInRequested(root.pendingServer)
+            Keys.onEscapePressed: root.navBack()
+          }
+        }
+
+        // ---- Stage "credentials": any CalDAV account ----
+        ColumnLayout {
+          Layout.fillWidth: true
+          spacing: Style.space(8)
+          visible: root.addStage === "credentials"
+
+          TextField {
+            id: caldavServerField
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.max(implicitHeight, Style.spacing.controlHeight)
+            placeholderText: "Server URL (e.g. https://cloud.example.com)"
+            foreground: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.subtitle
+            onTextChanged: root.pendingServer = text
+            Keys.onReturnPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
+            Keys.onEnterPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
+            Keys.onEscapePressed: root.navBack()
+          }
+
+          TextField {
+            id: userField
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.max(implicitHeight, Style.spacing.controlHeight)
+            placeholderText: "Username"
+            foreground: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.subtitle
+            onTextChanged: root.pendingUser = text
+            Keys.onReturnPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
+            Keys.onEnterPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
+            Keys.onEscapePressed: root.navBack()
+          }
+
+          TextField {
+            id: passField
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.max(implicitHeight, Style.spacing.controlHeight)
+            placeholderText: "Password or app password"
+            password: true
+            foreground: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.subtitle
+            onTextChanged: root.pendingPass = text
+            Keys.onReturnPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
+            Keys.onEnterPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
+            Keys.onEscapePressed: root.navBack()
+          }
+
+          TextField {
+            id: nameField
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.max(implicitHeight, Style.spacing.controlHeight)
+            placeholderText: "Account label (optional)"
+            foreground: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.subtitle
+            onTextChanged: root.pendingName = text
+            Keys.onReturnPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
+            Keys.onEnterPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
+            Keys.onEscapePressed: root.navBack()
+          }
+        }
+
+        // Shared feedback: status while working, error on failure.
+        Text {
+          Layout.fillWidth: true
+          visible: root.addStatus !== ""
+          textFormat: Text.PlainText
+          wrapMode: Text.Wrap
+          text: root.addStatus
+          color: root.accent
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          font.italic: true
+        }
+        Text {
+          Layout.fillWidth: true
+          visible: root.addError !== ""
+          textFormat: Text.PlainText
+          wrapMode: Text.Wrap
+          text: root.addError
+          color: "#e06060"
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          font.italic: true
+        }
+
+        // Nav row: Back (sub-forms) / Cancel (always) / primary action.
+        RowLayout {
+          Layout.fillWidth: true
+          spacing: Style.space(10)
+
+          Item { Layout.fillWidth: true }   // spacer pushes buttons right
+
+          Button {
+            text: "Back"
+            visible: root.addStage !== ""
+            onClicked: root.navBack()
+          }
+          Button {
+            text: "Cancel"
+            onClicked: root.addCancel()
+          }
+          Button {
+            text: root.addStage === "signin" ? "Sign in" : "Add account"
+            visible: root.addStage !== ""
+            enabled: !root.addBusy
+            onClicked: root.addStage === "signin"
+              ? root.ncSignInRequested(root.pendingServer)
+              : root.caldavAddSubmit(root.pendingServer, root.pendingName,
+                                     root.pendingUser, root.pendingPass)
           }
         }
       }

@@ -39,6 +39,9 @@ Panel {
     property string error: ""
     property bool showAccountSettings: false
     property var accountData: ({})
+    // Add-provider flow: the panel owns the Nextcloud sign-in poll loop.
+    property string pendingFlowId: ""
+    property bool ncPollInFlight: false
 
     // Backend-update detection: `omarchy plugin update` only syncs the plugin
     // files, never the ~/.local/omacal/venv. The panel compares the installed
@@ -758,13 +761,18 @@ Panel {
         // calendar dialog — including its add-calendar mini form — is up).
         hoveredDate = null
     }
-    function openAccountSettings() {
+    function openAccountSettings(withAddForm) {
         fetchAccountSettings()
         showAccountSettings = true
         hoveredDate = null
+        // First-run "Continue" (and any other caller that wants it) opens the
+        // dialog with the Add Provider form already expanded.
+        if (withAddForm) openAddProvider()
+        else accountSettings.addOpen = false
     }
     function dismissAccountSettings() {
         showAccountSettings = false
+        cancelAddProvider()
         keyCatcher.forceActiveFocus()
     }
     function fetchAccountSettings() {
@@ -1114,6 +1122,180 @@ Panel {
     // so the button is visible and wired; the design call goes to the user.
     function editProvider(pname) {
         // TODO: decide what the per-provider action should do.
+    }
+
+    // --- Add Provider (AccountSettingsDialog's inline add form) --------------
+    // The panel owns the form's lifecycle and every POST; the dialog is
+    // presentational (same split as the calendars dialog's add form). addOpen
+    // flips the dialog into the form; addStage picks the path — "" is the
+    // provider chooser, "signin" runs Nextcloud Login Flow v2 in the browser,
+    // "credentials" adds any CalDAV account from server + user + password.
+
+    function openAddProvider() {
+        accountSettings.resetAddForm()
+        accountSettings.addOpen = true
+    }
+    function cancelAddProvider() {
+        accountSettings.addOpen = false
+        accountSettings.resetAddForm()
+        loginPollTimer.stop()
+        pendingFlowId = ""
+        ncPollInFlight = false
+    }
+    function chooseProvider(key) {
+        accountSettings.addStage = key
+        accountSettings.addError = ""
+        accountSettings.addStatus = ""
+        // The form just became visible; focus its first field a tick later
+        // (forceActiveFocus on a still-hidden field is a silent no-op).
+        Qt.callLater(function() {
+            if (key === "signin") accountSettings.serverFieldRef.forceActiveFocus()
+            else if (key === "credentials") accountSettings.caldavServerFieldRef.forceActiveFocus()
+        })
+    }
+    function addFormBack() {
+        accountSettings.addStage = ""
+        accountSettings.addError = ""
+        accountSettings.addStatus = ""
+        keyCatcher.forceActiveFocus()
+    }
+    // Kick off the Nextcloud browser sign-in: ask the backend to start a Login
+    // Flow v2, open the returned URL in the user's default browser, and poll
+    // for the app password it mints once they authenticate.
+    function ncSignIn(server) {
+        var s = String(server || "").trim()
+        if (s === "") { accountSettings.addError = "Server URL is required."; return }
+        accountSettings.addError = ""
+        accountSettings.addBusy = true
+        accountSettings.addStatus = "Contacting " + s + "\u2026"
+        var xhr = new XMLHttpRequest()
+        xhr.open("POST", apiBase + "/api/providers/nextcloud/login/start", true)
+        xhr.timeout = 30000
+        xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            var data = null
+            try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
+            if (xhr.status !== 200 || !data || !data.ok) {
+                accountSettings.addBusy = false
+                accountSettings.addStatus = ""
+                accountSettings.addError = (data && data.error)
+                    || ("Could not start sign-in (status " + xhr.status + ").")
+                return
+            }
+            // Hand the URL to the default browser, then poll. There is no
+            // in-app browser; Quickshell.execDetached never blocks the shell.
+            Quickshell.execDetached(["xdg-open", data.login_url])
+            accountSettings.addStatus = "Waiting for you to finish signing in your browser\u2026"
+            pendingFlowId = data.flow_id
+            ncPollInFlight = false
+            loginPollTimer.restart()
+        }
+        xhr.onerror = function() { accountSettings.addBusy = false; accountSettings.addStatus = ""; accountSettings.addError = "Could not reach the omacal backend." }
+        xhr.ontimeout = function() { accountSettings.addBusy = false; accountSettings.addStatus = ""; accountSettings.addError = "The server did not respond." }
+        xhr.send(JSON.stringify({ server: s }))
+    }
+    function pollNcLogin() {
+        // Guard against overlapping polls: the backend commits the account
+        // (an LDAP/DAV discovery, seconds long) inside the poll that first
+        // sees success, and a second in-flight poll would then read "unknown".
+        if (pendingFlowId === "" || ncPollInFlight) return
+        ncPollInFlight = true
+        var xhr = new XMLHttpRequest()
+        xhr.open("GET", apiBase + "/api/providers/nextcloud/login/poll?id="
+                 + encodeURIComponent(pendingFlowId), true)
+        xhr.timeout = 60000
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            ncPollInFlight = false
+            var data = null
+            try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
+            var st = data ? data.status : ""
+            if (st === "pending") return          // the timer keeps polling
+            loginPollTimer.stop()
+            pendingFlowId = ""
+            accountSettings.addBusy = false
+            accountSettings.addStatus = ""
+            if (st === "ok") {
+                finishAddProvider()
+            } else if (st === "unknown" || st === "expired") {
+                accountSettings.addError = "Sign-in timed out. Please try again."
+            } else {
+                accountSettings.addError = (data && data.error) || "Sign-in failed."
+            }
+        }
+        xhr.onerror = function() {
+            ncPollInFlight = false
+            loginPollTimer.stop()
+            pendingFlowId = ""
+            accountSettings.addBusy = false
+            accountSettings.addStatus = ""
+            accountSettings.addError = "Lost contact with the omacal backend during sign-in."
+        }
+        xhr.send()
+    }
+    // Manual CalDAV path (also the way to add Nextcloud with an app password).
+    function submitCaldavAdd(url, displayName, user, pass) {
+        var u = String(url || "").trim()
+        var un = String(user || "").trim()
+        var p = String(pass || "")
+        if (u === "") { accountSettings.addError = "Server URL is required."; return }
+        if (un === "") { accountSettings.addError = "Username is required."; return }
+        if (p === "") { accountSettings.addError = "Password is required."; return }
+        accountSettings.addError = ""
+        accountSettings.addBusy = true
+        accountSettings.addStatus = "Contacting the server\u2026"
+        var xhr = new XMLHttpRequest()
+        xhr.open("POST", apiBase + "/api/providers/caldav/add", true)
+        xhr.timeout = 60000
+        xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            accountSettings.addBusy = false
+            accountSettings.addStatus = ""
+            var data = null
+            try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
+            if (xhr.status === 200 && data && data.ok) {
+                finishAddProvider()
+            } else {
+                accountSettings.addError = (data && data.error)
+                    || ("Could not add the account (status " + xhr.status + ").")
+            }
+        }
+        xhr.onerror = function() { accountSettings.addBusy = false; accountSettings.addStatus = ""; accountSettings.addError = "Could not reach the omacal backend." }
+        xhr.ontimeout = function() { accountSettings.addBusy = false; accountSettings.addStatus = ""; accountSettings.addError = "The server did not respond." }
+        xhr.send(JSON.stringify({
+            url: u,
+            display_name: String(displayName || "").trim(),
+            username: un,
+            password: p
+        }))
+    }
+    // Shared success path for both add paths: leave the form, drop the setup
+    // view if we were in it, refresh the account list, then sync the new
+    // account's calendars (a fresh add means the cached sync gate must not skip).
+    function finishAddProvider() {
+        accountSettings.addOpen = false
+        accountSettings.resetAddForm()
+        loginPollTimer.stop()
+        pendingFlowId = ""
+        needsSetup = false
+        if (viewMode === "setup") viewMode = "month"
+        fetchAccountSettings()
+        syncAfterAdd()
+        keyCatcher.forceActiveFocus()
+    }
+    function syncAfterAdd() {
+        var xhr = new XMLHttpRequest()
+        xhr.open("POST", apiBase + "/api/sync", true)
+        xhr.timeout = 60000
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (xhr.status !== 200) return
+            loadCalendars()
+            loadRangeEvents(false)
+        }
+        xhr.send()
     }
 
     function deleteEvent() {
@@ -1516,13 +1698,13 @@ Panel {
         root.opened = true
         root.controller.show()
         if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function") root.bar.setCenterHoverRevealSuppressed(true)
-        // First-run: show the setup form instead of the calendar, and put
-        // focus straight into the server field so a new user can start typing.
+        // First-run: show the setup notice instead of the calendar. It points
+        // at the Account Settings dialog's Add Provider form (Enter or the
+        // Continue button opens it).
         if (needsSetup) {
             viewMode = "setup"
             dayDate = null
             pendingDayDate = null
-            if (setupForm && setupForm.focusServerField) setupForm.focusServerField()
             return
         }
         viewMode = "month"
@@ -1715,7 +1897,7 @@ Panel {
             // ConfirmDialog.selectedIndex defaults to 0 (Cancel), so Enter/Return
             // cancels; you must click Delete (or arrow to it) to confirm.
             onActivateRequested: function() {
-                if (root.viewMode === "setup") { setupForm.submit(); return }
+                if (root.viewMode === "setup") { root.openAccountSettings(true); return }
                 if (root.showDeleteConfirm) { deleteConfirm.handleKey({ key: Qt.Key_Return }); return }
                 if (root.showCalendars) { calToggle.handleKey({ key: Qt.Key_Return }); return }
                 if (root.showAccountSettings) { accountSettings.handleKey({ key: Qt.Key_Return }); return }
@@ -1906,15 +2088,45 @@ Panel {
                     }
                 }
 
+                // First-run notice: nothing is wired up yet, so point the user
+                // at the Account Settings dialog, which opens straight into its
+                // Add Provider form (browser sign-in, or server + password).
                 Item {
+                    id: setupNotice
                     visible: root.viewMode === "setup"
                     width: contentColumn.width
-                    height: setupForm.implicitHeight
-                    SetupForm {
-                        id: setupForm
-                        panel: root
-                        keyCatcher: keyCatcher
-                        hostColumn: contentColumn
+                    height: setupNoticeCol.implicitHeight
+
+                    Column {
+                        id: setupNoticeCol
+                        width: parent.width
+                        spacing: Style.space(12)
+
+                        Text {
+                            width: parent.width
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                            text: "Provider Setup Required"
+                            color: root.contentForeground
+                            font.family: root.contentFontFamily
+                            font.pixelSize: Style.font.body
+                            font.bold: true
+                        }
+                        Text {
+                            width: parent.width
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                            text: "Select \u201cAdd Provider\u201d in the next dialog to connect "
+                                + "a calendar account."
+                            color: root.contentForeground
+                            opacity: 0.7
+                            font.family: root.contentFontFamily
+                            font.pixelSize: Style.font.bodySmall
+                        }
+                        Button {
+                            text: "Continue"
+                            onClicked: root.openAccountSettings(true)
+                        }
                     }
                 }
 
@@ -2412,6 +2624,15 @@ Panel {
             onEditCancel: root.cancelEditCalendar()
         }
 
+        // Nextcloud sign-in poll loop: fires while a Login Flow v2 is pending
+        // and stops itself on a terminal status (see pollNcLogin).
+        Timer {
+            id: loginPollTimer
+            interval: 2000
+            repeat: true
+            onTriggered: root.pollNcLogin()
+        }
+
         // Account settings dialog (header U+2261 button): one tab per
         // provider in config.json's oauth section; data from GET /api/account
         // with secrets redacted server-side. Overlay: sibling of the Flickable.
@@ -2424,8 +2645,16 @@ Panel {
             foreground: root.contentForeground
             accent: root.accent
             fontFamily: root.contentFontFamily
-            onProviderToggled: root.toggleProvider(pname, enabled)
+            onProviderToggled: function(pname, enabled) { root.toggleProvider(pname, enabled) }
             onProviderEditRequested: function(pname) { root.editProvider(pname) }
+            onAddRequested: root.openAddProvider()
+            onAddCancel: root.cancelAddProvider()
+            onProviderChoiceRequested: function(key) { root.chooseProvider(key) }
+            onNavBack: root.addFormBack()
+            onNcSignInRequested: function(server) { root.ncSignIn(server) }
+            onCaldavAddSubmit: function(url, displayName, user, pass) {
+                root.submitCaldavAdd(url, displayName, user, pass)
+            }
             onClosed: root.dismissAccountSettings()
         }
     }

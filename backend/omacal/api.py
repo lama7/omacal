@@ -20,6 +20,16 @@ Endpoints:
     POST /api/account/toggle    → soft-enable/disable a provider ({provider,
                                    enabled}: config flag + enabled column on
                                    all its calendar rows)
+    POST /api/providers/nextcloud/login/start → begin a Nextcloud Login Flow
+                                   v2 browser sign-in ({server}) → {flow_id,
+                                   login_url}
+    GET  /api/providers/nextcloud/login/poll?id=.. → poll that flow
+                                   (pending|ok|expired|unknown|error); on "ok"
+                                   it commits the account (keyring + config
+                                   APPEND) and returns {status:"ok"}
+    POST /api/providers/caldav/add → add a CalDAV account from {url, username,
+                                   password, display_name?} (keyring + config
+                                   APPEND), for any CalDAV server
 """
 
 from __future__ import annotations
@@ -202,6 +212,11 @@ class OmacalHandler(BaseHTTPRequestHandler):
             self._json(200, shown)
             return
 
+        if path == "/api/providers/nextcloud/login/poll":
+            # Poll a browser sign-in; on success this also commits the account.
+            self._handle_nc_login_poll(qs)
+            return
+
         if path == "/api/events/today":
             # Today in LOCAL time. Midnight-to-midnight UTC made the bar
             # tooltip's "today" mean [yesterday 20:00, today 20:00] in US Eastern:
@@ -311,6 +326,14 @@ class OmacalHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/setup":
             self._handle_setup()
+            return
+        if parsed.path == "/api/providers/nextcloud/login/start":
+            # Begin a Nextcloud Login Flow v2 browser sign-in.
+            self._handle_nc_login_start()
+            return
+        if parsed.path == "/api/providers/caldav/add":
+            # Manually add a CalDAV account (server + username + password).
+            self._handle_caldav_add()
             return
         if parsed.path == "/api/sync":
             # ?if-stale=N: skip the sync entirely when the cache is fresher than
@@ -758,6 +781,135 @@ class OmacalHandler(BaseHTTPRequestHandler):
         #    POST /api/sync itself, so the user gets honest two-stage feedback
         #    (discovery done / data syncing) instead of one long silent wait.
         self._json(200, {"ok": True})
+
+    def _handle_nc_login_start(self) -> None:
+        """Begin a Nextcloud Login Flow v2 (browser sign-in).
+
+        No OAuth client registration and no Nextcloud admin rights are needed:
+        the flow mints a per-client app password the user can revoke later.
+        """
+        from omacal import loginflow
+
+        try:
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            data = json.loads(body)
+        except Exception as e:
+            self._json(400, {"ok": False, "error": f"Invalid request body: {e}"})
+            return
+        try:
+            started = loginflow.nextcloud_start(data.get("server") or "")
+        except ValueError as e:
+            self._json(200, {"ok": False, "error": str(e)})
+            return
+        except Exception as e:
+            logger.error("Nextcloud login flow start failed: %s", e)
+            self._json(500, {"ok": False, "error": str(e)})
+            return
+        self._json(200, {"ok": True, **started})
+
+    def _handle_nc_login_poll(self, qs: dict) -> None:
+        """Poll a Nextcloud login flow; on success, commit the account."""
+        from omacal import loginflow
+
+        flow_id = (qs.get("id") or [""])[0]
+        if not flow_id:
+            self._json(400, {"error": "id is required"})
+            return
+        result = loginflow.nextcloud_poll(flow_id)
+        if result.get("status") != "ok":
+            self._json(200, result)
+            return
+        try:
+            account = self._commit_caldav_account(
+                result["server"], result["login_name"], result["app_password"])
+        except ValueError as e:
+            self._json(200, {"status": "error", "error": str(e)})
+            return
+        except Exception as e:
+            logger.error("Nextcloud login commit failed: %s", e)
+            self._json(500, {"status": "error", "error": str(e)})
+            return
+        self._json(200, {"status": "ok", "account": account})
+
+    def _handle_caldav_add(self) -> None:
+        """Add a CalDAV account from server + username + password.
+
+        The manual sibling of the Nextcloud browser sign-in: works for any
+        CalDAV server, and for Nextcloud with an app password (which 2FA
+        accounts require). APPENDS to config.json, unlike /api/setup.
+        """
+        try:
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            data = json.loads(body)
+        except Exception as e:
+            self._json(400, {"ok": False, "error": f"Invalid request body: {e}"})
+            return
+
+        url = (data.get("url") or "").strip()
+        username = (data.get("username") or "").strip()
+        password = data.get("password") or ""
+        display_name = (data.get("display_name") or "").strip() or None
+        if not url:
+            self._json(200, {"ok": False, "error": "Server URL is required"})
+            return
+        if not username:
+            self._json(200, {"ok": False, "error": "Username is required"})
+            return
+        if not password:
+            self._json(200, {"ok": False, "error": "Password is required"})
+            return
+        try:
+            account = self._commit_caldav_account(url, username, password, display_name)
+        except ValueError as e:
+            self._json(200, {"ok": False, "error": str(e)})
+            return
+        except Exception as e:
+            logger.error("CalDAV add failed: %s", e)
+            self._json(500, {"ok": False, "error": str(e)})
+            return
+        self._json(200, {"ok": True, "account": account})
+
+    def _commit_caldav_account(
+        self,
+        server: str,
+        username: str,
+        password: str,
+        display_name: str | None = None,
+    ) -> dict:
+        """Validate + discover, store the password, APPEND the account.
+
+        Shared by the Nextcloud browser sign-in (password = minted app password)
+        and the manual CalDAV path. Unlike /api/setup (which REPLACES the whole
+        calendar list for a single first-run account), this appends to
+        config.json so an existing account list survives "Add Provider". Nothing
+        is written until the credentials are proven: a rejected password or
+        unreachable server raises before the keyring or config are touched.
+        """
+        from omacal.config import load_config, save_config
+        from omacal.keyring_store import store_password
+
+        url, discovered = _resolve_caldav_url(server, username, password)
+        if not store_password(url, username, password):
+            raise ValueError("Could not store credentials in the system keyring")
+
+        cfg = load_config()
+        calendars = list(cfg.get("calendars") or [])
+        # Idempotent: adding the same principal again just refreshes its secret.
+        if not any(
+            (c.get("url") or "").rstrip("/") == url.rstrip("/") for c in calendars
+        ):
+            calendars.append({
+                "url": url,
+                "display_name": (display_name or "").strip()
+                or (discovered[0].get("display_name") if discovered else None)
+                or urlparse(server).hostname or "Calendar",
+                "username": username,
+                "enabled": True,
+            })
+            cfg["calendars"] = calendars
+            save_config(cfg=cfg)
+            OmacalHandler.cfg_calendars = calendars
+        return {"url": url, "username": username}
 
     def _events_in_window(self, start: datetime, end: datetime, calendar_ids: list[int] | None) -> list[dict]:
         """Cached events plus expanded occurrences for [start, end).
