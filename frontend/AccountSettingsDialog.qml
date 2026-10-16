@@ -42,6 +42,12 @@ import qs.Ui
 Item {
   id: root
   property bool opened: false
+  // The keyboard-cursor cue stays hidden until the user actually navigates
+  // (arrows/Tab in handleKey). Otherwise the first account row / the first
+  // provider choice is painted with the hot fill on open and reads as a stuck
+  // hover. Mouse hover has its own cue and is unaffected.
+  property bool cursorEngaged: false
+  onOpenedChanged: if (opened) cursorEngaged = false
   // Account rows as a ListModel of { key, name, enabled } (panel-built).
   property var model: null
   readonly property int accountCount: model ? model.count : 0
@@ -119,6 +125,7 @@ Item {
   function resetAddForm() {
     addStage = ""
     chooserIndex = 0
+    cursorEngaged = false
     pendingServer = ""
     pendingName = ""
     pendingUser = ""
@@ -149,11 +156,13 @@ Item {
             || event.key === Qt.Key_Backtab) {
           chooserIndex = (chooserIndex + providerChoices.length - 1)
               % providerChoices.length
+          cursorEngaged = true
           return true
         }
         if (event.key === Qt.Key_Right || event.key === Qt.Key_Down
             || event.key === Qt.Key_Tab) {
           chooserIndex = (chooserIndex + 1) % providerChoices.length
+          cursorEngaged = true
           return true
         }
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
@@ -171,10 +180,12 @@ Item {
     var n = Math.max(accountCount, 1)
     if (event.key === Qt.Key_Left || event.key === Qt.Key_Backtab) {
       selectedIndex = (selectedIndex + n - 1) % n
+      cursorEngaged = true
       return true
     }
     if (event.key === Qt.Key_Right || event.key === Qt.Key_Tab) {
       selectedIndex = (selectedIndex + 1) % n
+      cursorEngaged = true
       return true
     }
     if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
@@ -291,7 +302,8 @@ Item {
             label: provRow.modelData.name
             description: provRow.modelData.enabled ? "Enabled" : "Disabled"
             checked: provRow.modelData.enabled
-            hasCursor: provRow.index === root.selectedIndex
+            hasCursor: root.cursorEngaged
+                && provRow.index === root.selectedIndex
             foreground: root.foreground
             accent: root.accent
             fontFamily: root.fontFamily
@@ -379,7 +391,7 @@ Item {
               required property int index
               Layout.fillWidth: true
               readonly property bool hot: hover.containsMouse
-                  || (root.chooserIndex === choiceRow.index)
+                  || (root.cursorEngaged && root.chooserIndex === choiceRow.index)
               implicitHeight: choiceCol.implicitHeight + Style.space(16)
               radius: root.cornerRadius
               color: hot
