@@ -47,6 +47,7 @@ Item {
 
   signal closed()
   signal providerToggled(string pname, bool enabled)
+  signal providerEditRequested(string pname)
 
   // Keyboard cursor: which provider row is selected (0..count-1).
   property int selectedIndex: 0
@@ -173,6 +174,9 @@ Item {
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.bottom: parent.bottom
+            // Reserve the action-button gutter on EVERY row so all toggles are
+            // the same width and provider names still fit.
+            anchors.rightMargin: rowEditBtn.width + Style.space(8)
             label: provRow.modelData.name
             description: provRow.modelData.enabled ? "Enabled" : "Disabled"
             checked: provRow.modelData.enabled
@@ -182,6 +186,23 @@ Item {
             fontFamily: root.fontFamily
             onClicked: root.providerToggled(provRow.modelData.name,
                                             !provRow.modelData.enabled)
+          }
+
+          // Per-provider action, right-justified in the row: the same
+          // edit_calendar glyph (U+F08A7) the calendar rows use. Its behaviour
+          // is not decided yet, so the dialog only emits providerEditRequested
+          // and stays presentational (the panel owns whatever it does).
+          PanelActionButton {
+            id: rowEditBtn
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(6)
+            anchors.verticalCenter: parent.verticalCenter
+            iconText: "\uDB82\uDCA7"
+            fontSize: 22
+            tooltipText: "Edit provider"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            onClicked: root.providerEditRequested(provRow.modelData.name)
           }
         }
       }

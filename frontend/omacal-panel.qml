@@ -1109,6 +1109,13 @@ Panel {
         xhr.send(JSON.stringify({ provider: pname, enabled: enabled }))
     }
 
+    // Per-provider action button in the Account Settings dialog (the row's
+    // edit_calendar glyph). Behaviour is not decided yet — shipped as a no-op
+    // so the button is visible and wired; the design call goes to the user.
+    function editProvider(pname) {
+        // TODO: decide what the per-provider action should do.
+    }
+
     function deleteEvent() {
         if (!pendingDeleteEvent) return
         var ev = pendingDeleteEvent
@@ -2418,6 +2425,7 @@ Panel {
             accent: root.accent
             fontFamily: root.contentFontFamily
             onProviderToggled: root.toggleProvider(pname, enabled)
+            onProviderEditRequested: function(pname) { root.editProvider(pname) }
             onClosed: root.dismissAccountSettings()
         }
     }
