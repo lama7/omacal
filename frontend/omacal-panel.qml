@@ -38,7 +38,7 @@ Panel {
     property bool loadingEvents: false
     property string error: ""
     property bool showAccountSettings: false
-    property var accountData: ({})
+    property var accountData: []
     // Add-provider flow: the panel owns the Nextcloud sign-in poll loop.
     property string pendingFlowId: ""
     property bool ncPollInFlight: false
@@ -311,7 +311,8 @@ Panel {
         // Reminders are CalDAV VTODOs; Google reminders would need the Tasks
         // API (not wired) — never route a reminder to a Google calendar.
         var writable = calendars.filter(function(c) {
-            return c.writable && (c.provider || "caldav") !== "google"
+            return c.writable && c.account_enabled !== false
+                && (c.provider || "caldav") !== "google"
         })
         var task = writable.find(function(c) { return c.supports_todo })
         return task ? task.id : (writable.length > 0 ? writable[0].id : 0)
@@ -356,8 +357,11 @@ Panel {
         addEventForm.alarmHourDropdown.value = "9"
         addEventForm.alarmMinuteDropdown.value = "0"
         // Default calendar: reminders go to the task calendar (VTODO-capable);
-        // events prefer "Dad's Calendar", then the first writable.
-        var writable = calendars.filter(function(c) { return c.writable })
+        // events prefer "Dad's Calendar", then the first writable. A calendar
+        // whose ACCOUNT is disabled is skipped — the account switch governs it.
+        var writable = calendars.filter(function(c) {
+            return c.writable && c.account_enabled !== false
+        })
         if (newEventIsReminder) {
             newEventCalendarId = defaultReminderCalendarId()
         } else {
@@ -721,7 +725,8 @@ Panel {
     // Calendar toggle form (header button, right of "previous month").
     // Builds the dialog's model from the configured calendars, re-syncing the
     // on-screen `enabled` state so a hidden calendar still lists and can be
-    // re-enabled.
+    // re-enabled. Calendars whose ACCOUNT is disabled are omitted: the account
+    // switch in Account Settings is the single control for those.
     function buildCalToggleModel() {
         // Rebuild the dialog's model from the configured calendars. Called at
         // open and after every refetch (loadCalendars). It is a ListModel so a
@@ -730,6 +735,7 @@ Panel {
         // the switch knob animate, instead of destroying and re-creating all rows.
         calToggleModel.clear()
         for (var i = 0; i < calendars.length; i++) {
+            if (calendars[i].account_enabled === false) continue
             calToggleModel.append({ id: calendars[i].id, name: calendars[i].display_name,
                                     enabled: !!calendars[i].enabled,
                                     deletable: !!calendars[i].deletable,
@@ -776,73 +782,48 @@ Panel {
         keyCatcher.forceActiveFocus()
     }
     function fetchAccountSettings() {
-        // GET /api/account: the config.json "oauth" section, per provider,
-        // with client secrets redacted server-side. Rebuilds the dialog's
-        // ListModel once the response lands — a rebuild here is safe because
-        // nothing is animating (a TOGGLE does an in-place setProperty instead;
-        // see toggleProvider).
-        accountData = ({})
+        // GET /api/account: one row per ACCOUNT (a config.json calendars[]
+        // entry — CalDAV accounts keyed by principal URL, the Google account by
+        // "google"). Rebuilds the dialog's ListModel once the response lands — a
+        // rebuild here is safe because nothing is animating (a TOGGLE does an
+        // in-place setProperty instead; see toggleAccount).
+        accountData = []
         buildAccountModel()
         var xhr = new XMLHttpRequest()
         xhr.open("GET", accountUrl, true)
         xhr.timeout = 30000
         xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE) {
-                if (xhr.status === 200) {
-                    try { accountData = JSON.parse(xhr.responseText) }
-                    catch (e) { accountData = ({}) }
-                    buildAccountModel()
-                } else {
-                    error = "Account settings unavailable"
-                }
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (xhr.status === 200) {
+                try { accountData = JSON.parse(xhr.responseText) }
+                catch (e) { accountData = [] }
+                if (!Array.isArray(accountData)) accountData = []
+                buildAccountModel()
+            } else {
+                error = "Account settings unavailable"
             }
         }
         xhr.send()
     }
-    // True unless the backend explicitly flagged the provider disabled (a
-    // fresh config predates the flag).
-    function accountProviderEnabled(name) {
-        var s = accountData[name] || ({})
-        return s["enabled"] === undefined ? true : !!s["enabled"]
-    }
-    // JSON value -> display string: arrays joined, nested objects flattened to
-    // k=v pairs, scalars stringified.
-    function fmtAccountVal(v) {
-        if (Array.isArray(v)) return v.join(" ")
-        if (v === null || v === undefined) return ""
-        if (typeof v === "object") {
-            var parts = []
-            for (var k in v) parts.push(k + "=" + fmtAccountVal(v[k]))
-            return parts.join(" ")
-        }
-        return String(v)
-    }
-    // Build the dialog's provider rows once per account fetch: name, enabled
-    // flag, and the provider's settings pre-rendered as one newline-joined
-    // string (a single Text per row — a nested Repeater over a ListModel
-    // var-array role renders the row object's QQmlDMAbstractItemModelData, not
-    // the strings, so the lines are flattened here instead).
+    // Build the dialog's account rows once per fetch: key (what a toggle posts),
+    // label (the server host, or "Google"), and the enabled flag.
     function buildAccountModel() {
         accountModel.clear()
-        var names = Object.keys(accountData || ({}))
-        for (var i = 0; i < names.length; i++) {
-            var name = names[i]
-            var s = accountData[name] || ({})
-            var lines = []
-            for (var k in s) {
-                if (k === "enabled") continue
-                var v = fmtAccountVal(s[k])
-                lines.push(k + ": " + (v === "" ? "(none)" : v))
-            }
-            accountModel.append({ name: name, enabled: accountProviderEnabled(name),
-                                  settings: lines.join("\n") })
+        var rows = accountData || []
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i] || {}
+            accountModel.append({
+                key: String(r.key || ""),
+                name: String(r.name || r.key || "Account"),
+                enabled: r.enabled === undefined ? true : !!r.enabled,
+            })
         }
     }
-    // In-place flip of one provider row's `enabled`, so the dialog's Toggle
-    // animates on a living delegate (not a model rebuild). Matches by name.
-    function updateProviderState(name, enabled) {
+    // In-place flip of one account row's `enabled`, so the dialog's Toggle
+    // animates on a living delegate (not a model rebuild). Matches by key.
+    function updateAccountState(key, enabled) {
         for (var i = 0; i < accountModel.count; i++) {
-            if (accountModel.get(i).name === name) {
+            if (accountModel.get(i).key === key) {
                 accountModel.setProperty(i, "enabled", enabled)
                 break
             }
@@ -1091,37 +1072,37 @@ Panel {
         xhr.send(JSON.stringify({ calendar_id: id, enabled: enabled }))
     }
 
-    function toggleProvider(pname, enabled) {
+    function toggleAccount(key, enabled) {
         var xhr = new XMLHttpRequest()
         xhr.open("POST", apiBase + "/api/account/toggle", true)
         xhr.timeout = 15000
         xhr.onreadystatechange = function() {
             if (xhr.readyState !== XMLHttpRequest.DONE) return
             if (xhr.status === 200) {
-                // Soft disable: the backend flipped the provider flag and the
-                // enabled column on all of its calendar rows. Flip the one
-                // dialog row in place (animates on the living delegate) and
-                // re-fetch the calendars (month view + calendar dialog) —
-                // event queries already filter c.enabled. Deliberately do NOT
-                // rebuild the model here: it would tear down every row, killing
-                // the knob animation.
-                updateProviderState(pname, enabled)
+                // Soft disable: the backend persisted the flag on the account's
+                // config entry and flipped the enabled column on all of its
+                // calendar rows. Flip the one dialog row in place (animates on
+                // the living delegate) and re-fetch the calendars (month view +
+                // calendar dialog) — event queries already filter c.enabled.
+                // Deliberately do NOT rebuild the model here: it would tear down
+                // every row, killing the knob animation.
+                updateAccountState(key, enabled)
                 loadCalendars()
             } else {
                 error = (xhr.status === 0)
                     ? "omacal API did not respond"
-                    : "Cannot toggle provider (" + xhr.status + ")"
+                    : "Cannot toggle account (" + xhr.status + ")"
                 fetchAccountSettings()
             }
         }
-        xhr.send(JSON.stringify({ provider: pname, enabled: enabled }))
+        xhr.send(JSON.stringify({ key: key, enabled: enabled }))
     }
 
-    // Per-provider action button in the Account Settings dialog (the row's
+    // Per-account action button in the Account Settings dialog (the row's
     // edit_calendar glyph). Behaviour is not decided yet — shipped as a no-op
     // so the button is visible and wired; the design call goes to the user.
-    function editProvider(pname) {
-        // TODO: decide what the per-provider action should do.
+    function editAccount(key) {
+        // TODO: decide what the per-account action should do.
     }
 
     // --- Add Provider (AccountSettingsDialog's inline add form) --------------
@@ -1847,6 +1828,18 @@ Panel {
             var text = backendStdout.text
             root.applyBackendResult(exitCode)
         }
+    }
+
+    // Nextcloud sign-in poll loop: fires while a Login Flow v2 is pending and
+    // stops itself on a terminal status (see pollNcLogin). Declared as a child
+    // of the root Panel — NOT of KeyboardPanel, whose default property is
+    // contentItem and accepts only Items, so a Timer declared there is dropped
+    // ("Cannot assign object of type QQmlTimer to list property contentItem").
+    Timer {
+        id: loginPollTimer
+        interval: 2000
+        repeat: true
+        onTriggered: root.pollNcLogin()
     }
 
     KeyboardPanel {
@@ -2624,18 +2617,10 @@ Panel {
             onEditCancel: root.cancelEditCalendar()
         }
 
-        // Nextcloud sign-in poll loop: fires while a Login Flow v2 is pending
-        // and stops itself on a terminal status (see pollNcLogin).
-        Timer {
-            id: loginPollTimer
-            interval: 2000
-            repeat: true
-            onTriggered: root.pollNcLogin()
-        }
-
-        // Account settings dialog (header U+2261 button): one tab per
-        // provider in config.json's oauth section; data from GET /api/account
-        // with secrets redacted server-side. Overlay: sibling of the Flickable.
+        // Account settings dialog (header U+2261 button): one row per account
+        // (config.json calendars[] entry — CalDAV keyed by principal URL, Google
+        // by "google"); data from GET /api/account. Overlay: sibling of the
+        // Flickable.
         AccountSettingsDialog {
             id: accountSettings
             anchors.fill: parent
@@ -2645,8 +2630,8 @@ Panel {
             foreground: root.contentForeground
             accent: root.accent
             fontFamily: root.contentFontFamily
-            onProviderToggled: function(pname, enabled) { root.toggleProvider(pname, enabled) }
-            onProviderEditRequested: function(pname) { root.editProvider(pname) }
+            onAccountToggled: function(key, enabled) { root.toggleAccount(key, enabled) }
+            onAccountEditRequested: function(key) { root.editAccount(key) }
             onAddRequested: root.openAddProvider()
             onAddCancel: root.cancelAddProvider()
             onProviderChoiceRequested: function(key) { root.chooseProvider(key) }

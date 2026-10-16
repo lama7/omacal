@@ -5,12 +5,13 @@ import qs.Commons
 import qs.Ui
 
 // Account settings dialog: opened by the header's U+2261 (triple-bar) button.
-// Shows one Toggle row per provider key in config.json's "oauth" section
-// (supplied by the panel via GET /api/account), matching the calendar dialog's
-// control. Toggling fires providerToggled(name, enabled); the panel owns the
-// POST /api/account/toggle, so this dialog stays presentational.
+// Shows one Toggle row per ACCOUNT — a config.json calendars[] entry, supplied
+// by the panel via GET /api/account (CalDAV accounts keyed by their principal
+// URL, the Google account by "google"). Toggling fires accountToggled(key,
+// enabled); the panel owns the POST /api/account/toggle, so this dialog stays
+// presentational.
 //
-// `model` is a ListModel of { name, enabled } built by the panel. It is a
+// `model` is a ListModel of { key, name, enabled } built by the panel. It is a
 // ListModel (not a plain JS array) so a toggle flips ONE row in place via
 // setProperty() — a plain-array rebuild would tear down every delegate, and a
 // re-created Toggle appears already-checked so its knob never animates.
@@ -31,17 +32,19 @@ import qs.Ui
 // The panel owns every POST and flips addOpen/addStage and the pending fields,
 // so this dialog stays presentational. Google (BYO client) is a later stage.
 //
-// Soft-disable semantics: toggling a provider off flips the enabled flag on
-// every DB row of that provider (view/edit queries already filter on
-// c.enabled = 1) and gates its sync source; nothing is deleted, so toggling
-// back on restores instantly without re-syncing.
+// Soft-disable semantics: toggling an account off persists the flag on its
+// config.json calendars[] entry and flips the enabled column on every DB row of
+// that account (view/edit queries already filter on c.enabled = 1), and its sync
+// source is skipped; nothing is deleted, so toggling back on restores instantly
+// without re-syncing. Per-account, not per-provider: every CalDAV account shares
+// provider='caldav', so gating keys on the account (principal URL).
 
 Item {
   id: root
   property bool opened: false
-  // Provider rows as a ListModel of { name, enabled } (panel-built).
+  // Account rows as a ListModel of { key, name, enabled } (panel-built).
   property var model: null
-  readonly property int providerCount: model ? model.count : 0
+  readonly property int accountCount: model ? model.count : 0
   // Whole dialog (scrim + card) only renders while open — same gate as
   // CalendarToggleDialog; otherwise the card would always cover the view.
   visible: opened
@@ -53,8 +56,8 @@ Item {
   property int cornerRadius: Style.cornerRadius
 
   signal closed()
-  signal providerToggled(string pname, bool enabled)
-  signal providerEditRequested(string pname)
+  signal accountToggled(string key, bool enabled)
+  signal accountEditRequested(string key)
 
   // --- Add-provider form (panel-driven, like CalendarToggleDialog's) --------
   property bool addOpen: false
@@ -90,17 +93,17 @@ Item {
   signal ncSignInRequested(string server)
   signal caldavAddSubmit(string url, string displayName, string user, string pass)
 
-  // Keyboard cursor: which provider row is selected (0..count-1).
+  // Keyboard cursor: which account row is selected (0..count-1).
   property int selectedIndex: 0
 
   // Stable content estimate (same discipline as CalendarToggleDialog): one
-  // fixed-height toggle row per provider, plus a small gap between rows. The
+  // fixed-height toggle row per account, plus a small gap between rows. The
   // card height and the rows region are both derived from this, so a toggle
   // press never changes them.
   readonly property int rowHeight: Style.space(58)
   readonly property int rowGap: Style.space(4)
   readonly property int estimatedRowsHeight:
-      providerCount * rowHeight + Math.max(providerCount - 1, 0) * rowGap
+      accountCount * rowHeight + Math.max(accountCount - 1, 0) * rowGap
 
   readonly property int gap: Style.space(10)
   readonly property int naturalCardHeight:
@@ -128,7 +131,7 @@ Item {
     root.providerChoiceRequested(key)
   }
 
-  // Keyboard: arrows/Tab move between provider rows, Enter/Space toggles the
+  // Keyboard: arrows/Tab move between account rows, Enter/Space toggles the
   // selected row (mirrors the calendar dialog), Escape closes. Everything
   // else is swallowed while open so stray keys never drive the month view.
   function handleKey(event) {
@@ -165,7 +168,7 @@ Item {
       return false
     }
     if (event.key === Qt.Key_Escape) { root.closed(); return true }
-    var n = Math.max(providerCount, 1)
+    var n = Math.max(accountCount, 1)
     if (event.key === Qt.Key_Left || event.key === Qt.Key_Backtab) {
       selectedIndex = (selectedIndex + n - 1) % n
       return true
@@ -176,9 +179,9 @@ Item {
     }
     if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
         || event.key === Qt.Key_Space) {
-      if (selectedIndex < providerCount) {
+      if (selectedIndex < accountCount) {
         var m = model.get(selectedIndex)
-        root.providerToggled(m.name, !m.enabled)
+        root.accountToggled(m.key, !m.enabled)
       }
       return true
     }
@@ -257,7 +260,7 @@ Item {
         foreground: root.foreground
       }
 
-      // One fixed-height Toggle row per provider. Bound to the panel's
+      // One fixed-height Toggle row per account. Bound to the panel's
       // ListModel; a toggle flips one row via setProperty so this delegate is
       // NOT re-created and the knob animates. The row's height is a constant
       // (rowHeight), never the Toggle's live implicitHeight, so a toggle press
@@ -283,7 +286,7 @@ Item {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             // Reserve the action-button gutter on EVERY row so all toggles are
-            // the same width and provider names still fit.
+            // the same width and account names still fit.
             anchors.rightMargin: rowEditBtn.width + Style.space(8)
             label: provRow.modelData.name
             description: provRow.modelData.enabled ? "Enabled" : "Disabled"
@@ -292,13 +295,13 @@ Item {
             foreground: root.foreground
             accent: root.accent
             fontFamily: root.fontFamily
-            onClicked: root.providerToggled(provRow.modelData.name,
-                                            !provRow.modelData.enabled)
+            onClicked: root.accountToggled(provRow.modelData.key,
+                                           !provRow.modelData.enabled)
           }
 
-          // Per-provider action, right-justified in the row: the same
+          // Per-account action, right-justified in the row: the same
           // edit_calendar glyph (U+F08A7) the calendar rows use. Its behaviour
-          // is not decided yet, so the dialog only emits providerEditRequested
+          // is not decided yet, so the dialog only emits accountEditRequested
           // and stays presentational (the panel owns whatever it does).
           PanelActionButton {
             id: rowEditBtn
@@ -307,10 +310,10 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             iconText: "\uDB82\uDCA7"
             fontSize: 22
-            tooltipText: "Edit provider"
+            tooltipText: "Edit account"
             foreground: root.foreground
             fontFamily: root.fontFamily
-            onClicked: root.providerEditRequested(provRow.modelData.name)
+            onClicked: root.accountEditRequested(provRow.modelData.key)
           }
         }
       }

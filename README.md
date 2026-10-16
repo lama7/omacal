@@ -88,6 +88,11 @@ omarchy plugin remove omacal    # removes the plugin itself
 ## Calendars
 
 The calendar-select dialog lists every known calendar with a toggle row each.
+Calendars belonging to a **disabled account** (see
+[Account settings](#account-settings)) are omitted — the account switch governs
+them, so toggling one back on while its account is off would contradict it.
+Same gate on the add-event Calendar dropdown: a disabled account's calendars are
+not offered as a destination.
 
 - **Show / hide** — toggled-off calendars stop rendering dots and listing
   events in the month/day views.
@@ -161,17 +166,27 @@ be ENABLED in the Cloud project (403 "API has not been used" otherwise).
   the POST carries provider=google and add_calendar_named honors an explicit provider
   over the presence heuristic (provider=caldav requires a configured CalDAV account).
 - **Account settings** — the header's U+2261 button (left of Calendar Select) opens an
-  Account Settings dialog: one row per provider key in config.json's oauth section, each
-  with a qs.Ui Toggle (Enabled/Disabled) plus that provider's settings as key: value lines
-  straight from the JSON (any *secret* values redacted server-side via GET /api/account;
-  an 'enabled' flag per provider is injected with default true). Toggling a provider is a
-  SOFT disable: POST /api/account/toggle persists the flag in config.json's oauth section
-  and flips the enabled column on every cached row of that provider (oauth key google maps
-  to google rows; any other oauth key, e.g. nextcloud, maps to the caldav rows). Disabled
-  providers' calendars are neither viewed nor altered (event/reminder queries filter on
-  c.enabled = 1), their sync sources are skipped (status 'disabled' in the sync summary),
-  and the stale prune protects their rows so a disable never hard-deletes anything —
-  re-enabling is instant, no re-sync. Settings lines stay read-only display for now.
+  Account Settings dialog: one row per ACCOUNT (a config.json `calendars[]` entry), each
+  with a qs.Ui Toggle (Enabled/Disabled). CalDAV accounts are keyed by their principal
+  URL and labelled by server host; the Google account is keyed `google` and labelled
+  "Google". GET /api/account returns `{key, name, display_name, provider, enabled,
+  calendars}`. Toggling an account is a SOFT disable: POST /api/account/toggle persists
+  the flag on that `calendars[]` entry and flips the `enabled` column on every cached row
+  of that ACCOUNT (CalDAV rows matched by principal_url, Google rows by provider — per
+  account, not per provider, because every CalDAV account shares provider='caldav' and a
+  provider-level flip would disable them all at once). A disabled account's calendars are
+  neither viewed nor altered (event/reminder queries filter on c.enabled = 1), its sync
+  source is skipped (status 'disabled' in the sync summary), and the stale prune protects
+  its rows so a disable never hard-deletes anything — re-enabling is instant, no re-sync.
+  GET /api/calendars annotates each row with `account_enabled` (derived from config, since
+  the row's own `enabled` flag cannot tell an account disable from a single-calendar hide),
+  and the panel gates on it: a disabled account's calendars are omitted from the
+  calendar-select list and from the add-event Calendar dropdown. The account flag lives on
+  the `calendars[]` entry only — the oauth section carries no enable flag (a vestigial
+  `oauth.*.enabled` from the earlier provider-level scheme was removed).
+  The header's "+" opens an inline Add Provider form: Nextcloud browser sign-in (Login
+  Flow v2 — no client registration, no admin rights) or any CalDAV server from
+  server + username + password (a Nextcloud app password works too).
   Calendar rename PATCHes the calendar resource (`summary`); recolour PATCHes the
   calendarList ITEM (`/users/me/calendarList/<id>`) with `backgroundColor` +
   `foregroundColor` and `colorRgbFormat=true` as a QUERY PARAM — colour is a

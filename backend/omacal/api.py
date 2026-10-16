@@ -14,12 +14,15 @@ Endpoints:
                                    signed-in user (reuses keyring creds)
     PUT  /api/calendars/<id>    → edit an owned calendar's name and/or
                                    color ({name?, color?}; PROPPATCH)
-    GET  /api/account           → per-provider account settings (config.json
-                                   oauth section; client secrets redacted; an
-                                   "enabled" flag per provider)
-    POST /api/account/toggle    → soft-enable/disable a provider ({provider,
-                                   enabled}: config flag + enabled column on
-                                   all its calendar rows)
+    GET  /api/account           → one row per ACCOUNT (a config.json
+                                   calendars[] entry): {key, name,
+                                   display_name, provider, enabled, calendars}.
+                                   CalDAV accounts key on their principal URL,
+                                   the Google account on "google"
+    POST /api/account/toggle    → soft-enable/disable an account ({key,
+                                   enabled}: persists the flag on the entry and
+                                   flips the enabled column on all that
+                                   account's calendar rows)
     POST /api/providers/nextcloud/login/start → begin a Nextcloud Login Flow
                                    v2 browser sign-in ({server}) → {flow_id,
                                    login_url}
@@ -134,6 +137,41 @@ def _principal_url(fallback: str, discovered: list[dict]) -> str:
     return fallback
 
 
+def _account_key(cal: dict) -> str:
+    """Stable key for a config.json ``calendars[]`` account entry.
+
+    The Google account is ``"google"``; a CalDAV account is keyed by its
+    principal URL, because every CalDAV account shares ``provider='caldav'``
+    and the principal is what tells them apart (the DB rows carry the same
+    principal_url, so this key is also how a toggle finds its rows).
+    """
+    if (cal.get("provider") or "caldav") == "google":
+        return "google"
+    return (cal.get("url") or "").rstrip("/")
+
+
+def _account_label(cal: dict) -> str:
+    """Human label for an account row: the server host, or "Google"."""
+    if (cal.get("provider") or "caldav") == "google":
+        return "Google"
+    host = urlparse(cal.get("url") or "").hostname
+    return host or cal.get("display_name") or "Calendar"
+
+
+def _row_account_key(row: dict) -> str:
+    """The account key a cached calendar ROW belongs to.
+
+    Mirror of ``_account_key`` for DB rows (which carry ``principal_url``
+    instead of ``url``): "google" for a Google row, else the row's principal
+    URL. Used to tell whether a row's account is disabled — the row's own
+    ``enabled`` flag cannot, because disabling an account and hiding a single
+    calendar both set it to 0.
+    """
+    if (row.get("provider") or "caldav") == "google":
+        return "google"
+    return (row.get("principal_url") or "").rstrip("/")
+
+
 class OmacalHandler(BaseHTTPRequestHandler):
     """Single-connection HTTP handler backed by a shared SQLite connection."""
 
@@ -163,6 +201,17 @@ class OmacalHandler(BaseHTTPRequestHandler):
             from omacal.keyring_store import has_password
             from omacal.sync import calendar_is_deletable
             calendars = db_get_calendars(self.db_conn)
+            # Account-level gate (POST /api/account/toggle): a row whose ACCOUNT
+            # is disabled is marked account_enabled=false so the panel can keep
+            # it out of the add-event destination dropdown and the calendars
+            # (visibility) list — the account switch in Account Settings is the
+            # single control for those calendars. Derived from config, not from
+            # the row's own `enabled` flag, which cannot tell an account disable
+            # from a single-calendar hide (both set it to 0).
+            disabled_accounts = {
+                _account_key(c) for c in self._cfg_calendars()
+                if not c.get("enabled", True)
+            }
             for c in calendars:
                 if c.get("provider") == "google":
                     # Google rows write through the Calendar API with the OAuth
@@ -181,6 +230,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
                     # Subscribed (URL-added) rows are always deletable: the server
                     # treats that as unsubscribe (local cache removal only).
                     c["deletable"] = bool(c.get("subscribed")) or calendar_is_deletable(c.get("url"), c.get("principal_url"))
+                c["account_enabled"] = _row_account_key(c) not in disabled_accounts
                 c.pop("password", None)
                 c.pop("username", None)
                 c.pop("sync_token", None)
@@ -193,23 +243,38 @@ class OmacalHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/account":
-            # Per-provider account settings straight from config.json's oauth
-            # section. Any key containing "secret" is redacted here so the panel
-            # can display the settings without the secret ever leaving the API.
-            oauth = getattr(OmacalHandler, "cfg_oauth", None) or {}
-            shown = {}
-            for name, settings in oauth.items():
-                red = {}
-                for key, val in (settings or {}).items():
-                    if key == "enabled":
-                        continue  # injected below with the default applied
-                    if "secret" in key.lower():
-                        red[key] = "[configured]" if val else ""
+            # One entry per ACCOUNT — a config.json calendars[] entry — not per
+            # oauth provider (the oauth section is credential config, not an
+            # account). CalDAV accounts are keyed by principal URL, the Google
+            # account by "google"; `enabled` is the account's own soft-disable
+            # flag (absent means enabled) and `calendars` is how many cached rows
+            # currently belong to it.
+            accounts = []
+            for cal in self._cfg_calendars():
+                provider = cal.get("provider", "caldav")
+                key = _account_key(cal)
+                try:
+                    if provider == "google":
+                        row = self.db_conn.execute(
+                            "SELECT COUNT(*) FROM calendars WHERE provider = 'google'"
+                        ).fetchone()
                     else:
-                        red[key] = val
-                red["enabled"] = bool((settings or {}).get("enabled", True))
-                shown[name] = red
-            self._json(200, shown)
+                        row = self.db_conn.execute(
+                            "SELECT COUNT(*) FROM calendars "
+                            "WHERE rtrim(principal_url, '/') = ?", (key,)
+                        ).fetchone()
+                    count = row[0] if row else 0
+                except Exception:
+                    count = 0
+                accounts.append({
+                    "key": key,
+                    "name": _account_label(cal),
+                    "display_name": cal.get("display_name") or "",
+                    "provider": provider,
+                    "enabled": bool(cal.get("enabled", True)),
+                    "calendars": count,
+                })
+            self._json(200, accounts)
             return
 
         if path == "/api/providers/nextcloud/login/poll":
@@ -503,30 +568,32 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 self._json(500, {"error": str(e)})
             return
         if parsed.path == "/api/account/toggle":
-            # Soft-enable/disable a provider: persist the flag in config.json's
-            # oauth section (survives DB wipes; absent means enabled) and flip
-            # the enabled column on every cached row of that provider. OAuth
-            # key "google" maps to DB provider google; any other oauth key (the
-            # configured CalDAV account, e.g. nextcloud) maps to caldav rows.
+            # Soft-enable/disable an ACCOUNT (a config.json calendars[] entry,
+            # keyed by principal URL or "google"): persist `enabled` on the entry
+            # (survives DB wipes; absent means enabled) and flip the enabled
+            # column on every cached row of that account. Per-account, not
+            # per-provider — several CalDAV accounts share provider='caldav', so
+            # gating on the provider would disable all of them at once.
             try:
                 body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
                 data = json.loads(body)
-                pname = str(data["provider"])
+                key = str(data["key"])
                 enabled = bool(data.get("enabled", True))
                 from omacal.config import load_config, save_config
                 cfg = load_config()
-                oauth = cfg.get("oauth", {})
-                if pname not in oauth:
-                    self._json(400, {"error": f"unknown provider '{pname}'"})
+                calendars = list(cfg.get("calendars") or [])
+                target = next((c for c in calendars if _account_key(c) == key), None)
+                if target is None:
+                    self._json(400, {"error": f"unknown account '{key}'"})
                     return
-                oauth[pname]["enabled"] = enabled
-                cfg["oauth"] = oauth
+                target["enabled"] = enabled
+                cfg["calendars"] = calendars
                 save_config(cfg=cfg)
-                OmacalHandler.cfg_oauth = oauth
-                from omacal.db import set_provider_enabled
-                updated = set_provider_enabled(
-                    self.db_conn, "google" if pname == "google" else "caldav", enabled)
-                self._json(200, {"ok": True, "provider": pname, "enabled": enabled,
+                OmacalHandler.cfg_calendars = calendars
+                from omacal.db import set_account_enabled
+                updated = set_account_enabled(
+                    self.db_conn, key, target.get("provider", "caldav"), enabled)
+                self._json(200, {"ok": True, "key": key, "enabled": enabled,
                                   "calendars_updated": updated})
             except (ValueError, KeyError, TypeError) as e:
                 self._json(400, {"error": str(e)})
@@ -774,7 +841,6 @@ class OmacalHandler(BaseHTTPRequestHandler):
         save_config(cfg=cfg)
         # Pick up the new config in the running server.
         OmacalHandler.cfg_calendars = cfg["calendars"]
-        OmacalHandler.cfg_oauth = cfg.get("oauth", {})
 
         # 4. Return OK immediately. The initial sync is deliberately NOT run
         #    here: the frontend shows "Found server — syncing…" and then calls
@@ -999,7 +1065,6 @@ class OmacalServer:
         conn = self._get_conn()
         OmacalHandler.db_conn = conn
         OmacalHandler.cfg_calendars = self.cfg.get("calendars", [])
-        OmacalHandler.cfg_oauth = self.cfg.get("oauth", {})
 
         # Create the HTTP server first so bind failures crash the process
         # before the periodic sync timer gets a chance to keep it alive.

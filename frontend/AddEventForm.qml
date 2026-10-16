@@ -136,7 +136,7 @@ Column {
             height: Style.spacing.controlHeight
             showLabel: false
             value: ""
-            options: panel.calendars.filter(function(c) { return c.writable && (panel.editProviderFilter === "" || c.provider === panel.editProviderFilter) }).map(function(c) {
+            options: panel.calendars.filter(function(c) { return c.writable && c.account_enabled !== false && (panel.editProviderFilter === "" || c.provider === panel.editProviderFilter) }).map(function(c) {
                 return { value: String(c.id), label: c.display_name }
             })
             foreground: panel.contentForeground

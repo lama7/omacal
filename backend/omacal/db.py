@@ -355,14 +355,31 @@ def set_calendar_enabled(conn: sqlite3.Connection, calendar_id: int, enabled: bo
     return cur.rowcount > 0
 
 
-def set_provider_enabled(conn: sqlite3.Connection, provider: str, enabled: bool) -> int:
-    """Flip the enabled flag on every cached calendar row of one provider
-    ('caldav'|'google'). Soft disable: rows and events stay in the DB; the
-    event/reminder queries filter on c.enabled = 1, so a disabled provider's
+def set_account_enabled(
+    conn: sqlite3.Connection, key: str, provider: str, enabled: bool
+) -> int:
+    """Flip the enabled flag on every cached calendar row of one ACCOUNT.
+
+    Accounts are ``config.json`` ``calendars[]`` entries. Google is a single
+    account (``provider='google'``); CalDAV accounts all share
+    ``provider='caldav'`` and are distinguished by ``principal_url``, so for
+    them the key (the account's principal URL) is matched against the row's
+    principal_url. Soft disable: rows and events stay in the DB; the
+    event/reminder queries filter on ``c.enabled = 1``, so a disabled account's
     calendars are neither viewed nor altered until re-enabled — and re-enabling
-    is instant because sync_token/last_sync survive the disable."""
-    cur = conn.execute("UPDATE calendars SET enabled = ? WHERE provider = ?",
-                       (1 if enabled else 0, provider))
+    is instant because sync_token/last_sync survive the disable. Returns the
+    number of rows updated.
+    """
+    if provider == "google":
+        cur = conn.execute(
+            "UPDATE calendars SET enabled = ? WHERE provider = 'google'",
+            (1 if enabled else 0,),
+        )
+    else:
+        cur = conn.execute(
+            "UPDATE calendars SET enabled = ? WHERE rtrim(principal_url, '/') = ?",
+            (1 if enabled else 0, (key or "").rstrip("/")),
+        )
     conn.commit()
     return cur.rowcount
 
