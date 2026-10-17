@@ -54,9 +54,12 @@ Panel {
         }
         return out
     }
-    // Add-provider flow: the panel owns the Nextcloud sign-in poll loop.
+    // Add-provider flow: the panel owns the browser sign-in poll loop. A flow
+    // belongs to the provider that started it ("nextcloud" | "google"), which
+    // picks the poll endpoint.
     property string pendingFlowId: ""
-    property bool ncPollInFlight: false
+    property string pendingFlowProvider: ""
+    property bool providerPollInFlight: false
     // Bumped whenever a flow is torn down (cancel / back / a fresh open). Any
     // start or poll XHR captures it and ignores its own late response if the
     // value has moved on, so a bail can't be resurrected by an in-flight reply.
@@ -1156,7 +1159,8 @@ Panel {
         accountSettings.resetAddForm()
         loginPollTimer.stop()
         pendingFlowId = ""
-        ncPollInFlight = false
+        pendingFlowProvider = ""
+        providerPollInFlight = false
         providerFlowGen++
     }
     // Best-effort teardown of the in-flight backend flow. MUST be called before
@@ -1178,6 +1182,7 @@ Panel {
         // (forceActiveFocus on a still-hidden field is a silent no-op).
         Qt.callLater(function() {
             if (key === "signin") accountSettings.serverFieldRef.forceActiveFocus()
+            else if (key === "google") accountSettings.googleClientIdFieldRef.forceActiveFocus()
             else if (key === "credentials") accountSettings.caldavServerFieldRef.forceActiveFocus()
         })
     }
@@ -1188,7 +1193,8 @@ Panel {
         cancelProviderFlow()
         loginPollTimer.stop()
         pendingFlowId = ""
-        ncPollInFlight = false
+        pendingFlowProvider = ""
+        providerPollInFlight = false
         providerFlowGen++
         accountSettings.addStage = ""
         accountSettings.addError = ""
@@ -1196,18 +1202,18 @@ Panel {
         accountSettings.addBusy = false
         keyCatcher.forceActiveFocus()
     }
-    // Kick off the Nextcloud browser sign-in: ask the backend to start a Login
-    // Flow v2, open the returned URL in the user's default browser, and poll
-    // for the app password it mints once they authenticate.
-    function ncSignIn(server, name) {
-        var s = String(server || "").trim()
-        if (s === "") { accountSettings.addError = "Server URL is required."; return }
+    // Kick off a browser sign-in for any provider: ask the backend to start the
+    // flow, open the returned URL in the user's default browser, then poll for
+    // the credentials it hands back. `provider` selects the poll endpoint
+    // ("nextcloud" | "google"); `contacting` is the host/app to name in the
+    // status line.
+    function startProviderLogin(provider, path, body, contacting) {
         accountSettings.addError = ""
         accountSettings.addBusy = true
-        accountSettings.addStatus = "Contacting " + s + "\u2026"
+        accountSettings.addStatus = "Contacting " + contacting + "\u2026"
         var gen = providerFlowGen
         var xhr = new XMLHttpRequest()
-        xhr.open("POST", apiBase + "/api/providers/nextcloud/login/start", true)
+        xhr.open("POST", apiBase + path, true)
         xhr.timeout = 30000
         xhr.setRequestHeader("Content-Type", "application/json")
         xhr.onreadystatechange = function() {
@@ -1229,23 +1235,42 @@ Panel {
             Quickshell.execDetached(["xdg-open", data.login_url])
             accountSettings.addStatus = "Waiting for you to finish signing in your browser\u2026"
             pendingFlowId = data.flow_id
-            ncPollInFlight = false
+            pendingFlowProvider = provider
+            providerPollInFlight = false
             loginPollTimer.restart()
         }
         xhr.onerror = function() { if (gen !== providerFlowGen) return; accountSettings.addBusy = false; accountSettings.addStatus = ""; accountSettings.addError = "Could not reach the omacal backend." }
         xhr.ontimeout = function() { if (gen !== providerFlowGen) return; accountSettings.addBusy = false; accountSettings.addStatus = ""; accountSettings.addError = "The server did not respond." }
-        xhr.send(JSON.stringify({ server: s, name: String(name || "").trim() }))
+        xhr.send(JSON.stringify(body))
     }
-    function pollNcLogin() {
+    // Nextcloud Login Flow v2: the browser mints a revocable app password.
+    function ncSignIn(server, name) {
+        var s = String(server || "").trim()
+        if (s === "") { accountSettings.addError = "Server URL is required."; return }
+        startProviderLogin("nextcloud", "/api/providers/nextcloud/login/start",
+                           { server: s, name: String(name || "").trim() }, s)
+    }
+    // Google OAuth (loopback) using the user's own Cloud-project client.
+    function googleSignIn(clientId, clientSecret, name) {
+        var cid = String(clientId || "").trim()
+        var secret = String(clientSecret || "").trim()
+        if (cid === "") { accountSettings.addError = "Client ID is required."; return }
+        if (secret === "") { accountSettings.addError = "Client secret is required."; return }
+        startProviderLogin("google", "/api/providers/google/login/start",
+                           { client_id: cid, client_secret: secret,
+                             name: String(name || "").trim() }, "Google")
+    }
+    function pollProviderLogin() {
         // Guard against overlapping polls: the backend commits the account
         // (an LDAP/DAV discovery, seconds long) inside the poll that first
         // sees success, and a second in-flight poll would then read "unknown".
-        if (pendingFlowId === "" || ncPollInFlight) return
-        ncPollInFlight = true
+        if (pendingFlowId === "" || providerPollInFlight) return
+        providerPollInFlight = true
         var flowId = pendingFlowId
+        var provider = pendingFlowProvider
         var gen = providerFlowGen
         var xhr = new XMLHttpRequest()
-        xhr.open("GET", apiBase + "/api/providers/nextcloud/login/poll?id="
+        xhr.open("GET", apiBase + "/api/providers/" + provider + "/login/poll?id="
                  + encodeURIComponent(flowId), true)
         xhr.timeout = 60000
         xhr.onreadystatechange = function() {
@@ -1254,13 +1279,14 @@ Panel {
             // flight: the reply belongs to a flow we no longer own, so it must
             // not commit an account or disturb the current attempt's state.
             if (gen !== providerFlowGen || flowId !== pendingFlowId) return
-            ncPollInFlight = false
+            providerPollInFlight = false
             var data = null
             try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
             var st = data ? data.status : ""
             if (st === "pending") return          // the timer keeps polling
             loginPollTimer.stop()
             pendingFlowId = ""
+            pendingFlowProvider = ""
             accountSettings.addBusy = false
             accountSettings.addStatus = ""
             if (st === "ok") {
@@ -1273,9 +1299,10 @@ Panel {
         }
         xhr.onerror = function() {
             if (gen !== providerFlowGen || flowId !== pendingFlowId) return
-            ncPollInFlight = false
+            providerPollInFlight = false
             loginPollTimer.stop()
             pendingFlowId = ""
+            pendingFlowProvider = ""
             accountSettings.addBusy = false
             accountSettings.addStatus = ""
             accountSettings.addError = "Lost contact with the omacal backend during sign-in."
@@ -1327,6 +1354,7 @@ Panel {
         accountSettings.resetAddForm()
         loginPollTimer.stop()
         pendingFlowId = ""
+        pendingFlowProvider = ""
         needsSetup = false
         if (viewMode === "setup") viewMode = "month"
         fetchAccountSettings()
@@ -1897,16 +1925,17 @@ Panel {
         }
     }
 
-    // Nextcloud sign-in poll loop: fires while a Login Flow v2 is pending and
-    // stops itself on a terminal status (see pollNcLogin). Declared as a child
-    // of the root Panel — NOT of KeyboardPanel, whose default property is
-    // contentItem and accepts only Items, so a Timer declared there is dropped
-    // ("Cannot assign object of type QQmlTimer to list property contentItem").
+    // Provider sign-in poll loop: fires while a browser flow (Nextcloud Login
+    // Flow v2 or Google OAuth) is pending and stops itself on a terminal status
+    // (see pollProviderLogin). Declared as a child of the root Panel — NOT of
+    // KeyboardPanel, whose default property is contentItem and accepts only
+    // Items, so a Timer declared there is dropped ("Cannot assign object of
+    // type QQmlTimer to list property contentItem").
     Timer {
         id: loginPollTimer
         interval: 2000
         repeat: true
-        onTriggered: root.pollNcLogin()
+        onTriggered: root.pollProviderLogin()
     }
 
     KeyboardPanel {
@@ -2708,6 +2737,9 @@ Panel {
             onProviderChoiceRequested: function(key) { root.chooseProvider(key) }
             onNavBack: root.addFormBack()
             onNcSignInRequested: function(server, name) { root.ncSignIn(server, name) }
+            onGoogleSignInRequested: function(clientId, clientSecret, name) {
+                root.googleSignIn(clientId, clientSecret, name)
+            }
             onCaldavAddSubmit: function(url, name, user, pass) {
                 root.submitCaldavAdd(url, name, user, pass)
             }

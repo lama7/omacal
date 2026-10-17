@@ -1,10 +1,23 @@
-"""Browser-assisted provider sign-in: a shared flow registry + Nextcloud
-Login Flow v2.
+"""Browser-assisted provider sign-in: a shared flow registry, Nextcloud
+Login Flow v2, and Google OAuth loopback.
 
-Both this and the Google OAuth path (C3, not yet wired) are the same shape —
-start a flow, hand the user a URL to open in their browser, poll until the
-provider hands back credentials. The registry below is the "shared plumbing":
-an in-process dict of flow_id -> state with a TTL.
+Both providers are the same shape — start a flow, hand the user a URL to open
+in their browser, poll until the provider hands back credentials. The registry
+below is the "shared plumbing": an in-process dict of flow_id -> state with a
+TTL.
+
+The two differ in HOW the credentials come back:
+  * Nextcloud Login Flow v2 is a poll-only protocol — the browser leg happens
+    entirely on the server, so `nextcloud_poll` does the work inline.
+  * Google uses a loopback redirect (see omacal.oauth): a one-shot HTTP server
+    on 127.0.0.1 catches the redirect, which means SOMETHING must block waiting
+    for it. Because the API server is single-threaded, `google_start` runs that
+    blocking wait+exchange on a DAEMON thread and writes the outcome into the
+    flow entry; `google_poll` just reads it.
+
+Flow state lives ONLY in this process. That is deliberate: the API is a single
+long-lived service, and a restart abandoning an in-flight flow is harmless (the
+user simply starts the sign-in again).
 
 Flow state lives ONLY in this process. That is deliberate: the API is a single
 long-lived service, and a restart abandoning an in-flight flow is harmless (the
@@ -67,9 +80,24 @@ def get_flow(flow_id: str) -> dict | None:
         return entry
 
 
-def drop_flow(flow_id: str) -> None:
+def _pop_flow(flow_id: str) -> dict | None:
+    """Remove and return a flow WITHOUT cancelling anything attached to it."""
     with _LOCK:
-        _FLOWS.pop(flow_id, None)
+        return _FLOWS.pop(flow_id, None)
+
+
+def drop_flow(flow_id: str) -> None:
+    """Remove a flow, cancelling any in-flight browser sign-in it owns.
+
+    Idempotent. The cancel happens outside the lock (it does socket work) so a
+    Google flow blocked in its loopback wait wakes up and clears its daemon
+    thread instead of lingering until the redirect timeout.
+    """
+    entry = _pop_flow(flow_id)
+    if entry and entry.get("oauth"):
+        from omacal.oauth import cancel_login
+
+        cancel_login(entry["oauth"])
 
 
 # --- Nextcloud Login Flow v2 ------------------------------------------------
@@ -149,3 +177,75 @@ def nextcloud_poll(flow_id: str) -> dict:
         "app_password": app_password,
         "name": entry.get("name") or "",
     }
+
+
+# --- Google OAuth (loopback redirect) ---------------------------------------
+
+
+def google_start(cfg: dict, name: str | None = None) -> dict:
+    """Begin a Google OAuth sign-in.
+
+    Binds the loopback receiver and builds the authorize URL, then runs the
+    blocking wait+exchange on a DAEMON thread (see the module docstring for
+    why). Returns {"flow_id", "login_url"} where `login_url` must be opened in
+    the user's browser. Raises ValueError (user-facing message) when no OAuth
+    client is configured for Google.
+
+    The flow entry's ``status`` moves pending -> ok | error | cancelled; the
+    token set is stored in the keyring by the worker, the calendars[] account
+    is committed by the API poll on "ok".
+    """
+    from omacal.oauth import finish_login, start_login
+
+    flow = start_login(cfg, "google")
+    if flow is None:
+        raise ValueError("Google OAuth client is not configured (client_id missing)")
+
+    flow_id = new_flow(
+        kind="google-login",
+        provider="google",
+        name=(name or "").strip(),
+        status="pending",
+        error="",
+        oauth=flow,
+    )
+
+    def _work() -> None:
+        ok, err = finish_login(flow)
+        entry = get_flow(flow_id)
+        if entry is None:
+            return  # cancelled or aged out; nothing to record
+        if flow.get("cancelled"):
+            entry["status"] = "cancelled"
+        elif ok:
+            entry["status"] = "ok"
+        else:
+            entry["status"] = "error"
+            entry["error"] = err
+
+    threading.Thread(target=_work, daemon=True, name=f"oauth-{flow_id[:8]}").start()
+    return {"flow_id": flow_id, "login_url": flow["auth_url"]}
+
+
+def google_poll(flow_id: str) -> dict:
+    """Poll one Google sign-in flow.
+
+    Status: pending | ok | cancelled | error | unknown. "ok" carries the
+    optional account label and CONSUMES the flow (the token set is already in
+    the keyring; the API commits the account).
+    """
+    entry = get_flow(flow_id)
+    if entry is None:
+        return {"status": "unknown"}
+
+    status = entry.get("status") or "pending"
+    if status == "pending":
+        return {"status": "pending"}
+    if status == "ok":
+        name = entry.get("name") or ""
+        _pop_flow(flow_id)  # done: hand the account back exactly once
+        return {"status": "ok", "name": name}
+    # error | cancelled — surface it and consume the flow.
+    error = entry.get("error") or ""
+    _pop_flow(flow_id)
+    return {"status": status, "error": error}

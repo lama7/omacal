@@ -27,14 +27,20 @@ name:
   "oauth": {
     "google": {
       "client_id": "....apps.googleusercontent.com",
+      "client_secret": "....",                       # Google wants it on the
+                                                     # token exchange even for
+                                                     # Desktop-app clients
       "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
       "token_url": "https://oauth2.googleapis.com/token",
-      "scopes": ["https://www.googleapis.com/auth/calendar.calendars",
-                 "https://www.googleapis.com/auth/calendar.events"],
-      "redirect_port": 8642,
+      "scopes": ["https://www.googleapis.com/auth/calendar"],
       "extra_params": {"access_type": "offline", "prompt": "consent"}
     }
   }
+
+`redirect_port` is OPTIONAL: set it to bind that exact loopback port (needed
+when the provider compares the redirect URI string, e.g. Nextcloud OAuth2);
+leave it out and the OS picks a free port. Google Desktop-app clients accept
+any loopback port, so the Google flow leaves it unset.
 """
 
 from __future__ import annotations
@@ -159,24 +165,61 @@ def oauth_status(provider: str) -> dict:
     }
 
 
-def oauth_login(cfg: dict, provider: str) -> bool:
-    """Run the interactive PKCE flow for a provider. True on success.
+def start_login(cfg: dict, provider: str) -> dict | None:
+    """Bind the loopback receiver and build the authorize URL (NON-blocking).
 
-    Confidential clients (Nextcloud) set `client_secret`; PKCE is then
-    skipped since their OAuth stack doesn't implement it.
+    Returns a flow dict carrying the listener plus everything the exchange
+    needs, or None when the provider has no configured client. The caller MUST
+    drive ``finish_login`` (which blocks on the browser leg) on a background
+    thread, and SHOULD call ``cancel_login`` if it abandons the flow.
+
+    Loopback port: a provider spec with ``redirect_port`` binds that exact port
+    (needed when the redirect URI must be pre-registered, as with Nextcloud's
+    confidential OAuth2); absent, the port is 0 -> the OS picks a free one and
+    the redirect URI is derived from the actual bound port. Google Desktop-app
+    clients accept any loopback port, which is why the Google path leaves it
+    unset. The SAME redirect_uri is used on authorize and on the exchange.
     """
     spec = (cfg.get("oauth") or {}).get(provider)
     if not spec or not spec.get("client_id"):
         logger.error("No OAuth client configured for provider %r", provider)
-        return False
+        return None
 
     confidential = bool(spec.get("client_secret"))
     verifier = challenge = None
     if not confidential:
         verifier, challenge = _pkce_pair()
     state = secrets.token_urlsafe(24)
-    port = int(spec.get("redirect_port") or 8642)
+    sink: dict = {}
+
+    class _Handler(_http.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: D102 - socket API
+            fields = parse_qs(self.path.split("?", 1)[-1])
+            if fields.get("code", [""])[0] and fields.get("state", [""]) == [state]:
+                sink["code"] = fields["code"][0]
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"omacal: you may close this window.")
+            else:
+                # A cancel_login poke (bare socket connect) lands here; answer
+                # and move on so the blocked handle_request returns.
+                self.send_response(400)
+                self.end_headers()
+
+        def log_message(self, *args: object) -> None:  # noqa: D102
+            pass  # one redirect on loopback; no need to spam the journal
+
+    requested = int(spec.get("redirect_port") or 0)
+    try:
+        srv = _http.HTTPServer(("127.0.0.1", requested), _Handler)
+    except OSError as e:
+        logger.error("Could not bind the OAuth loopback port %s: %s",
+                     requested or "(auto)", e)
+        return None
+    srv.timeout = _LOGIN_TIMEOUT_S
+    port = srv.server_address[1]
     redirect_uri = f"http://127.0.0.1:{port}/"
+
     params = {
         "client_id": spec["client_id"],
         "response_type": "code",
@@ -190,52 +233,103 @@ def oauth_login(cfg: dict, provider: str) -> bool:
     params.update(spec.get("extra_params") or {})
     auth_url = spec["authorize_url"] + "?" + urlencode(params)
 
-    # One-shot loopback receiver: serves exactly the OAuth redirect.
-    code: list[str] = []
+    return {
+        "provider": provider,
+        "spec": spec,
+        "srv": srv,
+        "port": port,
+        "redirect_uri": redirect_uri,
+        "verifier": verifier,
+        "confidential": confidential,
+        "sink": sink,
+        "cancelled": False,
+        "auth_url": auth_url,
+    }
 
-    class _Handler(_http.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: D102 - socket API
-            fields = parse_qs(self.path.split("?", 1)[-1])
-            if fields.get("code", [""])[0] and fields.get("state", [""]) == [state]:
-                code.append(fields["code"][0])
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b"omacal: you may close this window.")
-            else:
-                self.send_response(400)
-                self.end_headers()
 
-    with _http.HTTPServer(("127.0.0.1", port), _Handler) as srv:
-        srv.timeout = _LOGIN_TIMEOUT_S
-        print(f"OAuth sign-in for {provider!r}: open this URL in a browser —")
-        print(auth_url)
+def finish_login(flow: dict) -> tuple[bool, str]:
+    """Wait for the browser redirect, exchange the code, store tokens.
+
+    Blocking — run it on a background thread when called from the API. Returns
+    ``(ok, error)``; ``error`` is "cancelled" when ``cancel_login`` unblocked it.
+    """
+    srv = flow["srv"]
+    try:
         srv.handle_request()  # serves exactly one request; returns on timeout
+    except OSError:
+        pass  # listener was closed underneath us (cancel_login / teardown)
+    finally:
+        try:
+            srv.server_close()
+        except OSError:
+            pass
 
+    if flow.get("cancelled"):
+        return False, "cancelled"
+    code = flow["sink"].get("code")
     if not code:
-        return False
+        return False, "timed out waiting for the browser sign-in"
 
+    spec = flow["spec"]
     exchange = {
         "grant_type": "authorization_code",
-        "code": code[0],
-        "redirect_uri": redirect_uri,
+        "code": code,
+        "redirect_uri": flow["redirect_uri"],
         "client_id": spec["client_id"],
     }
-    if verifier:
-        exchange["code_verifier"] = verifier
-    if confidential:
+    if flow["verifier"]:
+        exchange["code_verifier"] = flow["verifier"]
+    if flow["confidential"]:
         exchange["client_secret"] = spec["client_secret"]
     status, tokens = _post_form(spec["token_url"], exchange)
     if status != 200:
         logger.error("Token exchange failed: %s", json.dumps(tokens)[:200])
-        return False
+        return False, f"token exchange failed (HTTP {status})"
     if not tokens.get("access_token"):
-        logger.error("Token exchange returned no access_token")
-        return False
+        return False, "token exchange returned no access_token"
     if not tokens.get("refresh_token"):
         logger.warning("No refresh token in exchange — token set expires with the "
                        "access token; re-consent will be needed (Testing-status "
                        "consent screens do this after 7 days)")
-    return _store_tokens(provider, tokens)
+    if not _store_tokens(flow["provider"], tokens):
+        return False, "could not store tokens in the system keyring"
+    return True, ""
+
+
+def cancel_login(flow: dict) -> None:
+    """Abandon a pending sign-in, unblocking a waiting ``finish_login``.
+
+    Idempotent. Marks the flow cancelled and pokes the loopback listener with a
+    throwaway TCP connect so a ``finish_login`` blocked in ``handle_request``
+    returns promptly instead of waiting out the timeout.
+    """
+    if not flow:
+        return
+    flow["cancelled"] = True
+    import socket
+
+    try:
+        with socket.create_connection(("127.0.0.1", int(flow.get("port") or 0)), timeout=1):
+            pass
+    except OSError:
+        pass
+
+
+def oauth_login(cfg: dict, provider: str) -> bool:
+    """Interactive PKCE login (CLI). Blocks on the browser leg.
+
+    The API uses ``start_login`` + a background ``finish_login`` instead, so it
+    never stalls its single-threaded HTTP server.
+    """
+    flow = start_login(cfg, provider)
+    if flow is None:
+        return False
+    print(f"OAuth sign-in for {provider!r}: open this URL in a browser —")
+    print(flow["auth_url"])
+    ok, err = finish_login(flow)
+    if not ok:
+        logger.error("OAuth login failed: %s", err)
+    return ok
 
 
 def oauth_revoke(provider: str) -> bool:

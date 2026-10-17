@@ -103,8 +103,12 @@ Item {
   property string pendingName: ""
   property string pendingUser: ""
   property string pendingPass: ""
+  // Google OAuth (BYO Cloud-project client); `pendingName` carries the label.
+  property string pendingGoogleId: ""
+  property string pendingGoogleSecret: ""
   property alias serverFieldRef: serverField
   property alias caldavServerFieldRef: caldavServerField
+  property alias googleClientIdFieldRef: googleClientIdField
   // Feedback shown by the panel while the flow runs / on failure.
   property bool addBusy: false
   property string addStatus: ""
@@ -113,6 +117,8 @@ Item {
   readonly property var providerChoices: [
     { key: "signin", title: "Nextcloud",
       detail: "Sign in with your browser \u2014 no server password to type." },
+    { key: "google", title: "Google",
+      detail: "Connect Google Calendar with your own Cloud-project client ID." },
     { key: "credentials", title: "CalDAV server",
       detail: "Enter a server, username and password or app password." },
   ]
@@ -122,6 +128,7 @@ Item {
   signal providerChoiceRequested(string key)
   signal navBack()
   signal ncSignInRequested(string server, string name)
+  signal googleSignInRequested(string clientId, string clientSecret, string name)
   signal caldavAddSubmit(string url, string name, string user, string pass)
 
   // Keyboard cursor: which account row is selected (0..count-1).
@@ -161,6 +168,9 @@ Item {
     nameField.text = ""
     userField.text = ""
     passField.text = ""
+    googleClientIdField.text = ""
+    googleSecretField.text = ""
+    googleNameField.text = ""
     addStage = ""
     chooserIndex = 0
     cursorEngaged = false
@@ -168,6 +178,8 @@ Item {
     pendingName = ""
     pendingUser = ""
     pendingPass = ""
+    pendingGoogleId = ""
+    pendingGoogleSecret = ""
     addBusy = false
     addStatus = ""
     addError = ""
@@ -675,6 +687,69 @@ Item {
           }
         }
 
+        // ---- Stage "google": Google OAuth with the user's own Cloud client ----
+        ColumnLayout {
+          Layout.fillWidth: true
+          spacing: Style.space(8)
+          visible: root.addStage === "google"
+
+          Text {
+            Layout.fillWidth: true
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            text: "Google needs an OAuth client from your own Google Cloud "
+                + "project (Desktop app type). We'll open your browser to grant "
+                + "calendar access; the tokens stay in your system keyring."
+            color: root.foreground
+            opacity: 0.7
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          TextField {
+            id: googleClientIdField
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.max(implicitHeight, Style.spacing.controlHeight)
+            placeholderText: "Client ID (…apps.googleusercontent.com)"
+            foreground: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.subtitle
+            onTextChanged: root.pendingGoogleId = text
+            Keys.onReturnPressed: root.googleSignInRequested(root.pendingGoogleId, root.pendingGoogleSecret, root.pendingName)
+            Keys.onEnterPressed: root.googleSignInRequested(root.pendingGoogleId, root.pendingGoogleSecret, root.pendingName)
+            Keys.onEscapePressed: root.navBack()
+          }
+
+          TextField {
+            id: googleSecretField
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.max(implicitHeight, Style.spacing.controlHeight)
+            placeholderText: "Client secret"
+            password: true
+            foreground: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.subtitle
+            onTextChanged: root.pendingGoogleSecret = text
+            Keys.onReturnPressed: root.googleSignInRequested(root.pendingGoogleId, root.pendingGoogleSecret, root.pendingName)
+            Keys.onEnterPressed: root.googleSignInRequested(root.pendingGoogleId, root.pendingGoogleSecret, root.pendingName)
+            Keys.onEscapePressed: root.navBack()
+          }
+
+          TextField {
+            id: googleNameField
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.max(implicitHeight, Style.spacing.controlHeight)
+            placeholderText: "Account name (optional)"
+            foreground: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.subtitle
+            onTextChanged: root.pendingName = text
+            Keys.onReturnPressed: root.googleSignInRequested(root.pendingGoogleId, root.pendingGoogleSecret, root.pendingName)
+            Keys.onEnterPressed: root.googleSignInRequested(root.pendingGoogleId, root.pendingGoogleSecret, root.pendingName)
+            Keys.onEscapePressed: root.navBack()
+          }
+        }
+
         // Shared feedback: status while working, error on failure.
         Text {
           Layout.fillWidth: true
@@ -722,16 +797,24 @@ Item {
             onClicked: root.addCancel()
           }
           DialogButton {
-            text: root.addStage === "signin" ? "Sign in" : "Add account"
+            text: (root.addStage === "signin" || root.addStage === "google")
+              ? "Sign in" : "Add account"
             visible: root.addStage !== ""
             enabled: !root.addBusy
             foreground: root.foreground
             accent: root.accent
             fontFamily: root.fontFamily
-            onClicked: root.addStage === "signin"
-              ? root.ncSignInRequested(root.pendingServer, root.pendingName)
-              : root.caldavAddSubmit(root.pendingServer, root.pendingName,
+            onClicked: {
+              if (root.addStage === "signin")
+                root.ncSignInRequested(root.pendingServer, root.pendingName)
+              else if (root.addStage === "google")
+                root.googleSignInRequested(root.pendingGoogleId,
+                                           root.pendingGoogleSecret,
+                                           root.pendingName)
+              else
+                root.caldavAddSubmit(root.pendingServer, root.pendingName,
                                      root.pendingUser, root.pendingPass)
+            }
           }
         }
       }

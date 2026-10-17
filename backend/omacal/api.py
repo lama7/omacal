@@ -34,9 +34,21 @@ Endpoints:
                                    (pending|ok|expired|unknown|error); on "ok"
                                    it commits the account (keyring + config
                                    APPEND) and returns {status:"ok"}
+    POST /api/providers/google/login/start → begin a Google OAuth sign-in from
+                                   the user's OWN Cloud-project client
+                                   ({client_id, client_secret, name?}); the
+                                   spec is persisted to config.json's oauth
+                                   section → {flow_id, login_url}
+    GET  /api/providers/google/login/poll?id=.. → poll that flow
+                                   (pending|ok|cancelled|unknown|error); on "ok"
+                                   it commits the Google account (config
+                                   APPEND; tokens already in the keyring)
     POST /api/providers/caldav/add → add a CalDAV account from {url, username,
                                    password, display_name?} (keyring + config
                                    APPEND), for any CalDAV server
+    POST /api/providers/flow/cancel?id=.. → abandon an in-flight browser sign-in
+                                   flow (Nextcloud or Google), releasing its
+                                   server-side state. Idempotent.
 """
 
 from __future__ import annotations
@@ -62,6 +74,15 @@ from omacal.db import (
 from omacal.recur import expand_events, expand_reminders
 
 logger = logging.getLogger("omacal.api")
+
+# Fixed Google OAuth endpoints/scopes. Only client_id/client_secret are user
+# input (BYO Cloud project — decision D1); the rest is not user-configurable.
+_GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+# Broad calendar scope on purpose: the narrower calendar.calendars +
+# calendar.events pair omits the calendarList endpoints, so a freshly
+# connected Google account would show NO calendars.
+_GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
 
 
 def _resolve_caldav_url(
@@ -284,6 +305,11 @@ class OmacalHandler(BaseHTTPRequestHandler):
             self._handle_nc_login_poll(qs)
             return
 
+        if path == "/api/providers/google/login/poll":
+            # Poll a Google sign-in; on success this also commits the account.
+            self._handle_google_login_poll(qs)
+            return
+
         if path == "/api/events/today":
             # Today in LOCAL time. Midnight-to-midnight UTC made the bar
             # tooltip's "today" mean [yesterday 20:00, today 20:00] in US Eastern:
@@ -398,15 +424,20 @@ class OmacalHandler(BaseHTTPRequestHandler):
             # Begin a Nextcloud Login Flow v2 browser sign-in.
             self._handle_nc_login_start()
             return
+        if parsed.path == "/api/providers/google/login/start":
+            # Begin a Google OAuth sign-in from the user's own Cloud project.
+            self._handle_google_login_start()
+            return
         if parsed.path == "/api/providers/caldav/add":
             # Manually add a CalDAV account (server + username + password).
             self._handle_caldav_add()
             return
         if parsed.path == "/api/providers/flow/cancel":
             # Abandon an in-flight browser sign-in flow (Nextcloud Login Flow
-            # v2 today; Google later) so its state does not linger in the
-            # registry until its TTL. Idempotent. The panel calls this when the
-            # user backs out of Add Provider.
+            # v2 or Google OAuth) so its state does not linger in the registry
+            # until its TTL — and, for Google, so the loopback receiver thread
+            # is released. Idempotent. The panel calls this when the user backs
+            # out of Add Provider.
             self._handle_flow_cancel(parse_qs(parsed.query))
             return
         if parsed.path == "/api/sync":
@@ -909,6 +940,87 @@ class OmacalHandler(BaseHTTPRequestHandler):
             return
         self._json(200, {"status": "ok", "account": account})
 
+    def _handle_google_login_start(self) -> None:
+        """Begin a Google OAuth sign-in from the panel.
+
+        The panel supplies the user's OWN Cloud-project client_id/secret (BYO —
+        decision D1); endpoints, scope and extra params are fixed here. We
+        persist the spec to config.json's oauth section BEFORE starting the
+        flow so the later token-refresh path has the client to refresh with
+        (unchanged from the original design, which already keeps provider client
+        secrets there — /api/account redacts them). The flow's loopback port is
+        left unset so the OS picks a free one: Google Desktop-app clients accept
+        any loopback port, so nothing must be pre-registered.
+        """
+        from omacal import loginflow
+        from omacal.config import load_config, save_config
+
+        try:
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            data = json.loads(body)
+        except Exception as e:
+            self._json(400, {"ok": False, "error": f"Invalid request body: {e}"})
+            return
+
+        client_id = (data.get("client_id") or "").strip()
+        client_secret = (data.get("client_secret") or "").strip()
+        name = (data.get("name") or "").strip() or None
+        if not client_id:
+            self._json(200, {"ok": False, "error": "Client ID is required"})
+            return
+        if not client_secret:
+            self._json(200, {"ok": False, "error": "Client secret is required"})
+            return
+
+        cfg = load_config()
+        oauth = dict(cfg.get("oauth") or {})
+        spec = dict(oauth.get("google") or {})
+        spec.update({
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "authorize_url": _GOOGLE_AUTHORIZE_URL,
+            "token_url": _GOOGLE_TOKEN_URL,
+            "scopes": [_GOOGLE_CALENDAR_SCOPE],
+            # Refresh tokens are only issued on the FIRST consent, so ask for
+            # one every time (see oauth.py's Google notes).
+            "extra_params": {"access_type": "offline", "prompt": "consent"},
+        })
+        spec.pop("redirect_port", None)  # ephemeral loopback port (any is valid)
+        oauth["google"] = spec
+        cfg["oauth"] = oauth
+        save_config(cfg=cfg)
+
+        try:
+            started = loginflow.google_start(cfg, name)
+        except ValueError as e:
+            self._json(200, {"ok": False, "error": str(e)})
+            return
+        except Exception as e:
+            logger.error("Google login flow start failed: %s", e)
+            self._json(500, {"ok": False, "error": str(e)})
+            return
+        self._json(200, {"ok": True, **started})
+
+    def _handle_google_login_poll(self, qs: dict) -> None:
+        """Poll a Google login flow; on success, commit the account."""
+        from omacal import loginflow
+
+        flow_id = (qs.get("id") or [""])[0]
+        if not flow_id:
+            self._json(400, {"error": "id is required"})
+            return
+        result = loginflow.google_poll(flow_id)
+        if result.get("status") != "ok":
+            self._json(200, result)
+            return
+        try:
+            account = self._commit_google_account(result.get("name"))
+        except Exception as e:
+            logger.error("Google login commit failed: %s", e)
+            self._json(500, {"status": "error", "error": str(e)})
+            return
+        self._json(200, {"status": "ok", "account": account})
+
     def _handle_flow_cancel(self, qs: dict) -> None:
         """Drop an in-flight browser sign-in flow's server-side state.
 
@@ -1016,6 +1128,34 @@ class OmacalHandler(BaseHTTPRequestHandler):
             save_config(cfg=cfg)
             OmacalHandler.cfg_calendars = calendars
         return {"url": url, "username": username}
+
+    def _commit_google_account(self, name: str | None = None) -> dict:
+        """APPEND (idempotently) the Google account to config.json.
+
+        The token set is already in the keyring (stored by the login flow), so
+        this only adds the calendars[] entry the sync + panel read — the Google
+        sibling of _commit_caldav_account, minus discovery (Google's calendar
+        list comes from the API at sync time). Keyed by provider="google"
+        (account_key -> "google").
+        """
+        from omacal.config import load_config, save_config
+
+        cfg = load_config()
+        calendars = list(cfg.get("calendars") or [])
+        entry = next(
+            (c for c in calendars if (c.get("provider") or "caldav") == "google"),
+            None,
+        )
+        if entry is None:
+            entry = {"provider": "google", "display_name": "Google"}
+            calendars.append(entry)
+        entry["enabled"] = True
+        if (name or "").strip():
+            entry["name"] = name.strip()
+        cfg["calendars"] = calendars
+        save_config(cfg=cfg)
+        OmacalHandler.cfg_calendars = calendars
+        return {"provider": "google", "name": entry.get("name") or "Google"}
 
     def _events_in_window(self, start: datetime, end: datetime, calendar_ids: list[int] | None) -> list[dict]:
         """Cached events plus expanded occurrences for [start, end).
