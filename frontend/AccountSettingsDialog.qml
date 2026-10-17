@@ -29,6 +29,9 @@ import qs.Ui
 // chooser; "signin" runs Nextcloud Login Flow v2 (browser sign-in, no OAuth
 // client registration, no admin rights); "credentials" adds any CalDAV account
 // from server + username + password (a Nextcloud app password works here too).
+// Both paths take an optional ACCOUNT NAME (config.json `name`) so several
+// CalDAV or Google accounts can be told apart — distinct from `display_name`,
+// which is the primary calendar's name captured from the server.
 // The panel owns every POST and flips addOpen/addStage and the pending fields,
 // so this dialog stays presentational. Google (BYO client) is a later stage.
 //
@@ -51,6 +54,26 @@ Item {
   // Account rows as a ListModel of { key, name, enabled } (panel-built).
   property var model: null
   readonly property int accountCount: model ? model.count : 0
+  // Account detail view (the row's edit button): the account object from
+  // /api/account, or null for the list. Read-only for now — it shows the
+  // non-secret settings (the password lives in the keyring and is never
+  // fetched). The panel sets it; the dialog emits accountViewClosed() to go
+  // back.
+  property var viewAccount: null
+  readonly property bool viewOpen: viewAccount !== null
+  // Label/value pairs for the detail view, in display order.
+  function viewRows() {
+    var a = root.viewAccount || {}
+    var rows = [
+      { label: "Account name", value: String(a.name || "") },
+      { label: "Provider", value: a.provider === "google" ? "Google" : "CalDAV" },
+    ]
+    if (a.username) rows.push({ label: "Username", value: String(a.username) })
+    if (a.url) rows.push({ label: "Server", value: String(a.url) })
+    rows.push({ label: "Calendars", value: String(a.calendars != null ? a.calendars : 0) })
+    rows.push({ label: "Status", value: a.enabled ? "Enabled" : "Disabled" })
+    return rows
+  }
   // Whole dialog (scrim + card) only renders while open — same gate as
   // CalendarToggleDialog; otherwise the card would always cover the view.
   visible: opened
@@ -64,6 +87,7 @@ Item {
   signal closed()
   signal accountToggled(string key, bool enabled)
   signal accountEditRequested(string key)
+  signal accountViewClosed()
 
   // --- Add-provider form (panel-driven, like CalendarToggleDialog's) --------
   property bool addOpen: false
@@ -73,7 +97,8 @@ Item {
   // Keyboard cursor within the provider chooser (this panel is keyboard-driven).
   property int chooserIndex: 0
   // Pending field values. The server field is shared between the two Nextcloud
-  // stages, so switching stage carries the typed server over.
+  // stages, so switching stage carries the typed server over; `pendingName` is
+  // the optional account label, shared by both stages too.
   property string pendingServer: ""
   property string pendingName: ""
   property string pendingUser: ""
@@ -96,8 +121,8 @@ Item {
   signal addCancel()
   signal providerChoiceRequested(string key)
   signal navBack()
-  signal ncSignInRequested(string server)
-  signal caldavAddSubmit(string url, string displayName, string user, string pass)
+  signal ncSignInRequested(string server, string name)
+  signal caldavAddSubmit(string url, string name, string user, string pass)
 
   // Keyboard cursor: which account row is selected (0..count-1).
   property int selectedIndex: 0
@@ -118,11 +143,24 @@ Item {
       + sep.implicitHeight
       + (root.addOpen
           ? addForm.implicitHeight + gap * 2
-          : estimatedRowsHeight + doneBtn.height + gap * 4)
+          : root.viewOpen
+            ? viewForm.implicitHeight + gap * 2
+            : estimatedRowsHeight + doneBtn.height + gap * 4)
 
   // Reset the add form to its chooser stage (the panel calls this when it
   // opens the form, so a previous attempt never leaks into a fresh one).
+  // Clear the pending values AND the field texts: setting the pending value
+  // alone leaves the TextField still showing the last entry (the field mirrors
+  // into the pending value, never back out), which is how stale input leaked
+  // into a later add. Called on open and on cancel — not on Back, which
+  // deliberately carries the typed server between the two Nextcloud stages.
   function resetAddForm() {
+    serverField.text = ""
+    signinNameField.text = ""
+    caldavServerField.text = ""
+    nameField.text = ""
+    userField.text = ""
+    passField.text = ""
     addStage = ""
     chooserIndex = 0
     cursorEngaged = false
@@ -143,6 +181,14 @@ Item {
   // else is swallowed while open so stray keys never drive the month view.
   function handleKey(event) {
     if (!root.opened) return false
+    if (root.viewOpen) {
+      // Escape/Back returns to the account list (nothing here is focusable).
+      if (event.key === Qt.Key_Escape || event.key === Qt.Key_Backspace) {
+        root.accountViewClosed()
+        return true
+      }
+      return true
+    }
     if (root.addOpen) {
       // Escape leaves the form (back to the chooser, then back to the list).
       if (event.key === Qt.Key_Escape) {
@@ -240,7 +286,9 @@ Item {
           textFormat: Text.PlainText
           // While the add-provider form is open the header reads "Add Provider"
           // and the + button is hidden (it opened the form).
-          text: root.addOpen ? "Add Provider" : "Account Settings"
+          text: root.addOpen ? "Add Provider"
+              : (root.viewOpen ? String(root.viewAccount.name || "Account")
+                               : "Account Settings")
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: 24
@@ -258,8 +306,8 @@ Item {
           tooltipText: "Add Provider"
           foreground: root.foreground
           fontFamily: root.fontFamily
-          visible: !root.addOpen
-          enabled: !root.addOpen
+          visible: !root.addOpen && !root.viewOpen
+          enabled: !root.addOpen && !root.viewOpen
           onClicked: root.addRequested()
         }
       }
@@ -283,7 +331,7 @@ Item {
           id: provRow
           required property var modelData
           required property int index
-          visible: !root.addOpen
+          visible: !root.addOpen && !root.viewOpen
           // implicitWidth matters: the ColumnLayout derives its own width from
           // children's implicit widths, and a bare Item is 0.
           implicitWidth: rowToggle.implicitWidth
@@ -336,14 +384,14 @@ Item {
       Item {
         Layout.fillWidth: true
         Layout.fillHeight: true
-        visible: !root.addOpen
+        visible: !root.addOpen && !root.viewOpen
       }
 
       RowLayout {
         id: buttonRow
         Layout.fillWidth: true
         spacing: Style.space(10)
-        visible: !root.addOpen
+        visible: !root.addOpen && !root.viewOpen
 
         Item { Layout.fillWidth: true }   // spacer pushes Done to the right
 
@@ -354,6 +402,68 @@ Item {
           accent: root.accent
           fontFamily: root.fontFamily
           onClicked: root.closed()
+        }
+      }
+
+      // Account detail view: replaces the list while viewOpen is true (the
+      // row's edit button). Read-only — the non-secret settings only; the
+      // password lives in the keyring and is never fetched. Editing comes
+      // later.
+      ColumnLayout {
+        id: viewForm
+        visible: root.viewOpen
+        Layout.fillWidth: true
+        spacing: Style.space(10)
+
+        Repeater {
+          model: root.viewRows()
+
+          RowLayout {
+            required property var modelData
+            Layout.fillWidth: true
+            spacing: Style.space(8)
+
+            Text {
+              Layout.preferredWidth: Style.space(110)
+              textFormat: Text.PlainText
+              text: modelData.label
+              color: root.foreground
+              opacity: 0.6
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+            Text {
+              Layout.fillWidth: true
+              textFormat: Text.PlainText
+              wrapMode: Text.WrapAnywhere
+              text: modelData.value
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+          }
+        }
+
+        RowLayout {
+          Layout.fillWidth: true
+          spacing: Style.space(10)
+
+          Item { Layout.fillWidth: true }   // spacer pushes buttons right
+
+          DialogButton {
+            text: "Back"
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
+            onClicked: root.accountViewClosed()
+          }
+          DialogButton {
+            text: "Done"
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
+            onClicked: root.closed()
+          }
         }
       }
 
@@ -481,8 +591,22 @@ Item {
             font.family: root.fontFamily
             font.pixelSize: Style.font.subtitle
             onTextChanged: root.pendingServer = text
-            Keys.onReturnPressed: root.ncSignInRequested(root.pendingServer)
-            Keys.onEnterPressed: root.ncSignInRequested(root.pendingServer)
+            Keys.onReturnPressed: root.ncSignInRequested(root.pendingServer, root.pendingName)
+            Keys.onEnterPressed: root.ncSignInRequested(root.pendingServer, root.pendingName)
+            Keys.onEscapePressed: root.navBack()
+          }
+
+          TextField {
+            id: signinNameField
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.max(implicitHeight, Style.spacing.controlHeight)
+            placeholderText: "Account name (optional)"
+            foreground: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.subtitle
+            onTextChanged: root.pendingName = text
+            Keys.onReturnPressed: root.ncSignInRequested(root.pendingServer, root.pendingName)
+            Keys.onEnterPressed: root.ncSignInRequested(root.pendingServer, root.pendingName)
             Keys.onEscapePressed: root.navBack()
           }
         }
@@ -502,6 +626,20 @@ Item {
             font.family: root.fontFamily
             font.pixelSize: Style.font.subtitle
             onTextChanged: root.pendingServer = text
+            Keys.onReturnPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
+            Keys.onEnterPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
+            Keys.onEscapePressed: root.navBack()
+          }
+
+          TextField {
+            id: nameField
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.max(implicitHeight, Style.spacing.controlHeight)
+            placeholderText: "Account name (optional)"
+            foreground: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.subtitle
+            onTextChanged: root.pendingName = text
             Keys.onReturnPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
             Keys.onEnterPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
             Keys.onEscapePressed: root.navBack()
@@ -531,20 +669,6 @@ Item {
             font.family: root.fontFamily
             font.pixelSize: Style.font.subtitle
             onTextChanged: root.pendingPass = text
-            Keys.onReturnPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
-            Keys.onEnterPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
-            Keys.onEscapePressed: root.navBack()
-          }
-
-          TextField {
-            id: nameField
-            Layout.fillWidth: true
-            Layout.preferredHeight: Math.max(implicitHeight, Style.spacing.controlHeight)
-            placeholderText: "Account label (optional)"
-            foreground: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.subtitle
-            onTextChanged: root.pendingName = text
             Keys.onReturnPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
             Keys.onEnterPressed: root.caldavAddSubmit(root.pendingServer, root.pendingName, root.pendingUser, root.pendingPass)
             Keys.onEscapePressed: root.navBack()
@@ -605,7 +729,7 @@ Item {
             accent: root.accent
             fontFamily: root.fontFamily
             onClicked: root.addStage === "signin"
-              ? root.ncSignInRequested(root.pendingServer)
+              ? root.ncSignInRequested(root.pendingServer, root.pendingName)
               : root.caldavAddSubmit(root.pendingServer, root.pendingName,
                                      root.pendingUser, root.pendingPass)
           }

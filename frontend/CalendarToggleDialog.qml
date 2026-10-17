@@ -26,6 +26,26 @@ Item {
   onOpenedChanged: if (opened) cursorEngaged = false
 
   property var model: []
+  // Enabled ACCOUNTS the new calendar can be created on (panel-built from
+  // /api/account; a disabled account is not offered). value = the account key
+  // ("google", or a CalDAV principal URL), label = the account name. The add
+  // form's picker defaults to the first — with a single entry the choice is a
+  // no-op.
+  property var accountChoices: []
+  // Default the account picker to the first enabled account whenever the form
+  // opens or the list (re)arrives — the account fetch is async, so it can land
+  // after the form is already up. A user pick sticks: pendingAddAccount is then
+  // non-empty and this backs off.
+  function defaultAccount() {
+    if (!root.addOpen) return
+    if (root.pendingAddAccount !== "") return
+    if (root.accountChoices.length === 0) return
+    var v = root.accountChoices[0].value
+    root.pendingAddAccount = v
+    accountDropdown.value = v
+  }
+  onAddOpenChanged: defaultAccount()
+  onAccountChoicesChanged: defaultAccount()
   property int selectedIndex: 0
   property color background: Color.background
   property color foreground: Color.foreground
@@ -37,7 +57,7 @@ Item {
   signal closed()
   signal toggled(int id, bool enabled)
   signal addRequested()
-  signal addSubmit(string name, string color, string url, string provider)
+  signal addSubmit(string name, string color, string url, string account)
   signal addCancel()
   signal navRequested(int dx)
   signal deleteRequested(int id)
@@ -59,8 +79,26 @@ Item {
   property string pendingAddName: ""
   property string pendingAddColor: ""
   property string pendingAddUrl: ""
-  property string pendingAddProvider: ""
+  property string pendingAddAccount: ""
+  // Feedback shown by the panel when the add/subscribe POST fails. Rendered
+  // INSIDE the form: the panel's own status line sits behind this modal, so an
+  // error shown there is unreadable.
+  property string addError: ""
   property alias nameFieldRef: nameField
+
+  // Reset the add form to a clean slate — the pending values AND the field
+  // texts. Clearing pendingAddName alone leaves the TextField still showing the
+  // last entry (the field is the source of truth), which is how a stale name
+  // leaked into a later add. The panel calls this on open and on cancel/close.
+  function resetAddForm() {
+    nameField.text = ""
+    urlField.text = ""
+    pendingAddName = ""
+    pendingAddColor = ""
+    pendingAddUrl = ""
+    pendingAddAccount = ""
+    addError = ""
+  }
 
   // Edit-calendar mini form state. The panel flips editOpen on the row edit
   // button / 'e'; the form lives in the card while true (the list hides, like
@@ -204,7 +242,7 @@ Item {
     if (root.addOpen) {
       if (event.key === Qt.Key_Escape) { root.addCancel(); return true }
       if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-        if (root.pendingAddName !== "" || root.pendingAddUrl !== "") root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddProvider)
+        if (root.pendingAddName !== "" || root.pendingAddUrl !== "") root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddAccount)
         return true
       }
       if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
@@ -467,10 +505,10 @@ Item {
           foreground: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.subtitle
-          onTextChanged: if (text !== "") root.pendingAddName = text
-          Keys.onReturnPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddProvider)
-          Keys.onEnterPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddProvider)
-          Keys.onEscapePressed: { root.pendingAddName = ""; root.pendingAddUrl = ""; root.pendingAddProvider = ""; root.addCancel() }
+          onTextChanged: root.pendingAddName = text
+          Keys.onReturnPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddAccount)
+          Keys.onEnterPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddAccount)
+          Keys.onEscapePressed: root.addCancel()
         }
 
         TextField {
@@ -485,26 +523,49 @@ Item {
           foreground: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.subtitle
-          onTextChanged: if (text !== "") root.pendingAddUrl = text
-          Keys.onReturnPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddProvider)
-          Keys.onEnterPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddProvider)
-          Keys.onEscapePressed: { root.pendingAddUrl = ""; root.pendingAddProvider = ""; root.addCancel() }
+          onTextChanged: root.pendingAddUrl = text
+          Keys.onReturnPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddAccount)
+          Keys.onEnterPressed: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddAccount)
+          Keys.onEscapePressed: root.addCancel()
         }
 
-        // Provider switch: checked creates the calendar on the consented Google
-        // account instead of the configured CalDAV server. Unchecked keeps the
-        // default (CalDAV when an account is configured). Consent errors come
-        // from the backend with a clear message.
-        Toggle {
-          id: googleBtn
+        // Account picker: which enabled account the new calendar is created on
+        // (account-level gate). The panel feeds the enabled accounts; a single
+        // enabled account is pre-selected, so the choice is a no-op. Hidden in
+        // Subscribe mode — the account only matters when creating.
+        Text {
           Layout.fillWidth: true
-          label: "Create on Google"
-          description: "Create the calendar on the consented Google account instead of the configured CalDAV server."
+          visible: root.pendingAddUrl === "" && root.accountChoices.length > 0
+          textFormat: Text.PlainText
+          text: "Create calendar on:"
+          color: root.foreground
+          opacity: 0.6
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+        Dropdown {
+          id: accountDropdown
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.spacing.controlHeight
+          visible: root.pendingAddUrl === "" && root.accountChoices.length > 0
+          showLabel: false
+          options: root.accountChoices
           foreground: root.foreground
           accent: root.accent
           fontFamily: root.fontFamily
-          checked: root.pendingAddProvider === "google"
-          onClicked: root.pendingAddProvider = root.pendingAddProvider === "google" ? "" : "google"
+          onChanged: root.pendingAddAccount = value
+          onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
+        }
+        Text {
+          Layout.fillWidth: true
+          visible: root.pendingAddUrl === "" && root.accountChoices.length === 0
+          textFormat: Text.PlainText
+          wrapMode: Text.Wrap
+          text: "No enabled account to create a calendar on — enable one in Account Settings first."
+          color: root.foreground
+          opacity: 0.6
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
         }
 
         // Color picker: preset swatches (Google-Calendar style). Click one to
@@ -550,6 +611,20 @@ Item {
           }
         }
 
+        // Add/subscribe failure (the panel sets it). Shown here because the
+        // panel's status line is behind this modal.
+        Text {
+          Layout.fillWidth: true
+          visible: root.addError !== ""
+          textFormat: Text.PlainText
+          wrapMode: Text.Wrap
+          text: root.addError
+          color: "#e06060"
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          font.italic: true
+        }
+
         RowLayout {
           id: addBtnRow
           Layout.fillWidth: true
@@ -562,10 +637,12 @@ Item {
             // Subscribe mode: a URL was typed, so the action is subscribing
             // to an existing calendar, not creating a new one.
             text: root.pendingAddUrl !== "" ? "Subscribe" : "Create"
+            // Creating needs an enabled account; subscribing does not.
+            enabled: root.pendingAddUrl !== "" || root.accountChoices.length > 0
             foreground: root.foreground
             accent: root.accent
             fontFamily: root.fontFamily
-            onClicked: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddProvider)
+            onClicked: root.addSubmit(root.pendingAddName, root.pendingAddColor, root.pendingAddUrl, root.pendingAddAccount)
           }
           DialogButton {
             id: cancelBtn

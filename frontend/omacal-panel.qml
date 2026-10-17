@@ -39,6 +39,21 @@ Panel {
     property string error: ""
     property bool showAccountSettings: false
     property var accountData: []
+    // Accounts a NEW calendar can be created on: every ENABLED account, in
+    // config order. value = the account key from /api/account ("google", or a
+    // CalDAV principal URL), label = the account's own name (host fallback).
+    // Empty when no account is enabled: the add form then offers nothing.
+    readonly property var accountChoices: {
+        var out = []
+        var rows = accountData || []
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i] || {}
+            if (r.enabled === false) continue
+            out.push({ value: String(r.key || ""),
+                       label: String(r.name || r.key || "Calendar") })
+        }
+        return out
+    }
     // Add-provider flow: the panel owns the Nextcloud sign-in poll loop.
     property string pendingFlowId: ""
     property bool ncPollInFlight: false
@@ -760,6 +775,10 @@ Panel {
     }
     function openCalendars() {
         buildCalToggleModel()
+        // The add-calendar form's provider picker needs the account list, which
+        // the panel otherwise only fetches for Account Settings. Opportunistic:
+        // don't clobber the shared error banner if this fetch fails.
+        fetchAccountSettings(false)
         showCalendars = true
         // Drop any active day-preview hover: the cells under the dialog would
         // otherwise keep a stale hoveredDate (the onEntered gate stops updates,
@@ -770,6 +789,7 @@ Panel {
     function openAccountSettings(withAddForm) {
         fetchAccountSettings()
         showAccountSettings = true
+        accountSettings.viewAccount = null
         hoveredDate = null
         // First-run "Continue" (and any other caller that wants it) opens the
         // dialog with the Add Provider form already expanded.
@@ -778,10 +798,11 @@ Panel {
     }
     function dismissAccountSettings() {
         showAccountSettings = false
+        accountSettings.viewAccount = null
         cancelAddProvider()
         keyCatcher.forceActiveFocus()
     }
-    function fetchAccountSettings() {
+    function fetchAccountSettings(reportError) {
         // GET /api/account: one row per ACCOUNT (a config.json calendars[]
         // entry — CalDAV accounts keyed by principal URL, the Google account by
         // "google"). Rebuilds the dialog's ListModel once the response lands — a
@@ -799,7 +820,7 @@ Panel {
                 catch (e) { accountData = [] }
                 if (!Array.isArray(accountData)) accountData = []
                 buildAccountModel()
-            } else {
+            } else if (reportError !== false) {
                 error = "Account settings unavailable"
             }
         }
@@ -835,9 +856,7 @@ Panel {
         // close the dialog while the form is open), and release the name
         // field's focus so ESC/arrows work again in month/day views.
         calToggle.addOpen = false
-        calToggle.pendingAddName = ""
-        calToggle.pendingAddColor = ""
-        calToggle.pendingAddProvider = ""
+        calToggle.resetAddForm()
         calToggle.editOpen = false
         calToggle.editId = 0
         calToggle.pendingEditName = ""
@@ -850,10 +869,7 @@ Panel {
     // inside the calendar-select card; the dialog owns the field/buttons and
     // emits addSubmit(name)/addCancel(), so the POST lives here.
     function openAddCalendar() {
-        calToggle.pendingAddName = ""
-        calToggle.pendingAddColor = ""
-        calToggle.pendingAddUrl = ""
-        calToggle.pendingAddProvider = ""
+        calToggle.resetAddForm()
         calToggle.addOpen = true
         // Defer a tick: addOpen flips the form's visibility binding, and
         // forceActiveFocus on a still-hidden field is a silent no-op
@@ -862,9 +878,10 @@ Panel {
             calToggle.nameFieldRef.forceActiveFocus()
         })
     }
-    function submitAddCalendar(name, color, url, provider) {
+    function submitAddCalendar(name, color, url, account) {
         var trimmed = (name || "").trim()
         var trimmedUrl = (url || "").trim()
+        calToggle.addError = ""   // clear a stale failure from a previous attempt
         if (trimmedUrl !== "") {
             // Subscribe mode: POST the URL to /api/calendars/subscribe. The
             // name (if typed) is an optional label override; the backend
@@ -883,33 +900,32 @@ Panel {
                     var data = null
                     try { data = JSON.parse(subXhr.responseText) } catch (e) { data = null }
                     if (data && data.ok) {
-                        error = ""
                         calToggle.addOpen = false
-                        calToggle.pendingAddName = ""
-                        calToggle.pendingAddColor = ""
-                        calToggle.pendingAddUrl = ""
-                        calToggle.pendingAddProvider = ""
+                        calToggle.resetAddForm()
                         loadCalendars()
                         keyCatcher.forceActiveFocus()
                     } else {
-                        error = (data && data.error) ? data.error : "Could not subscribe to calendar"
+                        calToggle.addError = (data && data.error)
+                            ? data.error : "Could not subscribe to calendar"
                     }
                 } else {
-                    error = (subXhr.status === 0)
+                    var subMsg = ""
+                    try { subMsg = JSON.parse(subXhr.responseText).error || "" } catch (e) { subMsg = "" }
+                    calToggle.addError = subMsg || ((subXhr.status === 0)
                         ? "omacal API did not respond"
-                        : "Cannot subscribe to calendar (" + subXhr.status + ")"
+                        : "Cannot subscribe to calendar (" + subXhr.status + ")")
                     // Keep the form open so the user can retry or cancel.
                 }
             }
             subXhr.send(JSON.stringify(subPayload))
             return
         }
-        if (trimmed === "") { error = "Enter a calendar name"; return }
+        if (trimmed === "") { calToggle.addError = "Enter a calendar name"; return }
         var payload = { name: trimmed }
         if (color && color !== "")
             payload.color = color
-        if (provider && provider !== "")
-            payload.provider = provider
+        if (account && account !== "")
+            payload.account = account
         var xhr = new XMLHttpRequest()
         xhr.open("POST", apiBase + "/api/calendars/add", true)
         xhr.timeout = 30000   // write op: server round-trip
@@ -922,22 +938,21 @@ Panel {
                     // The new calendar is in the DB cache now: refetch the
                     // list and rebuild the dialog model so the row appears
                     // (loadCalendars chains buildCalToggleModel on success).
-                    error = ""
                     calToggle.addOpen = false
-                    calToggle.pendingAddName = ""
-                    calToggle.pendingAddColor = ""
-                    calToggle.pendingAddProvider = ""
+                    calToggle.resetAddForm()
                     loadCalendars()
                     // Same focus release as cancelAddCalendar: the name field
                     // held focus when Create was clicked.
                     keyCatcher.forceActiveFocus()
                 } else {
-                    error = (data && data.error) ? data.error : "Could not add calendar"
+                    calToggle.addError = (data && data.error) ? data.error : "Could not add calendar"
                 }
             } else {
-                error = (xhr.status === 0)
+                var errMsg = ""
+                try { errMsg = JSON.parse(xhr.responseText).error || "" } catch (e) { errMsg = "" }
+                calToggle.addError = errMsg || ((xhr.status === 0)
                     ? "omacal API did not respond"
-                    : "Cannot add calendar (" + xhr.status + ")"
+                    : "Cannot add calendar (" + xhr.status + ")")
                 // Keep the form open so the user can retry or cancel.
             }
         }
@@ -945,11 +960,7 @@ Panel {
     }
     function cancelAddCalendar() {
         calToggle.addOpen = false
-        calToggle.pendingAddName = ""
-        calToggle.pendingAddColor = ""
-        calToggle.pendingAddUrl = ""
-        calToggle.pendingAddProvider = ""
-        error = ""
+        calToggle.resetAddForm()
         // The name field still holds activeFocus when the form closes, and a
         // hidden focused TextField swallows ESC/arrows before the catcher
         // sees them (same reason dismissAddForm does this). Move focus back.
@@ -1099,10 +1110,24 @@ Panel {
     }
 
     // Per-account action button in the Account Settings dialog (the row's
-    // edit_calendar glyph). Behaviour is not decided yet — shipped as a no-op
-    // so the button is visible and wired; the design call goes to the user.
+    // edit_calendar glyph): opens that account's detail view. Read-only for
+    // now — the dialog shows the non-secret settings; editing comes later. The
+    // panel owns the lookup (from /api/account) so the dialog stays
+    // presentational.
     function editAccount(key) {
-        // TODO: decide what the per-account action should do.
+        var row = null
+        for (var i = 0; i < accountData.length; i++) {
+            if (accountData[i] && accountData[i].key === key) {
+                row = accountData[i]
+                break
+            }
+        }
+        accountSettings.viewAccount = row
+        keyCatcher.forceActiveFocus()
+    }
+    function closeAccountView() {
+        accountSettings.viewAccount = null
+        keyCatcher.forceActiveFocus()
     }
 
     // --- Add Provider (AccountSettingsDialog's inline add form) --------------
@@ -1143,7 +1168,7 @@ Panel {
     // Kick off the Nextcloud browser sign-in: ask the backend to start a Login
     // Flow v2, open the returned URL in the user's default browser, and poll
     // for the app password it mints once they authenticate.
-    function ncSignIn(server) {
+    function ncSignIn(server, name) {
         var s = String(server || "").trim()
         if (s === "") { accountSettings.addError = "Server URL is required."; return }
         accountSettings.addError = ""
@@ -1174,7 +1199,7 @@ Panel {
         }
         xhr.onerror = function() { accountSettings.addBusy = false; accountSettings.addStatus = ""; accountSettings.addError = "Could not reach the omacal backend." }
         xhr.ontimeout = function() { accountSettings.addBusy = false; accountSettings.addStatus = ""; accountSettings.addError = "The server did not respond." }
-        xhr.send(JSON.stringify({ server: s }))
+        xhr.send(JSON.stringify({ server: s, name: String(name || "").trim() }))
     }
     function pollNcLogin() {
         // Guard against overlapping polls: the backend commits the account
@@ -1216,7 +1241,7 @@ Panel {
         xhr.send()
     }
     // Manual CalDAV path (also the way to add Nextcloud with an app password).
-    function submitCaldavAdd(url, displayName, user, pass) {
+    function submitCaldavAdd(url, name, user, pass) {
         var u = String(url || "").trim()
         var un = String(user || "").trim()
         var p = String(pass || "")
@@ -1247,7 +1272,7 @@ Panel {
         xhr.ontimeout = function() { accountSettings.addBusy = false; accountSettings.addStatus = ""; accountSettings.addError = "The server did not respond." }
         xhr.send(JSON.stringify({
             url: u,
-            display_name: String(displayName || "").trim(),
+            name: String(name || "").trim(),
             username: un,
             password: p
         }))
@@ -2593,6 +2618,9 @@ Panel {
             z: 10
             opened: root.showCalendars
             model: root.calToggleModel
+            // Enabled providers for the add-calendar form's provider picker
+            // (account-level gate: a disabled account is not offered).
+            accountChoices: root.accountChoices
             selectedIndex: 0
             foreground: root.contentForeground
             accent: root.accent
@@ -2600,7 +2628,7 @@ Panel {
             onClosed: root.dismissCalendars()
             onToggled: root.toggleCalendar(id, enabled)
             onAddRequested: root.openAddCalendar()
-            onAddSubmit: root.submitAddCalendar(name, color, url, provider)
+            onAddSubmit: root.submitAddCalendar(name, color, url, account)
             onAddCancel: root.cancelAddCalendar()
             // Arrows while the mini form is open navigate months in the
             // panel behind the dialog (the dialog routes them here instead
@@ -2632,13 +2660,14 @@ Panel {
             fontFamily: root.contentFontFamily
             onAccountToggled: function(key, enabled) { root.toggleAccount(key, enabled) }
             onAccountEditRequested: function(key) { root.editAccount(key) }
+            onAccountViewClosed: root.closeAccountView()
             onAddRequested: root.openAddProvider()
             onAddCancel: root.cancelAddProvider()
             onProviderChoiceRequested: function(key) { root.chooseProvider(key) }
             onNavBack: root.addFormBack()
-            onNcSignInRequested: function(server) { root.ncSignIn(server) }
-            onCaldavAddSubmit: function(url, displayName, user, pass) {
-                root.submitCaldavAdd(url, displayName, user, pass)
+            onNcSignInRequested: function(server, name) { root.ncSignIn(server, name) }
+            onCaldavAddSubmit: function(url, name, user, pass) {
+                root.submitCaldavAdd(url, name, user, pass)
             }
             onClosed: root.dismissAccountSettings()
         }
