@@ -417,9 +417,6 @@ class OmacalHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/api/setup":
-            self._handle_setup()
-            return
         if parsed.path == "/api/providers/nextcloud/login/start":
             # Begin a Nextcloud Login Flow v2 browser sign-in.
             self._handle_nc_login_start()
@@ -822,73 +819,6 @@ class OmacalHandler(BaseHTTPRequestHandler):
             return
         self._json(404, {"error": "not found"})
 
-    def _handle_setup(self) -> None:
-        """Configure a single calendar from the setup form.
-
-        Stores the password in the keyring, writes config.json (no password),
-        then contacts the server to discover the calendar. Returns {ok: true}
-        once the config is committed and the server resolved; the frontend
-        follows up with POST /api/sync for the first data pull so it can show
-        "found server — syncing" feedback. On failure returns
-        {ok: false, error: ...} so the frontend can stay on the form.
-        """
-        from omacal.config import save_config
-        from omacal.keyring_store import store_password
-
-        try:
-            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            data = json.loads(body)
-        except Exception as e:
-            self._json(400, {"ok": False, "error": f"Invalid request body: {e}"})
-            return
-
-        url = (data.get("url") or "").strip()
-        display_name = (data.get("display_name") or "").strip() or None
-        username = (data.get("username") or "").strip() or None
-        password = data.get("password")  # never echoed back, never persisted to disk
-
-        if not url:
-            self._json(400, {"ok": False, "error": "Server URL is required"})
-            return
-        if not username:
-            self._json(400, {"ok": False, "error": "Username is required"})
-            return
-        if not password:
-            self._json(400, {"ok": False, "error": "Password is required"})
-            return
-
-        # 1. Resolve the URL (literal, else RFC 6764 discovery) and contact
-        #    the server — this validates the URL + credentials before we
-        #    commit anything to disk or the keyring.
-        try:
-            url, discovered = _resolve_caldav_url(url, username, password)
-        except ValueError as e:
-            self._json(200, {"ok": False, "error": str(e)})
-            return
-
-        # 2. Store the password in the keyring, keyed by the URL that worked.
-        if not store_password(url, username, password):
-            self._json(200, {"ok": False, "error": "Could not store credentials in the system keyring"})
-            return
-
-        # 3. Write config (username only — never the password).
-        cfg = load_config()
-        cfg["calendars"] = [{
-            "url": url,
-            "display_name": display_name or (discovered[0].get("display_name") or "Calendar"),
-            "username": username,
-            "enabled": True,
-        }]
-        save_config(cfg=cfg)
-        # Pick up the new config in the running server.
-        OmacalHandler.cfg_calendars = cfg["calendars"]
-
-        # 4. Return OK immediately. The initial sync is deliberately NOT run
-        #    here: the frontend shows "Found server — syncing…" and then calls
-        #    POST /api/sync itself, so the user gets honest two-stage feedback
-        #    (discovery done / data syncing) instead of one long silent wait.
-        self._json(200, {"ok": True})
-
     def _handle_nc_login_start(self) -> None:
         """Begin a Nextcloud Login Flow v2 (browser sign-in).
 
@@ -1048,7 +978,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
 
         The manual sibling of the Nextcloud browser sign-in: works for any
         CalDAV server, and for Nextcloud with an app password (which 2FA
-        accounts require). APPENDS to config.json, unlike /api/setup.
+        accounts require). APPENDS to config.json.
         """
         try:
             body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -1091,11 +1021,10 @@ class OmacalHandler(BaseHTTPRequestHandler):
         """Validate + discover, store the password, APPEND the account.
 
         Shared by the Nextcloud browser sign-in (password = minted app password)
-        and the manual CalDAV path. Unlike /api/setup (which REPLACES the whole
-        calendar list for a single first-run account), this appends to
-        config.json so an existing account list survives "Add Provider". Nothing
-        is written until the credentials are proven: a rejected password or
-        unreachable server raises before the keyring or config are touched.
+        and the manual CalDAV path. Appends to config.json so an existing account
+        list survives "Add Provider". Nothing is written until the credentials
+        are proven: a rejected password or unreachable server raises before the
+        keyring or config are touched.
 
         ``name`` is the user's optional ACCOUNT label (stored under the ``name``
         key, distinct from ``display_name``, which is the primary calendar's

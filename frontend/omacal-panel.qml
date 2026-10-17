@@ -16,7 +16,7 @@ Panel {
     property var hostWidget: null
     readonly property var barIdentity: hostWidget || root
     property bool opened: false // NOT readonly — must flip before controller toggles
-    property bool needsSetup: true  // fresh install until POST /api/setup succeeds
+    property bool needsSetup: true  // from GET /api/health needs_setup; cleared on a successful add
 
     readonly property color contentForeground: root.bar ? root.bar.foreground : Color.foreground
     readonly property string contentFontFamily: root.bar ? root.bar.fontFamily : Style.font.family
