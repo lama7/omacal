@@ -51,6 +51,20 @@ def save_config(path: Path | None = None, cfg: dict | None = None) -> None:
         json.dump(cfg, f, indent=2)
 
 
+def account_key(cal: dict) -> str:
+    """Stable key for a config.json ``calendars[]`` ACCOUNT entry.
+
+    The Google account is ``"google"``; a CalDAV account is keyed by its
+    principal URL, because every CalDAV account shares ``provider='caldav'``
+    and the principal is what tells them apart. This is also the key a cached
+    DB row's ``principal_url`` maps to (see the API's row helper), and the key
+    the panel sends to pick which account a new calendar is created on.
+    """
+    if (cal.get("provider") or "caldav") == "google":
+        return "google"
+    return (cal.get("url") or "").rstrip("/")
+
+
 def needs_setup(cfg: dict | None = None) -> bool:
     """True when no enabled calendar is configured (fresh install)."""
     cfg = cfg if cfg is not None else load_config()

@@ -649,60 +649,70 @@ def add_calendar_named(
     conn: Any,
     name: str,
     color: str | None = None,
-    provider: str | None = None,
+    account: str | None = None,
 ) -> dict[str, Any]:
-    """Create a NEW named calendar for the signed-in user and cache it.
+    """Create a NEW named calendar on ONE account and cache it.
 
-    Reuses the credentials the user already configured (config's first
-    calendar entry: principal URL + username, password from the keyring) —
-    no new login. Creates the collection server-side via Principal.make_calendar
-    (PUT, RFC 5995), then registers it in the DB cache (enabled=1) so the
-    panel's next /api/calendars fetch lists it. `color` (optional, #RRGGBB
-    [AA]) is written to the server via PROPPATCH (Apple/IIS calendar-color
-    property, the de-facto CalDAV color convention) best-effort — a server
-    that rejects the property still gets the calendar, and the chosen color
-    is cached in the DB either way so the panel renders it. Returns {ok,
-    calendar_id, display_name}; raises ValueError for user-facing failures.
-
-    `provider` ('google' | 'caldav' | None) picks the account explicitly:
-    'google' creates on the consented Google account; 'caldav' requires the
-    configured CalDAV account; None keeps the presence heuristic (CalDAV if
-    an account exists, else Google).
+    `account` is the config.json account KEY (see config.account_key):
+    "google" for the Google account, else the CalDAV principal URL. The
+    account must exist and be ENABLED — a soft-disabled account must not be
+    accessed (the same account-level gate sync/prune honour), so it raises
+    ValueError. Reuses that account's stored credentials (CalDAV principal URL
+    + username, password from the keyring; or the consented Google token) —
+    no new login. Creates the collection server-side via
+    Principal.make_calendar (PUT, RFC 5995), then registers it in the DB cache
+    (enabled=1) so the panel's next /api/calendars fetch lists it. `color`
+    (optional, #RRGGBB[AA]) is written to the server via PROPPATCH (Apple/IIS
+    calendar-color property, the de-facto CalDAV color convention) best-effort
+    — a server that rejects the property still gets the calendar, and the
+    chosen color is cached in the DB either way so the panel renders it.
+    Returns {ok, calendar_id, display_name}; raises ValueError for user-facing
+    failures.
     """
-    from omacal.config import load_config
+    from omacal.config import account_key, load_config
     from omacal.keyring_store import get_password
 
+    if not account:
+        raise ValueError("No calendar account selected")
     cfg = load_config()
-    entries = [c for c in cfg.get("calendars", []) if c.get("username")]
-    if provider == "google" or not entries:
-        # Google path: explicit provider request, or Google-only install.
-        if provider == "google" or cfg.get("oauth", {}).get("google"):
-            from omacal.oauth import oauth_token
-            from omacal.google_cal import create_calendar, GoogleAPIError
-            token = oauth_token(cfg, "google")
-            if not token:
-                raise ValueError('Google OAuth consent needed (run "omacal oauth login google")')
-            try:
-                cal = create_calendar(token, name, color)
-            except GoogleAPIError as e:
-                raise ValueError(f"Could not create the calendar: {e}") from e
-            gcal_id = cal.get("id") or ""
-            cal_id = add_calendar(conn, uid=gcal_id, display_name=cal.get("summary") or name,
-                                  url=f"google:{gcal_id}", color=color, provider="google")
-            logger.info("Created Google calendar %r (id=%d)", name, cal_id)
-            return {"ok": True, "calendar_id": cal_id, "display_name": name}
-        raise ValueError("No signed-in calendar server configured")
-    entry = entries[0]
-    url, username = entry["url"], entry["username"]
+    entry = next((c for c in cfg.get("calendars", [])
+                  if account_key(c) == account), None)
+    if entry is None:
+        raise ValueError("Unknown calendar account")
+    if not entry.get("enabled", True):
+        raise ValueError("That account is disabled")
+
+    if (entry.get("provider") or "caldav") == "google":
+        from omacal.oauth import oauth_token
+        from omacal.google_cal import create_calendar, GoogleAPIError
+        token = oauth_token(cfg, "google")
+        if not token:
+            raise ValueError('Google OAuth consent needed (run "omacal oauth login google")')
+        try:
+            cal = create_calendar(token, name, color)
+        except GoogleAPIError as e:
+            raise ValueError(f"Could not create the calendar: {e}") from e
+        gcal_id = cal.get("id") or ""
+        cal_id = add_calendar(conn, uid=gcal_id, display_name=cal.get("summary") or name,
+                              url=f"google:{gcal_id}", color=color, provider="google")
+        logger.info("Created Google calendar %r (id=%d)", name, cal_id)
+        return {"ok": True, "calendar_id": cal_id, "display_name": name}
+
+    url = entry.get("url") or ""
+    username = entry.get("username") or ""
+    if not username:
+        raise ValueError("No username on file for that account")
     password = get_password(url, username)
     if not password:
         raise ValueError("No credentials on file for the signed-in user")
 
-    client = _dav_client(url, username, password)
-    principal = client.principal()
     try:
+        client = _dav_client(url, username, password)
+        principal = client.principal()
         cal_obj = principal.make_calendar(name=name)
     except Exception as e:
+        # Covers connect/discovery too (e.g. the server answering 429), not just
+        # the PUT: one readable ValueError instead of a bare 500.
         raise ValueError(f"Could not create the calendar: {e}") from e
 
     # Optional color: PROPPATCH the Apple/IIS calendar-color property (the

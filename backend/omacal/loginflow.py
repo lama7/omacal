@@ -82,12 +82,14 @@ def _normalise_server(server: str) -> str:
     return server.rstrip("/")
 
 
-def nextcloud_start(server: str) -> dict:
+def nextcloud_start(server: str, name: str | None = None) -> dict:
     """Begin a Nextcloud Login Flow v2.
 
     Returns {"flow_id", "login_url"} where `login_url` must be opened in the
-    user's browser. Raises ValueError (user-facing message) when the server
-    does not answer the login flow.
+    user's browser. ``name`` is the user's optional ACCOUNT label, carried
+    through the flow so it can be stored when the credentials come back.
+    Raises ValueError (user-facing message) when the server does not answer the
+    login flow.
     """
     server = _normalise_server(server)
     if not server:
@@ -106,6 +108,7 @@ def nextcloud_start(server: str) -> dict:
     flow_id = new_flow(
         kind="nextcloud-login",
         server=server,
+        name=(name or "").strip(),
         token=poll["token"],
         endpoint=poll["endpoint"],
     )
@@ -144,4 +147,5 @@ def nextcloud_poll(flow_id: str) -> dict:
         "server": data.get("server") or entry["server"],
         "login_name": login_name,
         "app_password": app_password,
+        "name": entry.get("name") or "",
     }

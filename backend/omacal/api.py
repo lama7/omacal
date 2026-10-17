@@ -10,22 +10,26 @@ Endpoints:
     POST /api/sync              → trigger a sync run
     POST /api/events             → create a new event
     POST /api/calendars/toggle  → enable/disable a calendar's visibility
-    POST /api/calendars/add     → create a new named calendar for the
-                                   signed-in user (reuses keyring creds)
+    POST /api/calendars/add     → create a new named calendar on one account
+                                   ({name, color?, account}; reuses that
+                                   account's stored credentials)
     PUT  /api/calendars/<id>    → edit an owned calendar's name and/or
                                    color ({name?, color?}; PROPPATCH)
     GET  /api/account           → one row per ACCOUNT (a config.json
                                    calendars[] entry): {key, name,
-                                   display_name, provider, enabled, calendars}.
-                                   CalDAV accounts key on their principal URL,
-                                   the Google account on "google"
+                                   display_name, provider, enabled, calendars,
+                                   username, url}. `name` is the account's own
+                                   label (set at setup), or a host fallback;
+                                   `display_name` is its primary calendar's
+                                   name. CalDAV accounts key on their principal
+                                   URL, the Google account on "google"
     POST /api/account/toggle    → soft-enable/disable an account ({key,
                                    enabled}: persists the flag on the entry and
                                    flips the enabled column on all that
                                    account's calendar rows)
     POST /api/providers/nextcloud/login/start → begin a Nextcloud Login Flow
-                                   v2 browser sign-in ({server}) → {flow_id,
-                                   login_url}
+                                   v2 browser sign-in ({server, name?}) →
+                                   {flow_id, login_url}
     GET  /api/providers/nextcloud/login/poll?id=.. → poll that flow
                                    (pending|ok|expired|unknown|error); on "ok"
                                    it commits the account (keyring + config
@@ -46,7 +50,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from omacal.config import load_config
+from omacal.config import account_key, load_config
 from omacal.db import (
     list_calendars as db_get_calendars,
     get_events as db_get_events,
@@ -137,21 +141,17 @@ def _principal_url(fallback: str, discovered: list[dict]) -> str:
     return fallback
 
 
-def _account_key(cal: dict) -> str:
-    """Stable key for a config.json ``calendars[]`` account entry.
-
-    The Google account is ``"google"``; a CalDAV account is keyed by its
-    principal URL, because every CalDAV account shares ``provider='caldav'``
-    and the principal is what tells them apart (the DB rows carry the same
-    principal_url, so this key is also how a toggle finds its rows).
-    """
-    if (cal.get("provider") or "caldav") == "google":
-        return "google"
-    return (cal.get("url") or "").rstrip("/")
-
-
 def _account_label(cal: dict) -> str:
-    """Human label for an account row: the server host, or "Google"."""
+    """Human label for an account row.
+
+    Prefers the account's own ``name`` (set when the account is added), so
+    several CalDAV or Google accounts can be told apart; falls back to the
+    server host (CalDAV) or "Google". ``display_name`` is only a last resort:
+    on a calendars[] entry it is the PRIMARY CALENDAR's name captured from the
+    server, not an account label.
+    """
+    if (cal.get("name") or "").strip():
+        return str(cal["name"]).strip()
     if (cal.get("provider") or "caldav") == "google":
         return "Google"
     host = urlparse(cal.get("url") or "").hostname
@@ -161,15 +161,13 @@ def _account_label(cal: dict) -> str:
 def _row_account_key(row: dict) -> str:
     """The account key a cached calendar ROW belongs to.
 
-    Mirror of ``_account_key`` for DB rows (which carry ``principal_url``
-    instead of ``url``): "google" for a Google row, else the row's principal
-    URL. Used to tell whether a row's account is disabled — the row's own
+    ``account_key`` for DB rows, which carry ``principal_url`` instead of
+    ``url``. Used to tell whether a row's account is disabled — the row's own
     ``enabled`` flag cannot, because disabling an account and hiding a single
     calendar both set it to 0.
     """
-    if (row.get("provider") or "caldav") == "google":
-        return "google"
-    return (row.get("principal_url") or "").rstrip("/")
+    return account_key({"provider": row.get("provider"),
+                        "url": row.get("principal_url")})
 
 
 class OmacalHandler(BaseHTTPRequestHandler):
@@ -209,7 +207,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
             # the row's own `enabled` flag, which cannot tell an account disable
             # from a single-calendar hide (both set it to 0).
             disabled_accounts = {
-                _account_key(c) for c in self._cfg_calendars()
+                account_key(c) for c in self._cfg_calendars()
                 if not c.get("enabled", True)
             }
             for c in calendars:
@@ -252,7 +250,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
             accounts = []
             for cal in self._cfg_calendars():
                 provider = cal.get("provider", "caldav")
-                key = _account_key(cal)
+                key = account_key(cal)
                 try:
                     if provider == "google":
                         row = self.db_conn.execute(
@@ -273,6 +271,10 @@ class OmacalHandler(BaseHTTPRequestHandler):
                     "provider": provider,
                     "enabled": bool(cal.get("enabled", True)),
                     "calendars": count,
+                    # Non-secret settings, for the account view. The password
+                    # lives in the keyring and is never returned.
+                    "username": cal.get("username") or "",
+                    "url": cal.get("url") or "",
                 })
             self._json(200, accounts)
             return
@@ -495,10 +497,11 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 self._json(500, {"error": str(e)})
             return
         if parsed.path == "/api/calendars/add":
-            # Create a NEW named calendar on the signed-in user's server,
-            # reusing the keyring credentials (no new login). Body: {name,
-            # color?, provider?} — provider is 'caldav'|'google'; absent keeps
-            # the presence heuristic (CalDAV account wins if configured).
+            # Create a NEW named calendar on ONE account, reusing that
+            # account's stored credentials (no new login). Body: {name, color?,
+            # account} — `account` is the account KEY from GET /api/account
+            # ("google", or a CalDAV principal URL) and must name an enabled
+            # account.
             try:
                 body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
                 data = json.loads(body)
@@ -510,12 +513,12 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 if color and not re.fullmatch(r"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?", color):
                     self._json(400, {"error": "Bad calendar color"})
                     return
-                provider = (data.get("provider") or "").strip().lower()
-                if provider not in ("", "caldav", "google"):
-                    self._json(400, {"error": "Unknown provider"})
+                account = (data.get("account") or "").strip()
+                if not account:
+                    self._json(400, {"error": "No account selected"})
                     return
                 from omacal.sync import add_calendar_named
-                result = add_calendar_named(self.db_conn, name, color, provider or None)
+                result = add_calendar_named(self.db_conn, name, color, account)
                 self._json(200, result)
             except ValueError as e:
                 self._json(400, {"error": str(e)})
@@ -582,7 +585,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
                 from omacal.config import load_config, save_config
                 cfg = load_config()
                 calendars = list(cfg.get("calendars") or [])
-                target = next((c for c in calendars if _account_key(c) == key), None)
+                target = next((c for c in calendars if account_key(c) == key), None)
                 if target is None:
                     self._json(400, {"error": f"unknown account '{key}'"})
                     return
@@ -863,7 +866,8 @@ class OmacalHandler(BaseHTTPRequestHandler):
             self._json(400, {"ok": False, "error": f"Invalid request body: {e}"})
             return
         try:
-            started = loginflow.nextcloud_start(data.get("server") or "")
+            started = loginflow.nextcloud_start(data.get("server") or "",
+                                                data.get("name"))
         except ValueError as e:
             self._json(200, {"ok": False, "error": str(e)})
             return
@@ -887,7 +891,8 @@ class OmacalHandler(BaseHTTPRequestHandler):
             return
         try:
             account = self._commit_caldav_account(
-                result["server"], result["login_name"], result["app_password"])
+                result["server"], result["login_name"], result["app_password"],
+                result.get("name"))
         except ValueError as e:
             self._json(200, {"status": "error", "error": str(e)})
             return
@@ -914,7 +919,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
         url = (data.get("url") or "").strip()
         username = (data.get("username") or "").strip()
         password = data.get("password") or ""
-        display_name = (data.get("display_name") or "").strip() or None
+        name = (data.get("name") or "").strip() or None
         if not url:
             self._json(200, {"ok": False, "error": "Server URL is required"})
             return
@@ -925,7 +930,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
             self._json(200, {"ok": False, "error": "Password is required"})
             return
         try:
-            account = self._commit_caldav_account(url, username, password, display_name)
+            account = self._commit_caldav_account(url, username, password, name)
         except ValueError as e:
             self._json(200, {"ok": False, "error": str(e)})
             return
@@ -940,7 +945,7 @@ class OmacalHandler(BaseHTTPRequestHandler):
         server: str,
         username: str,
         password: str,
-        display_name: str | None = None,
+        name: str | None = None,
     ) -> dict:
         """Validate + discover, store the password, APPEND the account.
 
@@ -950,6 +955,10 @@ class OmacalHandler(BaseHTTPRequestHandler):
         config.json so an existing account list survives "Add Provider". Nothing
         is written until the credentials are proven: a rejected password or
         unreachable server raises before the keyring or config are touched.
+
+        ``name`` is the user's optional ACCOUNT label (stored under the ``name``
+        key, distinct from ``display_name``, which is the primary calendar's
+        name captured from the server).
         """
         from omacal.config import load_config, save_config
         from omacal.keyring_store import store_password
@@ -964,14 +973,16 @@ class OmacalHandler(BaseHTTPRequestHandler):
         if not any(
             (c.get("url") or "").rstrip("/") == url.rstrip("/") for c in calendars
         ):
-            calendars.append({
+            entry = {
                 "url": url,
-                "display_name": (display_name or "").strip()
-                or (discovered[0].get("display_name") if discovered else None)
+                "display_name": (discovered[0].get("display_name") if discovered else None)
                 or urlparse(server).hostname or "Calendar",
                 "username": username,
                 "enabled": True,
-            })
+            }
+            if (name or "").strip():
+                entry["name"] = name.strip()
+            calendars.append(entry)
             cfg["calendars"] = calendars
             save_config(cfg=cfg)
             OmacalHandler.cfg_calendars = calendars
