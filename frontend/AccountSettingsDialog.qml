@@ -290,7 +290,7 @@ Item {
           Layout.fillWidth: true
           Layout.preferredHeight: root.rowHeight
 
-          Toggle {
+          DialogToggle {
             id: rowToggle
             anchors.left: parent.left
             anchors.right: parent.right
@@ -302,7 +302,7 @@ Item {
             label: provRow.modelData.name
             description: provRow.modelData.enabled ? "Enabled" : "Disabled"
             checked: provRow.modelData.enabled
-            hasCursor: root.cursorEngaged
+            cursorOn: root.cursorEngaged
                 && provRow.index === root.selectedIndex
             foreground: root.foreground
             accent: root.accent
@@ -390,19 +390,31 @@ Item {
               required property var modelData
               required property int index
               Layout.fillWidth: true
-              readonly property bool hot: hover.containsMouse
-                  || (root.cursorEngaged && root.chooserIndex === choiceRow.index)
+              // Two cues, deliberately different: the KEYBOARD cursor is
+              // painted explicitly with the theme accent (tinted fill +
+              // thicker border) so the selection reads clearly; hover keeps
+              // the kit's hover tokens. The kit's focus tokens can't be used
+              // here because this theme mirrors them onto the hover tokens,
+              // so focus would render identical to hover.
+              readonly property bool cursorOn: root.cursorEngaged
+                  && root.chooserIndex === choiceRow.index
+              readonly property bool hot: hover.containsMouse || cursorOn
               implicitHeight: choiceCol.implicitHeight + Style.space(16)
               radius: root.cornerRadius
-              color: hot
-                ? Style.controlFill(false, true, root.foreground, root.accent)
-                : "transparent"
-              border.color: hot
-                ? Style.controlBorder(false, true, root.foreground, root.accent)
-                : root.accent
-              border.width: hot
-                ? Style.controlBorderWidth(false, true)
-                : Style.normalBorderWidth
+              color: cursorOn
+                ? Util.alpha(root.accent, 0.18)
+                : (hot ? Style.controlFill(false, true, root.foreground,
+                                           root.accent)
+                       : "transparent")
+              border.color: cursorOn
+                ? root.accent
+                : (hot ? Style.controlBorder(false, true, root.foreground,
+                                             root.accent)
+                       : root.accent)
+              border.width: cursorOn
+                ? Style.normalBorderWidth + 1
+                : (hot ? Style.controlBorderWidth(false, true)
+                       : Style.normalBorderWidth)
               Behavior on color { ColorAnimation { duration: 100 } }
 
               Column {

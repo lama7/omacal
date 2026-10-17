@@ -18,6 +18,12 @@ import qs.Ui
 Item {
   id: root
   property bool opened: false
+  // The keyboard-cursor cue stays hidden until the user actually navigates
+  // (arrows/Tab in handleKey) — otherwise the first row would be painted with
+  // the cursor cue on open and read as a stuck hover. Same rule as the account
+  // dialog; the cue itself lives in DialogToggle.
+  property bool cursorEngaged: false
+  onOpenedChanged: if (opened) cursorEngaged = false
 
   property var model: []
   property int selectedIndex: 0
@@ -213,10 +219,12 @@ Item {
       return true
     } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Backtab) {
       root.selectedIndex = (root.selectedIndex - 1 + total) % total
+      root.cursorEngaged = true
       root.scrollToSelection()
       return true
     } else if (event.key === Qt.Key_Right || event.key === Qt.Key_Tab) {
       root.selectedIndex = (root.selectedIndex + 1) % total
+      root.cursorEngaged = true
       root.scrollToSelection()
       return true
     } else if (event.key === Qt.Key_Plus || event.text === "+") {
@@ -382,7 +390,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.preferredHeight: rowToggle.implicitHeight
 
-                Toggle {
+                DialogToggle {
                   id: rowToggle
                   anchors.left: parent.left
                   anchors.right: parent.right
@@ -395,7 +403,7 @@ Item {
                   label: modelData.name
                   description: modelData.enabled ? "Visible" : "Hidden"
                   checked: modelData.enabled
-                  hasCursor: index === root.selectedIndex
+                  cursorOn: root.cursorEngaged && index === root.selectedIndex
                   foreground: root.foreground
                   accent: root.accent
                   fontFamily: root.fontFamily
@@ -697,13 +705,15 @@ Item {
           foreground: root.foreground
           accent: root.accent
           fontFamily: root.fontFamily
-          // Keyboard-cursor cue: when Tab/Shift+Tab parks the cursor on the
-          // Done slot, paint the same hover-cursor fill/border the Toggles
-          // use for hasCursor, so the keyboard position is visible. (Done
-          // lives in the button row outside the Flickable, so it is always
-          // on screen; the highlight is the whole fix.) Mouse hover is lit by
-          // the component itself.
-          hot: root.opened && !root.addOpen && root.selectedIndex === root.doneIndex
+          // Keyboard-cursor cue: when arrows/Tab park the cursor on the Done
+          // slot, DialogButton paints its cursor cue (accent tinted fill +
+          // thicker border), so the keyboard position is visible. Hidden until
+          // the cursor is actually navigated (cursorEngaged), like every other
+          // dialog. (Done lives in the button row outside the Flickable, so it
+          // is always on screen; the highlight is the whole fix.) Mouse hover
+          // is lit by the component itself.
+          hot: root.opened && !root.addOpen && root.cursorEngaged
+              && root.selectedIndex === root.doneIndex
           onClicked: root.closed()
         }
       }

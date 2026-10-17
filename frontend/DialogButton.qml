@@ -16,8 +16,11 @@ import qs.Commons
 // add-event form's half-width Cancel/Save).
 //
 // `destructive` paints the red confirm variant (DeleteConfirmDialog).
-// `hot` forces the hover fill from outside — the keyboard-cursor cue a dialog
-// paints when Tab parks on this slot; mouse hover lights it too.
+// `hot` is the keyboard-cursor cue a dialog paints when Tab parks on this
+// slot. It is deliberately NOT the same as mouse hover: the cursor gets the
+// accent (or red) tinted fill and a thicker border, while hover keeps the
+// kit's hover tokens — this theme mirrors its focus tokens onto the hover
+// tokens, so focus could not tell them apart.
 // `enabled` gates clicks and dims the label.
 Rectangle {
   id: root
@@ -35,8 +38,11 @@ Rectangle {
   // (selectedIndex) in step with the mouse, as DeleteConfirmDialog does.
   signal entered()
 
-  readonly property alias containsMouse: mouse.containsMouse
-  readonly property bool _lit: root.enabled && (root.hot || mouse.containsMouse)
+  readonly property bool _hover: root.enabled && mouse.containsMouse
+  readonly property bool _cursor: root.enabled && root.hot
+  // Accent normally, red for a destructive button — the cursor cue and the
+  // unlit border both key off it.
+  readonly property color _cue: root.destructive ? Color.urgent : root.accent
 
   implicitWidth: Style.space(96)
   implicitHeight: Style.space(38)
@@ -44,17 +50,27 @@ Rectangle {
   // Destructive (Delete/Unsubscribe) is red in EVERY state. The kit's
   // controlFill/controlBorder resolve their state token against `foreground`,
   // so handing Color.urgent in as the accent renders a plain foreground tint —
-  // the red has to be painted explicitly. Unlit keeps the dim red border + red
-  // label; hot adds the red-tinted fill and full red border.
-  color: root.destructive
-    ? (_lit ? Util.alpha(Color.urgent, 0.22) : "transparent")
-    : (_lit ? Style.controlFill(false, true, root.foreground, root.accent) : "transparent")
-  border.color: root.destructive
-    ? (_lit ? Color.urgent : Util.alpha(Color.urgent, 0.56))
-    : (_lit ? Style.controlBorder(false, true, root.foreground, root.accent) : root.accent)
-  border.width: _lit
-    ? Style.controlBorderWidth(false, true)
-    : Style.normalBorderWidth
+  // the red has to be painted explicitly.
+  //   cursor -> cue tinted fill + thicker cue border (the keyboard position)
+  //   hover  -> kit hover tokens (destructive: red fill + full red border)
+  //   unlit  -> transparent + dim cue border
+  color: root._cursor
+    ? Util.alpha(root._cue, root.destructive ? 0.32 : 0.18)
+    : (root._hover
+        ? (root.destructive
+            ? Util.alpha(Color.urgent, 0.22)
+            : Style.controlFill(false, true, root.foreground, root.accent))
+        : "transparent")
+  border.color: root._cursor
+    ? root._cue
+    : (root._hover
+        ? (root.destructive
+            ? Color.urgent
+            : Style.controlBorder(false, true, root.foreground, root.accent))
+        : (root.destructive ? Util.alpha(Color.urgent, 0.56) : root.accent))
+  border.width: root._cursor
+    ? Style.normalBorderWidth + 1
+    : (root._hover ? Style.controlBorderWidth(false, true) : Style.normalBorderWidth)
   Behavior on color { ColorAnimation { duration: 100 } }
 
   Text {

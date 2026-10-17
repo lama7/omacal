@@ -14,6 +14,11 @@ Item {
   id: root
 
   property bool opened: false
+  // The keyboard-cursor cue stays hidden until the user actually navigates
+  // (arrows/Tab in handleKey) — otherwise the first button would be painted
+  // with the cursor cue on open. Same rule as the other dialogs.
+  property bool cursorEngaged: false
+  onOpenedChanged: if (opened) cursorEngaged = false
   property string message: ""
   property string cancelText: "Cancel"
   property string confirmText: "Delete"
@@ -40,6 +45,7 @@ Item {
       return true
     } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Right || event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
       root.selectedIndex = root.selectedIndex === 0 ? 1 : 0
+      root.cursorEngaged = true
       return true
     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
       if (root.selectedIndex === 0) root.canceled()
@@ -123,7 +129,7 @@ Item {
             // Keyboard cursor: the panel's handleKey() moves selectedIndex and
             // mouse hover follows it here (onEntered), so the two agree — the
             // same cue the Calendars dialog paints on its Done slot.
-            hot: root.selectedIndex === index
+            hot: root.cursorEngaged && root.selectedIndex === index
             destructive: index === 1
             text: modelData
             foreground: root.foreground
