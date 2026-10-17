@@ -402,6 +402,13 @@ class OmacalHandler(BaseHTTPRequestHandler):
             # Manually add a CalDAV account (server + username + password).
             self._handle_caldav_add()
             return
+        if parsed.path == "/api/providers/flow/cancel":
+            # Abandon an in-flight browser sign-in flow (Nextcloud Login Flow
+            # v2 today; Google later) so its state does not linger in the
+            # registry until its TTL. Idempotent. The panel calls this when the
+            # user backs out of Add Provider.
+            self._handle_flow_cancel(parse_qs(parsed.query))
+            return
         if parsed.path == "/api/sync":
             # ?if-stale=N: skip the sync entirely when the cache is fresher than
             # N seconds (the on-demand path the panel uses on open). The lock
@@ -901,6 +908,28 @@ class OmacalHandler(BaseHTTPRequestHandler):
             self._json(500, {"status": "error", "error": str(e)})
             return
         self._json(200, {"status": "ok", "account": account})
+
+    def _handle_flow_cancel(self, qs: dict) -> None:
+        """Drop an in-flight browser sign-in flow's server-side state.
+
+        The panel calls this when the user backs out of Add Provider (Cancel,
+        Back to the chooser, or closing the dialog) so the flow registry does
+        not hold the entry until its 20-minute TTL. Best-effort and idempotent:
+        an id that was never issued, already consumed, or already expired just
+        drops nothing.
+
+        Note this cannot un-commit: the API server is single-threaded, so a
+        poll already mid-flight when the cancel arrives finishes (and commits)
+        first. After the drop, a later poll of the same id reads "unknown".
+        """
+        from omacal import loginflow
+
+        flow_id = (qs.get("id") or [""])[0]
+        if not flow_id:
+            self._json(400, {"ok": False, "error": "id is required"})
+            return
+        loginflow.drop_flow(flow_id)
+        self._json(200, {"ok": True})
 
     def _handle_caldav_add(self) -> None:
         """Add a CalDAV account from server + username + password.

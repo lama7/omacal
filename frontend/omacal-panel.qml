@@ -57,6 +57,10 @@ Panel {
     // Add-provider flow: the panel owns the Nextcloud sign-in poll loop.
     property string pendingFlowId: ""
     property bool ncPollInFlight: false
+    // Bumped whenever a flow is torn down (cancel / back / a fresh open). Any
+    // start or poll XHR captures it and ignores its own late response if the
+    // value has moved on, so a bail can't be resurrected by an in-flight reply.
+    property int providerFlowGen: 0
 
     // Backend-update detection: `omarchy plugin update` only syncs the plugin
     // files, never the ~/.local/omacal/venv. The panel compares the installed
@@ -1138,15 +1142,33 @@ Panel {
     // "credentials" adds any CalDAV account from server + user + password.
 
     function openAddProvider() {
+        // Opening the form abandons any earlier flow: bump the generation so a
+        // straggler from a previous attempt can't land on this one.
+        providerFlowGen++
         accountSettings.resetAddForm()
         accountSettings.addOpen = true
     }
     function cancelAddProvider() {
+        // Full bail: drop the backend flow, stop polling, invalidate any
+        // in-flight start/poll XHR.
+        cancelProviderFlow()
         accountSettings.addOpen = false
         accountSettings.resetAddForm()
         loginPollTimer.stop()
         pendingFlowId = ""
         ncPollInFlight = false
+        providerFlowGen++
+    }
+    // Best-effort teardown of the in-flight backend flow. MUST be called before
+    // pendingFlowId is cleared. The panel has already stopped polling, so a
+    // failure here just lets the entry age out on its 20-minute TTL.
+    function cancelProviderFlow() {
+        if (pendingFlowId === "") return
+        var xhr = new XMLHttpRequest()
+        xhr.open("POST", apiBase + "/api/providers/flow/cancel?id="
+                 + encodeURIComponent(pendingFlowId), true)
+        xhr.timeout = 5000
+        xhr.send()
     }
     function chooseProvider(key) {
         accountSettings.addStage = key
@@ -1160,9 +1182,18 @@ Panel {
         })
     }
     function addFormBack() {
+        // Back returns to the provider chooser: abandon any in-flight sign-in
+        // rather than let it quietly complete (and possibly commit an account)
+        // behind the chooser.
+        cancelProviderFlow()
+        loginPollTimer.stop()
+        pendingFlowId = ""
+        ncPollInFlight = false
+        providerFlowGen++
         accountSettings.addStage = ""
         accountSettings.addError = ""
         accountSettings.addStatus = ""
+        accountSettings.addBusy = false
         keyCatcher.forceActiveFocus()
     }
     // Kick off the Nextcloud browser sign-in: ask the backend to start a Login
@@ -1174,12 +1205,16 @@ Panel {
         accountSettings.addError = ""
         accountSettings.addBusy = true
         accountSettings.addStatus = "Contacting " + s + "\u2026"
+        var gen = providerFlowGen
         var xhr = new XMLHttpRequest()
         xhr.open("POST", apiBase + "/api/providers/nextcloud/login/start", true)
         xhr.timeout = 30000
         xhr.setRequestHeader("Content-Type", "application/json")
         xhr.onreadystatechange = function() {
             if (xhr.readyState !== XMLHttpRequest.DONE) return
+            // The user may have bailed while we contacted the server; a late
+            // reply must not open a browser or start a poll.
+            if (gen !== providerFlowGen) return
             var data = null
             try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
             if (xhr.status !== 200 || !data || !data.ok) {
@@ -1197,8 +1232,8 @@ Panel {
             ncPollInFlight = false
             loginPollTimer.restart()
         }
-        xhr.onerror = function() { accountSettings.addBusy = false; accountSettings.addStatus = ""; accountSettings.addError = "Could not reach the omacal backend." }
-        xhr.ontimeout = function() { accountSettings.addBusy = false; accountSettings.addStatus = ""; accountSettings.addError = "The server did not respond." }
+        xhr.onerror = function() { if (gen !== providerFlowGen) return; accountSettings.addBusy = false; accountSettings.addStatus = ""; accountSettings.addError = "Could not reach the omacal backend." }
+        xhr.ontimeout = function() { if (gen !== providerFlowGen) return; accountSettings.addBusy = false; accountSettings.addStatus = ""; accountSettings.addError = "The server did not respond." }
         xhr.send(JSON.stringify({ server: s, name: String(name || "").trim() }))
     }
     function pollNcLogin() {
@@ -1207,12 +1242,18 @@ Panel {
         // sees success, and a second in-flight poll would then read "unknown".
         if (pendingFlowId === "" || ncPollInFlight) return
         ncPollInFlight = true
+        var flowId = pendingFlowId
+        var gen = providerFlowGen
         var xhr = new XMLHttpRequest()
         xhr.open("GET", apiBase + "/api/providers/nextcloud/login/poll?id="
-                 + encodeURIComponent(pendingFlowId), true)
+                 + encodeURIComponent(flowId), true)
         xhr.timeout = 60000
         xhr.onreadystatechange = function() {
             if (xhr.readyState !== XMLHttpRequest.DONE) return
+            // Cancelled / backed out / navigated away while this poll was in
+            // flight: the reply belongs to a flow we no longer own, so it must
+            // not commit an account or disturb the current attempt's state.
+            if (gen !== providerFlowGen || flowId !== pendingFlowId) return
             ncPollInFlight = false
             var data = null
             try { data = JSON.parse(xhr.responseText) } catch (e) { data = null }
@@ -1231,6 +1272,7 @@ Panel {
             }
         }
         xhr.onerror = function() {
+            if (gen !== providerFlowGen || flowId !== pendingFlowId) return
             ncPollInFlight = false
             loginPollTimer.stop()
             pendingFlowId = ""
