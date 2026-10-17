@@ -129,6 +129,8 @@ Item {
   signal navBack()
   signal ncSignInRequested(string server, string name)
   signal googleSignInRequested(string clientId, string clientSecret, string name)
+  // Open an external URL in the default browser (the dialog stays presentational).
+  signal openUrlRequested(string url)
   signal caldavAddSubmit(string url, string name, string user, string pass)
 
   // Keyboard cursor: which account row is selected (0..count-1).
@@ -697,13 +699,113 @@ Item {
             Layout.fillWidth: true
             textFormat: Text.PlainText
             wrapMode: Text.Wrap
-            text: "Google needs an OAuth client from your own Google Cloud "
-                + "project (Desktop app type). We'll open your browser to grant "
-                + "calendar access; the tokens stay in your system keyring."
+            text: "Google Calendar needs an OAuth client from your own Google "
+                + "Cloud project. It's a one-time setup (\u22485 min); the client "
+                + "id/secret only identify your project, and the sign-in tokens "
+                + "stay in your system keyring."
             color: root.foreground
             opacity: 0.7
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
+          }
+
+          // Numbered walkthrough so a first-timer can get from an empty Google
+          // account to a client id/secret without leaving the dialog. Steps with
+          // a one-click action carry it in the model (`label`/`url`) and render a
+          // button directly under that step, so the action sits with the step it
+          // belongs to. Plain text only (no inline links) to match this dialog's
+          // Text.PlainText convention. URLs are GLOBAL — they carry no
+          // project/org id, unlike the links the console shows while you are
+          // browsing a specific project.
+          ColumnLayout {
+            Layout.fillWidth: true
+            spacing: Style.space(8)
+
+            Repeater {
+              model: [
+                {
+                  text: "Create or pick a project, then create an OAuth client "
+                      + "(application type: Desktop app).",
+                  label: "Set up the Google Cloud client",
+                  url: "https://console.cloud.google.com/auth/clients/create"
+                },
+                {
+                  text: "Configure the consent screen: choose External and add "
+                      + "your own Google address as a Test user."
+                },
+                {
+                  text: "Enable the \u201cGoogle Calendar API\u201d for the "
+                      + "project.",
+                  label: "Enable the Google Calendar API",
+                  url: "https://console.cloud.google.com/flows/enableapi"
+                      + "?apiid=calendar-json.googleapis.com"
+                },
+                {
+                  text: "Copy the Client ID and Client secret into the fields "
+                      + "below."
+                }
+              ]
+
+              ColumnLayout {
+                id: gStep
+                required property var modelData
+                required property int index
+                Layout.fillWidth: true
+                spacing: Style.space(6)
+
+                RowLayout {
+                  Layout.fillWidth: true
+                  spacing: Style.space(6)
+
+                  Text {
+                    Layout.alignment: Qt.AlignTop
+                    textFormat: Text.PlainText
+                    text: (gStep.index + 1) + "."
+                    color: root.accent
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+                  }
+                  Text {
+                    Layout.fillWidth: true
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    text: gStep.modelData.text
+                    color: root.foreground
+                    opacity: 0.75
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
+
+                // An invisible item is excluded from the layout, so steps
+                // without an action leave no gap behind.
+                DialogButton {
+                  Layout.fillWidth: true
+                  visible: gStep.modelData.url !== undefined
+                  text: gStep.modelData.label || ""
+                  foreground: root.foreground
+                  accent: root.accent
+                  fontFamily: root.fontFamily
+                  onClicked: root.openUrlRequested(gStep.modelData.url)
+                }
+              }
+            }
+          }
+
+          Text {
+            Layout.fillWidth: true
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            text: "While the consent screen is in Testing, Google expires the "
+                + "connection about every 7 days and you'll be asked to sign in "
+                + "again. Publishing the app removes that, but needs Google "
+                + "verification."
+            color: root.foreground
+            opacity: 0.7
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.italic: true
           }
 
           TextField {

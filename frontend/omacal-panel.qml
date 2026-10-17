@@ -2740,6 +2740,7 @@ Panel {
             onGoogleSignInRequested: function(clientId, clientSecret, name) {
                 root.googleSignIn(clientId, clientSecret, name)
             }
+            onOpenUrlRequested: function(url) { Quickshell.execDetached(["xdg-open", url]) }
             onCaldavAddSubmit: function(url, name, user, pass) {
                 root.submitCaldavAdd(url, name, user, pass)
             }
