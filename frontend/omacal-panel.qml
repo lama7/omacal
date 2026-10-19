@@ -1797,11 +1797,13 @@ Panel {
     }
 
     // Fire-and-forget on-demand refresh. The backend skips the sync entirely
-    // when its cache is fresher than 60s, so opening the panel repeatedly costs
-    // one small local request. When a sync did run, re-read the events.
+    // when its cache is fresher than the poll interval (300s), so opening the
+    // panel repeatedly costs one small local request instead of a full sync —
+    // and the periodic poll already keeps the cache at least that fresh. When a
+    // sync did run, re-read the events.
     function requestSync() {
         var xhr = new XMLHttpRequest()
-        xhr.open("POST", apiBase + "/api/sync?if-stale=60", true)
+        xhr.open("POST", apiBase + "/api/sync?if-stale=300", true)
         xhr.timeout = 30000
         xhr.onreadystatechange = function() {
             if (xhr.readyState !== XMLHttpRequest.DONE) return

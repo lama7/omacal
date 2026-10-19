@@ -456,7 +456,14 @@ class OmacalHandler(BaseHTTPRequestHandler):
                     self._json(200, {"status": "fresh", "synced": False})
                     return
             try:
-                result = sync_all(raise_if_busy=True)
+                # An explicit sync (no ?if-stale) is user-initiated: re-run
+                # discovery so calendars added/removed on the server show up
+                # immediately. The panel's on-open ?if-stale refresh uses the
+                # cached list (discovery is the expensive, rate-limited part).
+                result = sync_all(
+                    raise_if_busy=True,
+                    force_discovery=if_stale is None,
+                )
                 self._json(200, result)
             except RuntimeError as e:
                 self._json(409, {"error": str(e)})

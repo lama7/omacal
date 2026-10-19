@@ -12,11 +12,13 @@ from pathlib import Path
 from typing import Any
 
 import caldav
+from caldav.lib.error import RateLimitError
 from icalendar import Calendar, Alarm, vDatetime, vDate
 
 from omacal.config import load_config
 from omacal.db import (add_calendar, replace_calendar_events, replace_calendar_reminders,
-                       upsert_events, upsert_overrides, upsert_reminders, upsert_reminder_overrides)
+                       upsert_events, upsert_overrides, upsert_reminders, upsert_reminder_overrides,
+                       get_discovered_calendars, set_discovered_calendars)
 from omacal.recur import has_occurrence_after
 
 logger = logging.getLogger("omacal.sync")
@@ -26,10 +28,48 @@ logger = logging.getLogger("omacal.sync")
 # returned, so one hang stopped all future syncs. Bound every client.
 _DAV_TIMEOUT = 30
 
+# Nextcloud answers 429 with no Retry-After (observed: "Retry after: None"), so
+# caldav's built-in handler needs a fallback sleep to do anything. It retries
+# the same request and gives up past the cap; the request was never executed,
+# so sleeping and retrying is safe for writes too. Kept short because the API's
+# explicit sync runs on the single-threaded HTTP server.
+_RATE_LIMIT_DEFAULT_SLEEP = 30
+_RATE_LIMIT_MAX_SLEEP = 60
+
+# After a 429 that survives the client's built-in retries, skip the source for
+# this long instead of firing the same burst again on the next poll. Cleared by
+# the next successful discovery. Manual syncing bypasses the cooldown.
+_RATE_LIMIT_COOLDOWN = 900
+
+# account url -> datetime until which the source is cooling down
+_throttled_until: dict[str, datetime] = {}
+
+
+class SyncThrottled(Exception):
+    """A source is cooling down after the server rate-limited it.
+
+    Deliberately not a RuntimeError: the API maps RuntimeError to 409 ("sync
+    already in progress"), while a throttled source is a normal sync result.
+    """
+
+
+def _begin_cooldown(account_key: str) -> None:
+    _throttled_until[account_key] = datetime.now(timezone.utc) + timedelta(
+        seconds=_RATE_LIMIT_COOLDOWN
+    )
+
 
 def _dav_client(url: str, username: str | None, password: str | None) -> caldav.DAVClient:
-    """Build a DAVClient with a bounded timeout."""
-    return caldav.DAVClient(url=url, username=username, password=password, timeout=_DAV_TIMEOUT)
+    """Build a DAVClient with a bounded timeout and rate-limit backoff."""
+    return caldav.DAVClient(
+        url=url,
+        username=username,
+        password=password,
+        timeout=_DAV_TIMEOUT,
+        rate_limit_handle=True,
+        rate_limit_default_sleep=_RATE_LIMIT_DEFAULT_SLEEP,
+        rate_limit_max_sleep=_RATE_LIMIT_MAX_SLEEP,
+    )
 
 
 def _calendar_creds(conn, calendar_id: int) -> tuple[str, str | None, str | None]:
@@ -405,18 +445,28 @@ def _discover_calendars(
     username: str | None,
     password: str | None,
 ) -> list[dict[str, Any]]:
-    """Discover calendars at a CalDAV URL. Returns list of {uid, display_name, url, principal_url}."""
+    """Discover calendars at a CalDAV URL. Returns list of {uid, display_name, url, principal_url}.
+
+    Raises when discovery itself fails (connection, auth, rate limit) so the
+    caller can fall back to a cached discovery list; an empty account returns
+    an empty list, which the caller treats as a failure too (it cannot tell
+    "no calendars" from "nothing fetched", and must never prune on that).
+    """
     try:
         client = _dav_client(url, username, password)
         principal = client.principal()
         calendars = principal.calendars()
+    except RateLimitError:
+        # Already slept/retried inside the client; a second client would just
+        # hit the limiter again. Let the caller back off.
+        raise
     except Exception:
         try:
             client = _dav_client(url, username, password)
             calendars = client.get_calendars()
         except Exception as e:
             logger.error("Failed to discover calendars at %s: %s", url, e)
-            return []
+            raise
 
     result = []
     for cal in calendars:
@@ -858,6 +908,12 @@ def sync_subscribed(conn: Any) -> None:
         try:
             client = _dav_client(row["url"], username, password)
             _sync_calendar_incremental(conn, client, row["id"], row["url"], row["display_name"], cutoff)
+        except RateLimitError as e:
+            # Stop the pass instead of hammering the remaining subscriptions.
+            logger.warning(
+                "Rate limited refreshing subscribed calendars (%s); stopping this pass", e
+            )
+            break
         except Exception as e:
             logger.warning("Refresh of subscribed calendar %r failed: %s", row["display_name"], e)
 
@@ -1070,6 +1126,8 @@ def sync_source(
     calendar_uid: str | None = None,
     display_name: str | None = None,
     color: str | None = None,
+    force_discovery: bool = False,
+    discovery_max_age: int = 3600,
 ) -> tuple[int, list[str], list[str]]:
     """
     Sync one CalDAV source into the database.
@@ -1077,14 +1135,61 @@ def sync_source(
     Returns (events stored, URLs whose cache was replaced, URLs that failed).
     Raises if the source itself failed (discovery/connect) -- the caller must
     not treat that as "nothing to sync" when pruning stale calendars.
+
+    Discovery runs only when the cached list is older than
+    ``discovery_interval`` (or ``force_discovery`` is set). It is the expensive
+    part of a poll (principal + a properties/privilege PROPFIND per calendar)
+    and the part Nextcloud rate-limits; incremental sync needs only one REPORT
+    per calendar and does not need fresh discovery.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    account_key = url.rstrip("/")
 
     if calendar_uid:
         # Direct calendar URL — no discovery needed
         cals = [{"uid": calendar_uid, "display_name": display_name or "Calendar", "url": url, "principal_url": None}]
     else:
-        discovered = _discover_calendars(url, username, password)
+        # A source that just got rate-limited stays skipped until its cooldown
+        # expires. A manual sync (force_discovery) is allowed to try anyway.
+        if not force_discovery:
+            until = _throttled_until.get(account_key)
+            if until and datetime.now(timezone.utc) < until:
+                raise SyncThrottled(
+                    f"rate-limited until {until.isoformat()} (cooling down)"
+                )
+        discovered: list[dict[str, Any]] | None = None
+        if not force_discovery:
+            discovered = get_discovered_calendars(conn, account_key, discovery_max_age)
+            if discovered is not None:
+                logger.debug(
+                    "Using cached discovery for %s (%d calendars)", url, len(discovered)
+                )
+        if discovered is None:
+            try:
+                discovered = _discover_calendars(url, username, password)
+            except RateLimitError as e:
+                # The server is throttling us: skip the whole source (no
+                # per-calendar REPORTs either) and back off across polls.
+                _begin_cooldown(account_key)
+                raise SyncThrottled(
+                    f"rate-limited during discovery; cooling down {_RATE_LIMIT_COOLDOWN}s"
+                ) from e
+            except Exception as e:
+                # Fresh discovery failed (transient outage): fall back to the
+                # last known list so incremental sync keeps working instead of
+                # the whole source failing every poll.
+                discovered = get_discovered_calendars(conn, account_key)
+                if discovered is None:
+                    raise RuntimeError(f"failed to discover calendars at {url}: {e}") from e
+                logger.warning(
+                    "Discovery failed for %s (%s); using cached calendar list (%d calendars)",
+                    url, e, len(discovered),
+                )
+            else:
+                if discovered:
+                    set_discovered_calendars(conn, account_key, discovered)
+                    _throttled_until.pop(account_key, None)
+                    logger.debug("Cached discovery for %s (%d calendars)", url, len(discovered))
         if not discovered:
             # Do NOT return "0 events, nothing synced": sync_all used to treat a
             # failed discovery as a successful empty source and then delete every
@@ -1123,6 +1228,17 @@ def sync_source(
             total_events += n
             urls_synced.append(cal_info["url"])
             logger.info("Synced %s: %d events, %d deleted", display, n, dels)
+        except RateLimitError as e:
+            # Throttled mid-source: stop hitting the remaining calendars, cool
+            # down the whole source, and report it as a partial (incomplete)
+            # source so the stale prune is skipped.
+            _begin_cooldown(account_key)
+            logger.warning(
+                "Rate limited syncing %s; cooling down %ds for %s",
+                display, _RATE_LIMIT_COOLDOWN, url,
+            )
+            urls_failed.append(cal_info["url"])
+            break
         except Exception as e:
             logger.error("Sync failed for %s: %s", display, e)
             urls_failed.append(cal_info["url"])
@@ -1958,7 +2074,12 @@ def check_due_alarms(config_path: Path | None = None, now: datetime | None = Non
 _sync_lock = threading.Lock()
 
 
-def sync_all(config_path: Path | None = None, *, raise_if_busy: bool = False) -> dict[str, Any]:
+def sync_all(
+    config_path: Path | None = None,
+    *,
+    raise_if_busy: bool = False,
+    force_discovery: bool = False,
+) -> dict[str, Any]:
     """Sync all configured calendars. Returns summary.
 
     Serialized by a process-wide lock: the periodic timer thread and
@@ -1966,6 +2087,9 @@ def sync_all(config_path: Path | None = None, *, raise_if_busy: bool = False) ->
     connections, double-fetching every calendar and fighting over the same rows
     ("database is locked"). An overlapping call returns a skipped summary (or
     raises, for the API's explicit-sync endpoint) instead.
+
+    ``force_discovery`` re-runs CalDAV discovery instead of using the cached
+    calendar list (explicit/manual sync only; the periodic poll uses the cache).
     """
     if not _sync_lock.acquire(blocking=False):
         logger.warning("Sync already in progress; skipping this run")
@@ -1974,15 +2098,27 @@ def sync_all(config_path: Path | None = None, *, raise_if_busy: bool = False) ->
         return {"total_events": 0, "calendars": {}, "status": "skipped",
                 "reason": "sync already in progress"}
     try:
-        return _sync_all_locked(config_path)
+        return _sync_all_locked(config_path, force_discovery=force_discovery)
     finally:
         _sync_lock.release()
 
 
-def _sync_all_locked(config_path: Path | None = None) -> dict[str, Any]:
+def _sync_all_locked(
+    config_path: Path | None = None,
+    *,
+    force_discovery: bool = False,
+) -> dict[str, Any]:
     cfg = load_config(config_path)
     db_path = Path(cfg["database"])
     db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Discovery is cached for this long. The calendar list (names, colors,
+    # shared/read-only flags) changes rarely; polling it every 5 minutes is
+    # what tripped Nextcloud's rate limiter. A manual sync forces it.
+    try:
+        discovery_interval = int(cfg.get("discovery_interval", 3600))
+    except (TypeError, ValueError):
+        discovery_interval = 3600
 
     import sqlite3
     from omacal.db import _migrate
@@ -2049,6 +2185,8 @@ def _sync_all_locked(config_path: Path | None = None) -> dict[str, Any]:
                     cal.get("calendar_uid"),
                     cal.get("display_name"),
                     cal.get("color"),
+                    force_discovery=force_discovery,
+                    discovery_max_age=discovery_interval,
                 )
             results[name] = {"status": "ok", "events": n}
             total += n
@@ -2058,6 +2196,12 @@ def _sync_all_locked(config_path: Path | None = None) -> dict[str, Any]:
                 results[name]["failed"] = failed
                 incomplete.append(name)
                 logger.warning("%s: %d calendar(s) failed to fetch", name, len(failed))
+        except SyncThrottled as e:
+            # A cooldown is expected behaviour, not a failure: the cached data
+            # stays as-is and the prune must still be skipped.
+            results[name] = {"status": "throttled", "error": str(e)}
+            incomplete.append(name)
+            logger.info("Sync skipped for %s: %s", name, e)
         except Exception as e:
             results[name] = {"status": "error", "error": str(e)}
             incomplete.append(name)

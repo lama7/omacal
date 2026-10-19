@@ -47,8 +47,8 @@ def cmd_syncconfig(args):
 
 
 def cmd_sync(args):
-    """Sync all configured calendars."""
-    result = sync_all(args.config)
+    """Sync all configured calendars (user-initiated: force fresh discovery)."""
+    result = sync_all(args.config, force_discovery=True)
     print(json.dumps(result, indent=2, default=str))
 
 

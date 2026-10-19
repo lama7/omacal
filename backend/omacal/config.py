@@ -13,6 +13,12 @@ DEFAULT_DB_PATH = Path.home() / ".local" / "share" / "omacal" / "calendar.db"
 DEFAULT_PORT = 9876
 DEFAULT_POLL_INTERVAL = 300  # seconds
 
+# Re-run CalDAV calendar discovery at most this often. Discovery is expensive
+# (principal lookup + a properties/privilege PROPFIND per calendar) and is what
+# Nextcloud rate-limits; incremental sync does not need it. A manual sync
+# forces a fresh discovery regardless.
+DEFAULT_DISCOVERY_INTERVAL = 3600  # seconds
+
 
 def default_config() -> dict:
     return {
@@ -20,6 +26,7 @@ def default_config() -> dict:
         "database": str(DEFAULT_DB_PATH),
         "port": DEFAULT_PORT,
         "poll_interval": DEFAULT_POLL_INTERVAL,
+        "discovery_interval": DEFAULT_DISCOVERY_INTERVAL,
         "log_level": "info",
     }
 

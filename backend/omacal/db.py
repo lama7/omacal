@@ -271,6 +271,23 @@ def _migrate(conn: sqlite3.Connection) -> None:
             cur.execute("ALTER TABLE calendars ADD COLUMN provider TEXT NOT NULL DEFAULT 'caldav'")
         cur.execute("INSERT INTO schema_version VALUES (12)")
 
+    if version < 13:
+        # Discovery cache (2026-10). Calendar discovery (principal lookup + a
+        # properties/privilege PROPFIND per calendar) used to run on EVERY
+        # sync even though the calendar list changes rarely. On Nextcloud that
+        # burst is what trips the server's rate limiter, and once tripped every
+        # poll re-triggered it. Cache the discovered list per account and reuse
+        # it for `discovery_interval` seconds; a failed discovery falls back to
+        # the last cached list instead of failing the whole source.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS discovery_cache (
+                account_url TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                discovered_at TIMESTAMP NOT NULL
+            )
+        """)
+        cur.execute("INSERT INTO schema_version VALUES (13)")
+
     conn.commit()
 
 
@@ -337,6 +354,58 @@ def set_last_sync(conn: sqlite3.Connection, calendar_id: int) -> None:
     """Stamp a calendar as freshly synced (for the API's staleness surface)."""
     conn.execute("UPDATE calendars SET last_sync = ? WHERE id = ?",
                  (datetime.now(timezone.utc).isoformat(), calendar_id))
+    conn.commit()
+
+
+def get_discovered_calendars(
+    conn: sqlite3.Connection,
+    account_url: str,
+    max_age_seconds: int | None = None,
+) -> list[dict[str, Any]] | None:
+    """The cached discovery list for an account, or None.
+
+    ``max_age_seconds`` limits how old a cached list may be; None returns the
+    last list regardless of age (used as a fallback when fresh discovery
+    fails). A malformed/empty payload is treated as a cache miss so a bad row
+    can never wedge the sync.
+    """
+    row = conn.execute(
+        "SELECT payload, discovered_at FROM discovery_cache WHERE account_url = ?",
+        (account_url,),
+    ).fetchone()
+    if not row:
+        return None
+    if max_age_seconds is not None:
+        try:
+            age = (
+                datetime.now(timezone.utc)
+                - datetime.fromisoformat(row["discovered_at"])
+            ).total_seconds()
+        except (ValueError, TypeError):
+            return None
+        if age > max_age_seconds:
+            return None
+    try:
+        data = json.loads(row["payload"])
+    except (ValueError, TypeError):
+        return None
+    return data if isinstance(data, list) and data else None
+
+
+def set_discovered_calendars(
+    conn: sqlite3.Connection,
+    account_url: str,
+    calendars: list[dict[str, Any]],
+) -> None:
+    """Persist an account's discovery list (JSON) after a successful discovery."""
+    conn.execute(
+        """INSERT INTO discovery_cache (account_url, payload, discovered_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(account_url) DO UPDATE SET
+             payload = excluded.payload,
+             discovered_at = excluded.discovered_at""",
+        (account_url, json.dumps(calendars), datetime.now(timezone.utc).isoformat()),
+    )
     conn.commit()
 
 
