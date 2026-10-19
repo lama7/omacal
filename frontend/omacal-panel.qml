@@ -2673,7 +2673,7 @@ Panel {
             confirmText: root.pendingDeleteCalendar && root.pendingDeleteCalendar.subscribed ? "Unsubscribe" : "Delete"
             cancelText: "Cancel"
             selectedIndex: 0
-            showScope: root.pendingDeleteEvent && root.pendingDeleteEvent.is_recurring && !root.pendingDeleteEvent.isReminder
+            showScope: !!(root.pendingDeleteEvent && root.pendingDeleteEvent.is_recurring && !root.pendingDeleteEvent.isReminder)
             scopeChecked: root.deleteWholeSeries
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
