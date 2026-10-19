@@ -535,12 +535,14 @@ def delete_calendar(
     only, never touch the server.
     """
     row = conn.execute(
-        "SELECT id, url, principal_url, uid, display_name, subscribed, provider FROM calendars WHERE id = ?",
+        "SELECT id, url, principal_url, uid, display_name, subscribed, provider, access_role FROM calendars WHERE id = ?",
         (calendar_id,),
     ).fetchone()
     if not row:
         raise ValueError("Calendar not found")
     if row["provider"] == "google":
+        if (row["access_role"] or "").lower() != "owner":
+            raise ValueError("Only the calendar owner can delete a Google calendar")
         from omacal.oauth import oauth_token
         from omacal.google_cal import delete_calendar as gc_delete_cal, GoogleAPIError
         gcal_id = (row["url"] or "")[len("google:"):]
@@ -616,12 +618,14 @@ def edit_calendar(
     if not name and not color:
         raise ValueError("Nothing to change")
     row = conn.execute(
-        "SELECT id, url, principal_url, display_name, subscribed, provider FROM calendars WHERE id = ?",
+        "SELECT id, url, principal_url, display_name, subscribed, provider, access_role FROM calendars WHERE id = ?",
         (calendar_id,),
     ).fetchone()
     if not row:
         raise ValueError("Calendar not found")
     if row["provider"] == "google":
+        if (row["access_role"] or "").lower() != "owner":
+            raise ValueError("Only the calendar owner can rename or recolour it")
         # Google rows: PATCH calendarList (summary/colorRgbHex), no keyring.
         from omacal.google_cal import patch_calendar, GoogleAPIError
         from omacal.oauth import oauth_token
@@ -744,7 +748,8 @@ def add_calendar_named(
             raise ValueError(f"Could not create the calendar: {e}") from e
         gcal_id = cal.get("id") or ""
         cal_id = add_calendar(conn, uid=gcal_id, display_name=cal.get("summary") or name,
-                              url=f"google:{gcal_id}", color=color, provider="google")
+                              url=f"google:{gcal_id}", color=color, provider="google",
+                              access_role="owner")
         logger.info("Created Google calendar %r (id=%d)", name, cal_id)
         return {"ok": True, "calendar_id": cal_id, "display_name": name}
 
@@ -1053,6 +1058,7 @@ def sync_google_source(conn: Any, cfg: dict, cal_entry: dict) -> tuple[int, list
             url=google_url(gc["id"]),
             color=gc["color"],
             provider="google",
+            access_role=gc.get("access_role"),
         )
         stored = get_sync_token(conn, cal_id)
         try:
@@ -1247,19 +1253,32 @@ def sync_source(
     return total_events, urls_synced, urls_failed
 
 
-def _google_row(conn, calendar_id: int) -> tuple[str, str] | None:
+_GOOGLE_WRITE_ROLES = ("owner", "writer")
+
+
+def _google_row(conn, calendar_id: int, require_write: bool = False) -> tuple[str, str] | None:
     """(google_calendar_id, access_token) if the cached calendar is Google-backed, else None.
 
     Write-path dispatch: google rows carry url="google:<id>" and provider="google";
     the access token comes from the OAuth token set (raises OAuthReauthRequired
     when the refresh token died -- callers surface it as an error).
+
+    ``require_write`` refuses a read-only calendar up front (accessRole
+    reader/freeBusyReader, and any row not synced yet) with a clear ValueError
+    instead of letting Google answer 403. Detection-only callers (the reminder
+    guards, cross-calendar move probe) leave it False.
     """
     from omacal.oauth import oauth_token
 
-    row = conn.execute("SELECT url, provider FROM calendars WHERE id = ?",
+    row = conn.execute("SELECT url, provider, access_role FROM calendars WHERE id = ?",
                        (calendar_id,)).fetchone()
     if not row or row["provider"] != "google":
         return None
+    if require_write and (row["access_role"] or "").lower() not in _GOOGLE_WRITE_ROLES:
+        raise ValueError(
+            "That Google calendar is read-only "
+            f"(accessRole={row['access_role'] or 'unknown'})"
+        )
     gcal_id = (row["url"] or "")[len("google:"):]
     token = oauth_token(load_config(), "google")
     if not token:
@@ -1288,7 +1307,7 @@ def create_event(
     server accepts it.  Returns the inserted row as a dict (same shape as
     get_events rows) on success.
     """
-    g = _google_row(conn, calendar_id)
+    g = _google_row(conn, calendar_id, require_write=True)
     if g:
         from omacal.google_cal import create_event as gc_create
         from omacal.db import add_event
@@ -1383,7 +1402,7 @@ def delete_event(
     A recurring event with neither `occurrence` nor `series=True` raises: a
     right-click on one occurrence must never silently wipe the series.
     """
-    g = _google_row(conn, calendar_id)
+    g = _google_row(conn, calendar_id, require_write=True)
     if g:
         from omacal.google_cal import delete_event as gc_delete, get_event as gc_get, GoogleAPIError
         from omacal.db import delete_event as db_delete_event
@@ -1486,7 +1505,7 @@ def update_event(
     writing a detached RECURRENCE-ID override (the same mechanism the phone
     uses), leaving the rest of the series untouched.
     """
-    g = _google_row(conn, calendar_id)
+    g = _google_row(conn, calendar_id, require_write=True)
     if g:
         from omacal.google_cal import (patch_event as gc_patch, get_event as gc_get,
                                        move_event as gc_move, GoogleAPIError)

@@ -234,10 +234,16 @@ class OmacalHandler(BaseHTTPRequestHandler):
             for c in calendars:
                 if c.get("provider") == "google":
                     # Google rows write through the Calendar API with the OAuth
-                    # token — no keyring password involved. calendarList only
-                    # returns calendars the user manages, so edits are allowed.
-                    c["writable"] = True
-                    c["deletable"] = True
+                    # token -- no keyring password involved. calendarList also
+                    # returns READ-ONLY entries (subscribed "Holidays in ...",
+                    # public/reader shares), so gate on the effective accessRole
+                    # instead of assuming every listed calendar is writable:
+                    # owner/writer may write events; only owner may delete or
+                    # rename the collection. Unknown (not synced yet) is
+                    # treated read-only so the panel never offers a 403 write.
+                    role = (c.get("access_role") or "").lower()
+                    c["writable"] = role in ("owner", "writer")
+                    c["deletable"] = role == "owner"
                 else:
                     # Writability = we hold a password for this calendar in the
                     # keyring. The password is keyed by the principal URL (the

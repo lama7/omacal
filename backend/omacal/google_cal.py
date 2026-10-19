@@ -133,7 +133,13 @@ def _q(s: str) -> str:
 
 
 def list_user_calendars(token: str) -> list[dict]:
-    """The signed-in user's calendar list. [{id, summary, color, timeZone}]."""
+    """The signed-in user's calendar list. [{id, summary, color, timeZone, accessRole}].
+
+    ``access_role`` is the user's effective role: ``owner``/``writer`` can write
+    events, ``reader``/``freeBusyReader`` cannot (calendarList also contains
+    read-only entries such as subscribed "Holidays in ..." calendars). Only
+    ``owner`` may delete or rename the collection.
+    """
     items: list[dict] = []
     page_token = None
     while True:
@@ -149,6 +155,7 @@ def list_user_calendars(token: str) -> list[dict]:
                     "color": it.get("backgroundColor") or it.get("colorRgbHex")
                     or it.get("colorXSS"),
                     "time_zone": it.get("timeZone"),
+                    "access_role": it.get("accessRole"),
                 })
         page_token = data.get("nextPageToken")
         if not page_token:
