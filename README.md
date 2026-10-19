@@ -41,10 +41,18 @@ cd ~/.config/omarchy/plugins/omacal
 systemctl --user start omacal
 ```
 
-That's it. On first use the clock shows a "Setup needed" popup — enter your
-CalDAV server address (a bare `https://cloud.example.com` works; discovery
-finds the CalDAV path), your username, and password. The password is stored in
-the system keyring, never in a file.
+That's it. On first use the clock shows a **"Provider Setup Required"** notice;
+**Continue** opens Account Settings, where **Add Provider** connects an account:
+
+- **Nextcloud** — browser sign-in via Login Flow v2 (no client registration, no
+  admin rights; approve in the browser and it grants an app password).
+- **Google** — bring your own Cloud client id/secret; the dialog walks through
+  creating the client and enabling the Calendar API, then opens the browser for
+  consent.
+- **CalDAV** — any server from address + username + password (a bare
+  `https://cloud.example.com` works; discovery finds the CalDAV path).
+
+Passwords live in the system keyring, never in a file.
 
 **Uninstall:**
 
@@ -78,8 +86,10 @@ omarchy plugin remove omacal    # removes the plugin itself
   or the whole series, without clobbering the master.
 - **All-day and multi-day events** handled with correct iCalendar semantics.
 - **First-run setup** — no manual config file editing to get started.
-- **Incremental sync** (RFC 6578) + on-open refresh; the cache window keeps
-  one-offs for -30/+90 days and syncs every 60s.
+- **Incremental sync** (RFC 6578) + on-open refresh. The poll runs every 5
+  minutes; calendar discovery is cached (re-run hourly, or on a manual sync) so
+  a Nextcloud rate limiter never sees a discovery burst on every poll. One-off
+  events cache for -30/+90 days (Google covers ±12 months).
 - **Reminders** (CalDAV `VTODO`) with a dedicated section — see [Reminders](#reminders).
 - **Calendar management** — a calendar-select dialog to show/hide calendars, add or
   subscribe to calendars, edit owned calendars' name/color, delete them, and
@@ -98,7 +108,9 @@ not offered as a destination.
   events in the month/day views.
 - **Add (`+`)** — a mini form creates a new named calendar on your server, or
   **subscribes** to an existing one: paste its collection URL and the submit
-  button reads "Subscribe" instead of "Create".
+  button reads "Subscribe" instead of "Create". With more than one account
+  configured, a **Create calendar on:** picker chooses which account the
+  calendar is created on (CalDAV or Google).
 - **Color** — pick from preset swatches ("Select calendar color:"); the color
   is written to the server (CalDAV `calendar-color` property) and round-trips
   through sync.
@@ -125,8 +137,11 @@ the OAuth token set:
 { "provider": "google", "display_name": "Google" }
 ```
 
-Sign in first (`omacal oauth login google`), with the `oauth.google` client
-section configured: Google's installed-app clients still demand the
+Add it from **Account Settings → + → Google**: bring your own Cloud client
+id/secret and the dialog walks through the four steps (create the client,
+enable the Calendar API, paste the pair, consent in the browser). The CLI path
+(`omacal oauth login google`) still works with an `oauth.google` client
+section pre-configured. Google's installed-app clients still demand the
 `client_secret` in the token exchange (confidential mode — PKCE alone gets
 "client_secret is missing"), and the scope must be the broad
 `https://www.googleapis.com/auth/calendar` — the granular
@@ -145,9 +160,14 @@ be ENABLED in the Cloud project (403 "API has not been used" otherwise).
   [-30, +90] days: Google exposes recurring series as **instances**
   (`recurringEventId`), never the master RRULE, so instances cache as
   one-off rows and the window is their visibility.
-- **Write side** — create/edit/delete route by provider: Google rows report
-  `writable: true` and go through the Calendar API (insert/patch/delete/move)
-  instead of CalDAV PUT. Google's instance ids are first-class, so editing or
+- **Read-only calendars** — a row's `writable`/`deletable` come from the
+  calendar's `accessRole` (owner/writer can write events; only owner can
+  rename/delete it). `calendarList` also returns read-only entries (subscribed
+  "Holidays in …", public/reader shares) — those are never an add-event
+  destination and never offer edit/delete, and the backend refuses the write
+  with a clear error rather than a raw 403.
+- **Write side** — create/edit/delete route by provider: Google rows go
+  through the Calendar API (insert/patch/delete/move) instead of CalDAV PUT. Google's instance ids are first-class, so editing or
   deleting one occurrence of a series is a PATCH/DELETE on the instance row —
   no EXDATE/RECURRENCE-ID surgery. The panel sends `occurrence=<stamp>` on a
   single-instance edit; without it, an edit PATCHes the master
@@ -184,9 +204,13 @@ be ENABLED in the Cloud project (403 "API has not been used" otherwise).
   calendar-select list and from the add-event Calendar dropdown. The account flag lives on
   the `calendars[]` entry only — the oauth section carries no enable flag (a vestigial
   `oauth.*.enabled` from the earlier provider-level scheme was removed).
+  Each account can also carry an optional **name** (config `name`) to tell several
+  accounts on the same server apart; the detail view (the row's pencil) shows it
+  alongside server/username.
   The header's "+" opens an inline Add Provider form: Nextcloud browser sign-in (Login
-  Flow v2 — no client registration, no admin rights) or any CalDAV server from
-  server + username + password (a Nextcloud app password works too).
+  Flow v2 — no client registration, no admin rights), Google (bring-your-own Cloud
+  client, with an in-dialog walkthrough), or any CalDAV server from server + username +
+  password (a Nextcloud app password works too).
   Calendar rename PATCHes the calendar resource (`summary`); recolour PATCHes the
   calendarList ITEM (`/users/me/calendarList/<id>`) with `backgroundColor` +
   `foregroundColor` and `colorRgbFormat=true` as a QUERY PARAM — colour is a
@@ -200,6 +224,11 @@ be ENABLED in the Cloud project (403 "API has not been used" otherwise).
 
 Reminders are CalDAV `VTODO` items — the same add/edit/delete flow as events,
 toggled via the **Event / Reminder** buttons in the form.
+
+> **Reminders: CalDAV only.** Google has no `VTODO` component, so reminders on a
+> Google calendar are not supported: the panel blocks the Reminder toggle on a
+> Google event and the backend raises a clear error. (Google reminders would need
+> the Tasks API — a separate API, scope and consent; a future item.)
 
 - **Creating** — pick **Reminder** in the add form. A new reminder defaults to
   **All Day** and is routed to the task calendar (a `VTODO`-capable one); the
@@ -262,7 +291,8 @@ omacal/
 ├── frontend/             # QML bar widget + calendar panel
 │   ├── BarWidget.qml     #   bar label + panel host
 │   ├── omacal-panel.qml  #   month/day calendar (installed as Panel.qml)
-│   ├── SetupForm.qml     #   first-run CalDAV setup
+│   ├── AccountSettingsDialog.qml  #   accounts (toggle / add provider / detail)
+│   ├── CalendarToggleDialog.qml   #   show-hide, add, subscribe, edit, delete
 │   ├── AddEventForm.qml  #   add/edit event form
 │   ├── Model.js          #   date math + clock format ring (shared)
 │   └── …                 #   DateEntry, FormLabel, KeypadTextField, …
