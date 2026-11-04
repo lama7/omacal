@@ -186,7 +186,8 @@ BarWidget {
         var when = new Date(item.reminder ? row.due : row.start)
         timeStr = (item.reminder ? "Due " : "") + Qt.formatTime(when, "h:mm AP")
       }
-      var cal = row.display_name ? "  (" + row.display_name + ")" : ""
+      var calName = calendarLabel(row)
+      var cal = calName ? "  (" + calName + ")" : ""
       lines.push(timeStr + "  " + row.summary + cal)
     }
     return lines.join("\n")
@@ -226,6 +227,14 @@ BarWidget {
     }
     xhr.onerror = function() { root.todayReminders = [] }
     xhr.send()
+  }
+
+  // Nextcloud's default task list can report the literal i18n key
+  // "DEFAULT_TASK_CALENDAR_NAME" instead of a human-readable name. That list
+  // only carries reminders, so the tooltip can call it what it is.
+  function calendarLabel(row) {
+    var name = row.display_name || ""
+    return name === "DEFAULT_TASK_CALENDAR_NAME" ? "Reminder" : name
   }
 
   function fetchToday() { fetchTodayEvents(); fetchTodayReminders() }
