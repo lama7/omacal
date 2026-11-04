@@ -33,7 +33,6 @@ BarWidget {
 
   function refresh() {
     displayDate = new Date()
-    fetchCalendars()
     fetchTodayEvents()
     if (panelLoader.item && panelLoader.item.refresh) panelLoader.item.refresh()
   }
@@ -135,19 +134,20 @@ BarWidget {
 
   }
 
-  // Calendar names + today's events for the hover tooltip, fetched from the omacal API.
-  property var calendarNames: []
+  // Today's events for the hover tooltip, fetched from the omacal API. Each
+  // event carries its own calendar's display_name, so the tooltip names only
+  // calendars that actually have an event today — it used to show the first
+  // configured account's name ("Birthdays") on every day, whether or not that
+  // calendar had anything.
   property var todayEvents: []
-  property string configuredCalendarName: ""
   // Mirrors the loaded panel's first-run status so the tooltip can advertise
   // setup instead of pretending nothing is configured.
   property bool panelNeedsSetup: panelLoader.item ? panelLoader.item.needsSetup : true
   readonly property string tooltipText: {
     if (panelNeedsSetup) return "Calendar needs setup — click to open the setup form"
-    var name = configuredCalendarName || (calendarNames.length > 0 ? calendarNames[0] : "")
-    if (name === "") return "omacal"
-    if (todayEvents.length === 0) return name + " — No events today"
-    var lines = [name + " — " + todayEvents.length + " Event" + (todayEvents.length > 1 ? "s" : "") + " today:"]
+    if (todayEvents.length === 0) return "No events today"
+    var n = todayEvents.length
+    var lines = [n + " Event" + (n > 1 ? "s" : "") + " today:"]
     for (var i = 0; i < todayEvents.length; i++) {
       var ev = todayEvents[i]
       var timeStr = ""
@@ -157,32 +157,10 @@ BarWidget {
         var d = new Date(ev.start)
         timeStr = Qt.formatTime(d, "h:mm AP")
       }
-      lines.push(timeStr + "  " + ev.summary)
+      var cal = ev.display_name ? "  (" + ev.display_name + ")" : ""
+      lines.push(timeStr + "  " + ev.summary + cal)
     }
     return lines.join("\n")
-  }
-
-  function fetchCalendars() {
-    var xhr = new XMLHttpRequest()
-    xhr.open("GET", "http://127.0.0.1:9876/api/calendars", true)
-    xhr.timeout = 3000
-    xhr.onreadystatechange = function() {
-      if (xhr.readyState === XMLHttpRequest.DONE) {
-        if (xhr.status === 200) {
-          try {
-            var data = JSON.parse(xhr.responseText)
-            var names = []
-            for (var i = 0; i < data.length; i++) {
-              if (data[i].enabled !== 0 && data[i].display_name) names.push(data[i].display_name)
-            }
-            root.calendarNames = names
-            fetchTodayEvents()
-          } catch (e) { root.calendarNames = []; root.todayEvents = [] }
-        } else { root.calendarNames = []; root.todayEvents = [] }
-      }
-    }
-    xhr.onerror = function() { root.calendarNames = []; root.todayEvents = [] }
-    xhr.send()
   }
 
   function fetchTodayEvents() {
@@ -203,26 +181,7 @@ BarWidget {
     xhr.send()
   }
 
-  Component.onCompleted: { fetchConfig(); fetchCalendars(); fetchTodayEvents() }
-
-  function fetchConfig() {
-    var xhr = new XMLHttpRequest()
-    xhr.open("GET", "http://127.0.0.1:9876/api/config", true)
-    xhr.timeout = 3000
-    xhr.onreadystatechange = function() {
-      if (xhr.readyState === XMLHttpRequest.DONE) {
-        if (xhr.status === 200) {
-          try {
-            var data = JSON.parse(xhr.responseText)
-            var names = data.calendar_names || []
-            root.configuredCalendarName = names.length > 0 ? names[0] : ""
-          } catch (e) { root.configuredCalendarName = "" }
-        } else { root.configuredCalendarName = "" }
-      }
-    }
-    xhr.onerror = function() { root.configuredCalendarName = "" }
-    xhr.send()
-  }
+  Component.onCompleted: { fetchTodayEvents() }
 
   WidgetButton {
     id: button
