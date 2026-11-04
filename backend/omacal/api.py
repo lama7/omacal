@@ -57,7 +57,7 @@ import json
 import logging
 import re
 import sys
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -189,6 +189,38 @@ def _row_account_key(row: dict) -> str:
     """
     return account_key({"provider": row.get("provider"),
                         "url": row.get("principal_url")})
+
+
+def _reminders_for_local_date(rows: list[dict], local_today) -> list[dict]:
+    """Keep the reminder occurrences that belong to ``local_today``.
+
+    A reminder's DUE is a single instant, unlike an event's start/end span.
+    All-day reminders are cached at UTC midnight, so a local-midnight window
+    would miss today's occurrence (it falls on the previous local day) and
+    pick up yesterday's; compare their DATE part instead. Timed reminders are
+    real instants and use an honest local-midnight [start, end) test.
+    """
+    local_start = datetime.combine(local_today, time.min).astimezone(timezone.utc)
+    local_end = datetime.combine(local_today + timedelta(days=1), time.min).astimezone(timezone.utc)
+    today_iso = local_today.isoformat()
+    out = []
+    for r in rows:
+        due_raw = r.get("due")
+        if not due_raw:
+            continue
+        if r.get("all_day"):
+            if str(due_raw)[:10] == today_iso:
+                out.append(r)
+            continue
+        try:
+            due = datetime.fromisoformat(str(due_raw))
+        except ValueError:
+            continue
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=timezone.utc)
+        if local_start <= due < local_end:
+            out.append(r)
+    return out
 
 
 class OmacalHandler(BaseHTTPRequestHandler):
@@ -335,6 +367,19 @@ class OmacalHandler(BaseHTTPRequestHandler):
             today_iso = local_today.isoformat()
             events = [e for e in events if (not e.get("all_day")) or e["start"][:10] == today_iso]
             self._json(200, events)
+            return
+
+        if path == "/api/reminders/today":
+            # Same local-day rule as /api/events/today. Query a day either side
+            # because an all-day reminder is a single DUE at UTC midnight, which
+            # a local-midnight window would otherwise exclude; the helper then
+            # keeps only the occurrences that belong to this local date.
+            local_today = datetime.now().date()
+            local_start = datetime.combine(local_today, time.min).astimezone(timezone.utc)
+            local_end = datetime.combine(local_today + timedelta(days=1), time.min).astimezone(timezone.utc)
+            rows = self._reminders_in_window(local_start - timedelta(days=1),
+                                             local_end + timedelta(days=1), None)
+            self._json(200, _reminders_for_local_date(rows, local_today))
             return
 
         if path == "/api/events":
@@ -1153,10 +1198,6 @@ class OmacalHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: object) -> None:
         logger.debug("%s - %s", self.client_address[0], format % args)
-
-
-# Import here to avoid circular issues at module level
-from datetime import timedelta  # noqa: E402
 
 
 class _OmacalHTTPServer(HTTPServer):

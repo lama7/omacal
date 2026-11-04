@@ -33,7 +33,7 @@ BarWidget {
 
   function refresh() {
     displayDate = new Date()
-    fetchTodayEvents()
+    fetchToday()
     if (panelLoader.item && panelLoader.item.refresh) panelLoader.item.refresh()
   }
 
@@ -106,7 +106,12 @@ BarWidget {
   SystemClock {
     id: clock
     precision: SystemClock.Minutes
-    onDateChanged: root.displayDate = date
+    // The minute tick also refreshes the tooltip, so it rolls over at midnight
+    // and picks up rows added while the shell has been running.
+    onDateChanged: {
+      root.displayDate = date
+      root.fetchToday()
+    }
   }
 
   Loader {
@@ -134,31 +139,55 @@ BarWidget {
 
   }
 
-  // Today's events for the hover tooltip, fetched from the omacal API. Each
-  // event carries its own calendar's display_name, so the tooltip names only
-  // calendars that actually have an event today — it used to show the first
-  // configured account's name ("Birthdays") on every day, whether or not that
-  // calendar had anything.
+  // Today's events and reminders for the hover tooltip, fetched from the
+  // omacal API. Each row carries its own calendar's display_name, so the
+  // tooltip names only calendars that actually have something today — it used
+  // to show the first configured account's name ("Birthdays") every day.
   property var todayEvents: []
+  property var todayReminders: []
   // Mirrors the loaded panel's first-run status so the tooltip can advertise
   // setup instead of pretending nothing is configured.
   property bool panelNeedsSetup: panelLoader.item ? panelLoader.item.needsSetup : true
   readonly property string tooltipText: {
     if (panelNeedsSetup) return "Calendar needs setup — click to open the setup form"
-    if (todayEvents.length === 0) return "No events today"
-    var n = todayEvents.length
-    var lines = [n + " Event" + (n > 1 ? "s" : "") + " today:"]
+    var ne = todayEvents.length
+    var nr = todayReminders.length
+    if (ne + nr === 0) return "No events or reminders today"
+    var counts = []
+    if (ne > 0) counts.push(ne + " Event" + (ne > 1 ? "s" : ""))
+    if (nr > 0) counts.push(nr + " Reminder" + (nr > 1 ? "s" : ""))
+    var lines = [counts.join(", ") + " today:"]
+
+    // One list: all-day first, then by time, events before reminders on a tie.
+    var items = []
     for (var i = 0; i < todayEvents.length; i++) {
       var ev = todayEvents[i]
-      var timeStr = ""
-      if (Number(ev.all_day)) {
-        timeStr = "All day"
+      var evAllDay = Number(ev.all_day) === 1
+      items.push({ row: ev, reminder: false, allDay: evAllDay,
+                   when: evAllDay ? 0 : new Date(ev.start).getTime() })
+    }
+    for (var j = 0; j < todayReminders.length; j++) {
+      var rem = todayReminders[j]
+      var remAllDay = Number(rem.all_day) === 1
+      items.push({ row: rem, reminder: true, allDay: remAllDay,
+                   when: remAllDay ? 0 : new Date(rem.due).getTime() })
+    }
+    items.sort(function(a, b) {
+      if (a.allDay !== b.allDay) return a.allDay ? -1 : 1
+      return a.when - b.when
+    })
+    for (var k = 0; k < items.length; k++) {
+      var item = items[k]
+      var row = item.row
+      var timeStr
+      if (item.allDay) {
+        timeStr = item.reminder ? "Due all day" : "All day"
       } else {
-        var d = new Date(ev.start)
-        timeStr = Qt.formatTime(d, "h:mm AP")
+        var when = new Date(item.reminder ? row.due : row.start)
+        timeStr = (item.reminder ? "Due " : "") + Qt.formatTime(when, "h:mm AP")
       }
-      var cal = ev.display_name ? "  (" + ev.display_name + ")" : ""
-      lines.push(timeStr + "  " + ev.summary + cal)
+      var cal = row.display_name ? "  (" + row.display_name + ")" : ""
+      lines.push(timeStr + "  " + row.summary + cal)
     }
     return lines.join("\n")
   }
@@ -181,7 +210,27 @@ BarWidget {
     xhr.send()
   }
 
-  Component.onCompleted: { fetchTodayEvents() }
+  function fetchTodayReminders() {
+    var xhr = new XMLHttpRequest()
+    xhr.open("GET", "http://127.0.0.1:9876/api/reminders/today", true)
+    xhr.timeout = 3000
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState === XMLHttpRequest.DONE) {
+        if (xhr.status === 200) {
+          try {
+            var data = JSON.parse(xhr.responseText)
+            root.todayReminders = Array.isArray(data) ? data : []
+          } catch (e) { root.todayReminders = [] }
+        } else { root.todayReminders = [] }
+      }
+    }
+    xhr.onerror = function() { root.todayReminders = [] }
+    xhr.send()
+  }
+
+  function fetchToday() { fetchTodayEvents(); fetchTodayReminders() }
+
+  Component.onCompleted: fetchToday()
 
   WidgetButton {
     id: button
