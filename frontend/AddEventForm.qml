@@ -402,7 +402,7 @@ Column {
             options: panel.minuteOptions
             foreground: panel.contentForeground
             fontFamily: panel.contentFontFamily
-            onChanged: panel.newEventStartMinute = parseInt(value, 10)
+            onChanged: panel.applyStartTime(panel.newEventStartHour, parseInt(value, 10))
             onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
             anchors.left: startColon.right
             anchors.leftMargin: Style.space(2)
@@ -418,7 +418,7 @@ Column {
             options: panel.hourOptions
             foreground: panel.contentForeground
             fontFamily: panel.contentFontFamily
-            onChanged: panel.newEventStartHour = parseInt(value, 10)
+            onChanged: panel.applyStartTime(parseInt(value, 10), panel.newEventStartMinute)
             onPopupOpenChanged: if (!popupOpen) keyCatcher.forceActiveFocus()
             anchors.left: startDateField.right
             anchors.leftMargin: Style.space(8)

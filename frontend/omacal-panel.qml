@@ -348,6 +348,41 @@ Panel {
         return c ? (c.provider || "caldav") : ""
     }
 
+    // Keep End in step with Start. A new event starts out one hour long
+    // (9:00–10:00), so moving Start to 14:00 moves End to 15:00. Duration is
+    // measured from the current Start, so an event the user has deliberately
+    // stretched keeps its length when Start moves. Crossing midnight rolls the
+    // End Date forward instead of leaving an end-before-start pair.
+    function applyStartTime(hour, minute) {
+        if (hour === newEventStartHour && minute === newEventStartMinute) return
+        if (newEventAllDay || newEventIsReminder) {
+            newEventStartHour = hour
+            newEventStartMinute = minute
+            return
+        }
+        var startDay = addEventForm.startDateField.value
+        var endDay = addEventForm.endDateField.value
+        var durationMs = 3600000
+        if (startDay && endDay) {
+            var oldStart = new Date(startDay.getFullYear(), startDay.getMonth(), startDay.getDate(),
+                                    newEventStartHour, newEventStartMinute)
+            var oldEnd = new Date(endDay.getFullYear(), endDay.getMonth(), endDay.getDate(),
+                                  newEventEndHour, newEventEndMinute)
+            durationMs = oldEnd.getTime() - oldStart.getTime()
+        }
+        if (durationMs <= 0) durationMs = 3600000
+        newEventStartHour = hour
+        newEventStartMinute = minute
+        if (!startDay) return
+        var newStart = new Date(startDay.getFullYear(), startDay.getMonth(), startDay.getDate(), hour, minute)
+        var newEnd = new Date(newStart.getTime() + durationMs)
+        newEventEndHour = newEnd.getHours()
+        newEventEndMinute = newEnd.getMinutes()
+        addEventForm.endDateField.setDate(newEnd)
+        addEventForm.endHourDropdown.value = String(newEventEndHour)
+        addEventForm.endMinuteDropdown.value = String(newEventEndMinute)
+    }
+
     function openAddForm() {
         showAddForm = true
         editingUid = ""
