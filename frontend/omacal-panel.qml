@@ -340,6 +340,19 @@ Panel {
         return task ? task.id : (writable.length > 0 ? writable[0].id : 0)
     }
 
+    // Default destination for a new event: "Dad's Calendar" when available,
+    // else the first writable calendar that advertises VEVENT. A VTODO-only
+    // list (Nextcloud's default task list) would reject an event write, so it
+    // is never an event target.
+    function defaultEventCalendarId() {
+        var writable = calendars.filter(function(c) {
+            return c.writable && c.account_enabled !== false
+                && Number(c.supports_events) !== 0
+        })
+        var dadCal = writable.find(function(c) { return c.display_name === "Dad's Calendar" })
+        return dadCal ? dadCal.id : (writable.length > 0 ? writable[0].id : 0)
+    }
+
     // Provider of a calendar by id ('caldav' when unset) — the panel routes
     // writes per provider: the backend dispatches create/edit/delete by the
     // calendar row's provider, and cross-provider event moves are refused.
@@ -414,19 +427,12 @@ Panel {
         addEventForm.alarmHourDropdown.value = "9"
         addEventForm.alarmMinuteDropdown.value = "0"
         // Default calendar: reminders go to the task calendar (VTODO-capable);
-        // events prefer "Dad's Calendar", then the first writable calendar that
-        // advertises VEVENT. A VTODO-only list (Nextcloud's default task list)
-        // would reject an event write, so it is not an event target. A calendar
+        // events use the first event-capable writable calendar. A calendar
         // whose ACCOUNT is disabled is skipped — the account switch governs it.
-        var writable = calendars.filter(function(c) {
-            return c.writable && c.account_enabled !== false
-                && Number(c.supports_events) !== 0
-        })
         if (newEventIsReminder) {
             newEventCalendarId = defaultReminderCalendarId()
         } else {
-            var dadCal = writable.find(function(c) { return c.display_name === "Dad's Calendar" })
-            newEventCalendarId = dadCal ? dadCal.id : (writable.length > 0 ? writable[0].id : 0)
+            newEventCalendarId = defaultEventCalendarId()
         }
         // Sync dropdown initial values — Dropdowns use direct assignment
         // (selectCurrent does root.value = v), so bindings can't be used.

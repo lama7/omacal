@@ -62,7 +62,21 @@ Column {
                 fontFamily: panel.contentFontFamily
                 fontSize: Style.font.title
                 horizontalPadding: Style.spacing.controlPaddingX * 2
-                onClicked: panel.newEventIsReminder = false
+                onClicked: {
+                    panel.newEventIsReminder = false
+                    // Leaving reminder mode can strand a NEW event on the task
+                    // calendar (VTODO-only); move it to an event-capable
+                    // default. Keep a valid calendar the user already picked.
+                    if (!panel.editingUid) {
+                        var current = panel.calendars.find(function(c) {
+                            return c.id === panel.newEventCalendarId
+                        })
+                        if (!current || Number(current.supports_events) === 0) {
+                            panel.newEventCalendarId = panel.defaultEventCalendarId()
+                            calendarDropdown.value = String(panel.newEventCalendarId)
+                        }
+                    }
+                }
             }
             Button {
                 text: "REMINDER"
