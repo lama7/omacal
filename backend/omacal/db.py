@@ -301,6 +301,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
             cur.execute("ALTER TABLE calendars ADD COLUMN access_role TEXT")
         cur.execute("INSERT INTO schema_version VALUES (14)")
 
+    if version < 15:
+        # Whether the server advertises VEVENT for this calendar (2026-11).
+        # Nextcloud's default task list is VTODO-only, but it still appeared as
+        # an event target, where a PUT would be rejected. Default 1 so an
+        # existing row whose component set is not known yet stays selectable;
+        # the next sync corrects VTODO-only rows.
+        cols = {r[1] for r in cur.execute("PRAGMA table_info(calendars)")}
+        if "supports_events" not in cols:
+            cur.execute("ALTER TABLE calendars ADD COLUMN supports_events INTEGER NOT NULL DEFAULT 1")
+        cur.execute("INSERT INTO schema_version VALUES (15)")
+
     conn.commit()
 
 
@@ -314,6 +325,7 @@ def add_calendar(
     color: str | None = None,
     principal_url: str | None = None,
     supports_todo: int = 0,
+    supports_events: int = 1,
     subscribed: int = 0,
     provider: str = "caldav",
     access_role: str | None = None,
@@ -326,8 +338,8 @@ def add_calendar(
     # the provenance of an existing google row.
     cur = conn.execute(
         """INSERT INTO calendars
-           (uid, display_name, url, username, password, color, principal_url, last_sync, enabled, supports_todo, subscribed, provider, access_role)
-           VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, 1, ?, ?, ?, ?)
+           (uid, display_name, url, username, password, color, principal_url, last_sync, enabled, supports_todo, supports_events, subscribed, provider, access_role)
+           VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, 1, ?, ?, ?, ?, ?)
         ON CONFLICT(uid) DO UPDATE SET
            display_name = excluded.display_name,
            url = excluded.url,
@@ -336,9 +348,10 @@ def add_calendar(
            color = excluded.color,
            principal_url = excluded.principal_url,
            supports_todo = excluded.supports_todo,
+           supports_events = excluded.supports_events,
            access_role = excluded.access_role
         RETURNING id""",
-        (uid, display_name, url, username, color, principal_url, supports_todo, subscribed, provider, access_role),
+        (uid, display_name, url, username, color, principal_url, supports_todo, supports_events, subscribed, provider, access_role),
     )
     row = cur.fetchone()
     conn.commit()
@@ -347,7 +360,7 @@ def add_calendar(
 
 def list_calendars(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     cur = conn.execute(
-        "SELECT id, uid, display_name, color, url, username, password, principal_url, last_sync, sync_token, enabled, supports_todo, subscribed, provider, access_role FROM calendars ORDER BY display_name"
+        "SELECT id, uid, display_name, color, url, username, password, principal_url, last_sync, sync_token, enabled, supports_todo, supports_events, subscribed, provider, access_role FROM calendars ORDER BY display_name"
     )
     return [dict(r) for r in cur.fetchall()]
 

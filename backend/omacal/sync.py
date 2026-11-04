@@ -489,6 +489,10 @@ def _discover_calendars(
                 "principal_url": (str(principal.url) if principal.url else None),
                 "writable": _check_writable(client, cal_url),
                 "supports_todo": 1 if (comp_set and "VTODO" in comp_set) else 0,
+                # Unknown component set means "assume events" so a calendar
+                # never disappears from the event targets merely because the
+                # server kept quiet; only an explicit VEVENT-less set hides it.
+                "supports_events": 0 if (comp_set and "VEVENT" not in comp_set) else 1,
             })
         except Exception as e:
             logger.warning("Skipping calendar %s: %s", cal_url, e)
@@ -802,6 +806,7 @@ def add_calendar_named(
         color=props.get("{http://apple.com/ns/ical/}calendar-color") or color,
         principal_url=str(principal.url) if principal.url else url,
         supports_todo=1 if (comp_set and "VTODO" in comp_set) else 0,
+        supports_events=0 if (comp_set and "VEVENT" not in comp_set) else 1,
     )
     logger.info("Created calendar %r (id=%d) at %s", name, cal_id, cal_url)
     return {"ok": True, "calendar_id": cal_id, "display_name": name}
@@ -877,6 +882,7 @@ def subscribe_calendar(
         color=cal_color,
         principal_url=None,
         supports_todo=1 if (comp_set and "VTODO" in comp_set) else 0,
+        supports_events=0 if (comp_set and "VEVENT" not in comp_set) else 1,
         subscribed=1,
     )
 
@@ -1224,6 +1230,7 @@ def sync_source(
             password if is_writable else None,
             prop_color, cal_info.get("principal_url"),
             supports_todo=cal_info.get("supports_todo", 0),
+            supports_events=cal_info.get("supports_events", 1),
         )
 
         # One sync-collection REPORT per calendar: full replace on the first

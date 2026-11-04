@@ -136,7 +136,18 @@ Column {
             height: Style.spacing.controlHeight
             showLabel: false
             value: ""
-            options: panel.calendars.filter(function(c) { return c.writable && c.account_enabled !== false && (panel.editProviderFilter === "" || c.provider === panel.editProviderFilter) }).map(function(c) {
+            options: panel.calendars.filter(function(c) {
+                // Event targets must advertise VEVENT: a VTODO-only list (the
+                // default task calendar) rejects an event write. Unknown
+                // (undefined/NaN) stays selectable for older backends. While
+                // editing, keep the event's own calendar even if it is now
+                // flagged, so the form never silently drops it.
+                var eventCapable = Number(c.supports_events) !== 0
+                var isCurrent = !!panel.editingUid && c.id === panel.newEventCalendarId
+                return c.writable && c.account_enabled !== false
+                    && (eventCapable || isCurrent)
+                    && (panel.editProviderFilter === "" || c.provider === panel.editProviderFilter)
+            }).map(function(c) {
                 return { value: String(c.id), label: panel.calendarDisplayName(c) }
             })
             foreground: panel.contentForeground

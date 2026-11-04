@@ -102,6 +102,11 @@ as events, toggled via the **Event / Reminder** buttons in the form.
   **All Day** and is routed to the task calendar (a to-do-capable one); the
   calendar dropdown is hidden because there's only that target. Editing an
   existing reminder keeps its own all-day state and calendar.
+- **Calendar targets** — the event form only offers calendars whose server
+  component set includes `VEVENT`; a VTODO-only task list is reminders-only and
+  would reject an event write. Nextcloud's default task list displays as
+  **Reminders** in the chooser and bar tooltip, while its stored name stays the
+  formal `DEFAULT_TASK_CALENDAR_NAME`.
 - **Alarm (heads-up)** — shown only in reminder mode. Timed reminders fire an
   offset before their due time: *5 min / 15 min / 30 min / 1 hour / 2 hours /
   1 day before* (default **1 hour** before due). All-day reminders fire at a

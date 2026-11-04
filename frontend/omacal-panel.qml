@@ -414,10 +414,13 @@ Panel {
         addEventForm.alarmHourDropdown.value = "9"
         addEventForm.alarmMinuteDropdown.value = "0"
         // Default calendar: reminders go to the task calendar (VTODO-capable);
-        // events prefer "Dad's Calendar", then the first writable. A calendar
+        // events prefer "Dad's Calendar", then the first writable calendar that
+        // advertises VEVENT. A VTODO-only list (Nextcloud's default task list)
+        // would reject an event write, so it is not an event target. A calendar
         // whose ACCOUNT is disabled is skipped — the account switch governs it.
         var writable = calendars.filter(function(c) {
             return c.writable && c.account_enabled !== false
+                && Number(c.supports_events) !== 0
         })
         if (newEventIsReminder) {
             newEventCalendarId = defaultReminderCalendarId()
