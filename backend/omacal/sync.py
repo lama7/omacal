@@ -18,7 +18,8 @@ from icalendar import Calendar, Alarm, vDatetime, vDate
 from omacal.config import load_config
 from omacal.db import (add_calendar, replace_calendar_events, replace_calendar_reminders,
                        upsert_events, upsert_overrides, upsert_reminders, upsert_reminder_overrides,
-                       get_discovered_calendars, set_discovered_calendars)
+                       get_discovered_calendars, set_discovered_calendars,
+                       patch_discovered_calendar)
 from omacal.recur import has_occurrence_after
 
 logger = logging.getLogger("omacal.sync")
@@ -622,7 +623,7 @@ def edit_calendar(
     if not name and not color:
         raise ValueError("Nothing to change")
     row = conn.execute(
-        "SELECT id, url, principal_url, display_name, subscribed, provider, access_role FROM calendars WHERE id = ?",
+        "SELECT id, uid, url, principal_url, display_name, subscribed, provider, access_role FROM calendars WHERE id = ?",
         (calendar_id,),
     ).fetchone()
     if not row:
@@ -654,7 +655,18 @@ def edit_calendar(
         raise ValueError("Shared calendar \u2014 can't edit")
 
     cfg = load_config()
-    entry = next((c for c in cfg["calendars"] if c.get("username")), None)
+    # Match the calendar's own account, not merely the first CalDAV one: with
+    # several accounts the first entry's credentials would PROPPATCH a URL on
+    # another server. `account_key` is the principal URL, the same key the
+    # discovery cache uses.
+    from omacal.config import account_key
+    row_account = (row["principal_url"] or "").rstrip("/")
+    entry = next((c for c in cfg["calendars"]
+                  if (c.get("provider") or "caldav") == "caldav"
+                  and account_key(c) == row_account), None)
+    if entry is None:
+        # Legacy rows with no principal_url: keep the previous fallback.
+        entry = next((c for c in cfg["calendars"] if c.get("username")), None)
     if not entry:
         raise ValueError("No signed-in calendar account")
     url, username = entry["url"], entry["username"]
@@ -695,6 +707,11 @@ def edit_calendar(
     if color:
         conn.execute("UPDATE calendars SET color = ? WHERE id = ?", (color, calendar_id))
     conn.commit()
+    # sync_all() re-upserts name/color from the cached discovery list on every
+    # poll, so patch it too or the edit is undone until the next discovery.
+    if row_account:
+        patch_discovered_calendar(conn, row_account, row["uid"],
+                                  display_name=name, color=color)
     return {
         "ok": True,
         "calendar_id": calendar_id,

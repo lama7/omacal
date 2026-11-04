@@ -437,6 +437,50 @@ def set_discovered_calendars(
     conn.commit()
 
 
+def patch_discovered_calendar(
+    conn: sqlite3.Connection,
+    account_url: str,
+    calendar_uid: str,
+    display_name: str | None = None,
+    color: str | None = None,
+) -> None:
+    """Keep an account's cached discovery list in step with a calendar edit.
+
+    ``sync_all`` re-upserts every cached calendar's ``display_name`` and
+    ``color`` on each poll, so without this a rename/recolour would be undone
+    by the next sync until a fresh discovery (up to ``discovery_interval``).
+    A missing/malformed cache is a no-op: the next discovery rebuilds it.
+    """
+    row = conn.execute(
+        "SELECT payload FROM discovery_cache WHERE account_url = ?",
+        (account_url,),
+    ).fetchone()
+    if not row:
+        return
+    try:
+        entries = json.loads(row["payload"])
+    except (ValueError, TypeError):
+        return
+    if not isinstance(entries, list):
+        return
+    changed = False
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("uid") != calendar_uid:
+            continue
+        if display_name is not None:
+            entry["display_name"] = display_name
+            changed = True
+        if color is not None:
+            entry["color"] = color
+            changed = True
+    if changed:
+        conn.execute(
+            "UPDATE discovery_cache SET payload = ? WHERE account_url = ?",
+            (json.dumps(entries), account_url),
+        )
+        conn.commit()
+
+
 def set_calendar_enabled(conn: sqlite3.Connection, calendar_id: int, enabled: bool) -> bool:
     """Set a calendar's visibility flag (set, not flip).
 
