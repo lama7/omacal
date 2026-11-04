@@ -137,7 +137,7 @@ Column {
             showLabel: false
             value: ""
             options: panel.calendars.filter(function(c) { return c.writable && c.account_enabled !== false && (panel.editProviderFilter === "" || c.provider === panel.editProviderFilter) }).map(function(c) {
-                return { value: String(c.id), label: c.display_name }
+                return { value: String(c.id), label: panel.calendarDisplayName(c) }
             })
             foreground: panel.contentForeground
             fontFamily: panel.contentFontFamily

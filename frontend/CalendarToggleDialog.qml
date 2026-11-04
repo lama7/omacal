@@ -438,7 +438,7 @@ Item {
                   // toggles stay uniform width; the button itself is
                   // right-justified and only shown on owned (editable) rows.
                   anchors.rightMargin: rowEditBtn.width + Style.space(8)
-                  label: modelData.name
+                  label: modelData.label || modelData.name
                   description: modelData.enabled ? "Visible" : "Hidden"
                   checked: modelData.enabled
                   cursorOn: root.cursorEngaged && index === root.selectedIndex

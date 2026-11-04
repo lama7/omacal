@@ -747,7 +747,7 @@ Panel {
         for (var i = 0; i < calendars.length; i++) {
             if (calendars[i].id === id) {
                 if (!calendars[i].deletable) { error = "Shared calendar \u2014 can't delete"; return }
-                pendingDeleteCalendar = { id: id, name: calendars[i].display_name, subscribed: !!calendars[i].subscribed }
+                pendingDeleteCalendar = { id: id, name: calendarDisplayName(calendars[i]), subscribed: !!calendars[i].subscribed }
                 showDeleteConfirm = true
                 return
             }
@@ -779,6 +779,17 @@ Panel {
         xhr.send()
     }
 
+    // Presentation-only label for a calendar. Nextcloud reports its default
+    // task list as the literal i18n key DEFAULT_TASK_CALENDAR_NAME; that list
+    // only carries reminders (its supported-calendar-component-set is VTODO
+    // only), so show it as "Reminders". The stored and server-side name stays
+    // formal: the API keeps returning display_name and the edit form must keep
+    // pre-filling/saving display_name, or Save would rename the calendar.
+    function calendarDisplayName(cal) {
+        var name = (cal && cal.display_name) || ""
+        return name === "DEFAULT_TASK_CALENDAR_NAME" ? "Reminders" : name
+    }
+
     // Calendar toggle form (header button, right of "previous month").
     // Builds the dialog's model from the configured calendars, re-syncing the
     // on-screen `enabled` state so a hidden calendar still lists and can be
@@ -794,6 +805,9 @@ Panel {
         for (var i = 0; i < calendars.length; i++) {
             if (calendars[i].account_enabled === false) continue
             calToggleModel.append({ id: calendars[i].id, name: calendars[i].display_name,
+                                    // `label` is what the row shows; `name` stays
+                                    // the formal stored name for editing.
+                                    label: calendarDisplayName(calendars[i]),
                                     enabled: !!calendars[i].enabled,
                                     deletable: !!calendars[i].deletable,
                                     subscribed: !!calendars[i].subscribed,
