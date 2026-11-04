@@ -108,7 +108,8 @@ as events, toggled via the **Event / Reminder** buttons in the form.
   fixed time on the due date (hour + minute, default **09:00**).
 - **Display** — reminders render as an **outlined (hollow) dot** so they read
   distinctly from filled event dots, in the month grid, day view, and preview
-  pane.
+  pane. The bar's clock tooltip also lists today's reminders (prefixed **Due**)
+  alongside events.
 - **Sync & completion** — reminders sync like events and disappear once marked
   complete or cancelled. A recurring reminder notifies once per occurrence.
 
