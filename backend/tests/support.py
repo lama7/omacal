@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 from icalendar import Calendar
 
@@ -162,6 +164,16 @@ class FakeCalendar:
         raise caldav_error.NotFoundError(f"no todo with uid={uid}")
 
 
+class FakePrincipal:
+    """A caldav Principal stub: the calendars the stub client serves."""
+
+    def __init__(self, calendars: list[FakeCalendar] | None = None) -> None:
+        self.calendars_list = list(calendars or [])
+
+    def calendars(self) -> list[FakeCalendar]:
+        return self.calendars_list
+
+
 class FakeClient:
     """A caldav DAVClient stub: `client.calendar(url=...)` -> FakeCalendar."""
 
@@ -173,5 +185,34 @@ class FakeClient:
         self.calendar_calls.append(url or "")
         return self.cal
 
-    def principal(self):  # pragma: no cover - tests never need principal lookup
-        raise AssertionError("unexpected principal() call in a stub client")
+    def principal(self) -> FakePrincipal:
+        """The write paths fall back to a server-wide uid search."""
+        return FakePrincipal([self.cal])
+
+
+class OmacalTestCase(unittest.TestCase):
+    """Base for every test: the suite must never touch live state.
+
+    Tests run on the developer's own machine, so the two live surfaces the
+    backend reaches for — the system keyring (real credentials) and HTTP — are
+    closed by default and raise instead. A test that needs one patches it back
+    explicitly. (Learned the hard way: an un-patched write path called
+    `oauth_token`, which posted a refresh to Google's token endpoint and, on
+    `invalid_grant`, deleted the stored token set from the real keyring.)
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._forbid("omacal.keyring_store.get_password")
+        self._forbid("omacal.keyring_store.store_password")
+        self._forbid("omacal.oauth.oauth_token")
+        self._forbid("urllib.request.urlopen")
+
+    def _forbid(self, target: str) -> None:
+        patcher = mock.patch(
+            target,
+            side_effect=AssertionError(
+                f"a test reached live state via {target}; patch it explicitly"),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)

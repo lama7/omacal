@@ -23,11 +23,12 @@ from datetime import datetime, timedelta
 
 from omacal import db
 
-from tests.support import TempDb
+from tests.support import OmacalTestCase, TempDb
 
 
-class ReminderWindowTests(unittest.TestCase):
+class ReminderWindowTests(OmacalTestCase):
     def setUp(self) -> None:
+        super().setUp()
         self.db = TempDb(self)
         self.cal = self.db.add_calendar()
 
@@ -131,10 +132,11 @@ class ReminderWindowTests(unittest.TestCase):
         self.assertEqual([r["summary"] for r in rows], ["Mine"])
 
 
-class EventWindowTests(unittest.TestCase):
+class EventWindowTests(OmacalTestCase):
     """The events query is the reference shape — keep it behaving the same way."""
 
     def setUp(self) -> None:
+        super().setUp()
         self.db = TempDb(self)
         self.cal = self.db.add_calendar()
 

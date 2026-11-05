@@ -887,6 +887,23 @@ def set_reminder_href(conn: sqlite3.Connection, calendar_id: int, uid: str, href
     conn.commit()
 
 
+def set_reminder_exdates(
+    conn: sqlite3.Connection, calendar_id: int, uid: str, exdates: list[str]
+) -> None:
+    """Write the EXDATE list for a cached reminder master.
+
+    Called right after a single-occurrence reminder delete so the panel stops
+    drawing that occurrence immediately instead of resurrecting it until the next
+    sync: a series is expanded from the cache, so the cache has to carry the new
+    exclusion. Mirrors set_event_exdates.
+    """
+    conn.execute(
+        "UPDATE reminders SET exdates = ? WHERE calendar_id = ? AND uid = ?",
+        (json.dumps(sorted(set(exdates))), calendar_id, uid),
+    )
+    conn.commit()
+
+
 
 def mark_alarm_fired(conn: sqlite3.Connection, calendar_id: int, uid: str, occurrence_due: str, fired_at: str | None = None) -> None:
     """Record that a reminder occurrence's alarm has been toasted (dedupes recurring reminders)."""

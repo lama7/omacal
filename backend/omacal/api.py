@@ -752,13 +752,32 @@ class OmacalHandler(BaseHTTPRequestHandler):
             query = parse_qs(parsed.query)
             uid = query.get("uid", [None])[0]
             calendar_id_raw = query.get("calendar_id", [None])[0]
+            occurrence_raw = query.get("occurrence", [None])[0]
+            series = (query.get("series", ["false"])[0] or "").strip().lower() in ("1", "true", "yes")
             if not uid or not calendar_id_raw:
                 self._json(400, {"error": "uid and calendar_id query parameters required"})
                 return
+
+            # occurrence=<ISO due> excludes just that occurrence of a repeating
+            # occasion of a repeating task (EXDATE on the master VTODO);
+            # series=true removes the whole task. Neither of them on a repeating
+            # reminder is a 400 -- same contract as DELETE /api/events, so the
+            # panel's scope toggle means the same thing for both.
+            occurrence = None
+            if occurrence_raw:
+                try:
+                    occurrence = datetime.fromisoformat(occurrence_raw)
+                except ValueError:
+                    self._json(400, {"error": "invalid occurrence format, use ISO 8601"})
+                    return
+                if occurrence.tzinfo is None:
+                    occurrence = occurrence.replace(tzinfo=timezone.utc)
+
             try:
                 calendar_id = int(calendar_id_raw)
                 from omacal.sync import delete_reminder
-                result = delete_reminder(self.db_conn, calendar_id, uid)
+                result = delete_reminder(self.db_conn, calendar_id, uid,
+                                         occurrence=occurrence, series=series)
                 self._json(200, result)
             except ValueError as e:
                 self._json(400, {"error": str(e)})

@@ -147,6 +147,23 @@ def _exdate_values(component) -> list[str]:
     return out
 
 
+def _occurrence_value(prop_value: Any, target: datetime):
+    """The value to write for an EXDATE / RECURRENCE-ID addressing `target`.
+
+    The write counterpart of `_exdate_values`: mirrors the anchor property's own
+    form so the value matches what this parser (and other clients) compare
+    against -- a bare date for an all-day series, the anchor's own zone for a
+    TZID-valued one, naive for a floating one. `prop_value` is the property's
+    `.dt` (or the raw value). Getting this wrong is silent: the occurrence then
+    never matches and comes back on the next expansion.
+    """
+    if not hasattr(prop_value, "hour"):                 # all-day: DATE-valued
+        return target.date()
+    if prop_value.tzinfo is not None:
+        return target.astimezone(prop_value.tzinfo)
+    return target.replace(tzinfo=None)
+
+
 def _parse_ical_events(cal_data: bytes, calendar_id: int, cutoff: datetime, href: str | None = None) -> dict[str, list[dict[str, Any]]]:
     """Parse raw iCalendar bytes into {"events": [...], "overrides": [...]}.
 
@@ -1487,13 +1504,7 @@ def delete_event(
 
     # Mirror the master's DTSTART form so the EXDATE matches what other clients
     # (and this parser) compare against: DATE for all-day, the same tz otherwise.
-    dtstart = master.get("DTSTART").dt
-    if not hasattr(dtstart, "hour"):                      # all-day series
-        exdate_value = target.date()
-    elif dtstart.tzinfo is not None:
-        exdate_value = target.astimezone(dtstart.tzinfo)
-    else:
-        exdate_value = target.replace(tzinfo=None)
+    exdate_value = _occurrence_value(master.get("DTSTART").dt, target)
 
     existing = [parse_dt(v) for v in _exdate_values(master)]
     existing = [d for d in existing if d is not None]
@@ -1645,13 +1656,7 @@ def update_event(
 
         # RECURRENCE-ID must mirror the master's DTSTART form so other clients
         # (and this parser) match it: DATE for all-day, same tz otherwise.
-        mstart = master.get("DTSTART").dt
-        if not hasattr(mstart, "hour"):                 # all-day series
-            rid_value = target.date()
-        elif mstart.tzinfo is not None:
-            rid_value = target.astimezone(mstart.tzinfo)
-        else:
-            rid_value = target.replace(tzinfo=None)
+        rid_value = _occurrence_value(master.get("DTSTART").dt, target)
 
         # Build the detached override VEVENT.
         ov = Event()
@@ -1910,16 +1915,31 @@ def create_reminder(
         alarm_time=alarm_time if all_day else None,
     )
     return cached
-def delete_reminder(conn: Any, calendar_id: int, uid: str) -> dict[str, Any]:
+
+
+def delete_reminder(
+    conn: Any,
+    calendar_id: int,
+    uid: str,
+    occurrence: datetime | None = None,
+    series: bool = False,
+) -> dict[str, Any]:
     """Delete a reminder (VTODO) from the CalDAV server and local cache.
 
-    Whole-reminder delete (the task, and its series, is removed) -- matches how
-    you delete a task. Per-occurrence delete can be added later if needed.
+    occurrence=None -> remove the whole resource (a one-off reminder)
+    occurrence=<dt> -> remove just that DUE occurrence of a series by adding an
+                       EXDATE to the master VTODO, leaving the rest untouched
+
+    A recurring reminder with neither `occurrence` nor `series=True` raises: a
+    right-click on one occurrence must never silently wipe the series. This is
+    the same contract as delete_event, so the panel's "Delete whole series"
+    scope toggle means the same thing for both.
     """
     if _google_row(conn, calendar_id):
         raise ValueError("reminders on Google calendars use the Tasks API (not wired yet)")
 
-    from omacal.db import delete_reminder as db_delete_reminder
+    from omacal.db import delete_reminder as db_delete_reminder, set_reminder_exdates
+    from omacal.recur import parse_dt
 
     url, username, password = _calendar_creds(conn, calendar_id)
     client = _dav_client(url, username, password)
@@ -1942,9 +1962,52 @@ def delete_reminder(conn: Any, calendar_id: int, uid: str) -> dict[str, Any]:
     if todo is None:
         raise ValueError(f"Reminder uid={uid} not found on any calendar")
 
-    todo.delete()
-    db_delete_reminder(conn, calendar_id, uid)
-    return {"status": "deleted", "uid": uid, "scope": "reminder"}
+    comp = Calendar.from_ical(todo.data)
+    masters = [c for c in comp.walk("VTODO") if not c.get("RECURRENCE-ID")]
+    master = masters[0] if masters else None
+    master_rrule = master.get("RRULE") if master is not None else None
+
+    if occurrence is None:
+        if master_rrule is not None and not series:
+            raise ValueError(
+                "this is a repeating reminder: pass occurrence=<ISO datetime> to "
+                "delete one occurrence, or series=true to delete the whole series"
+            )
+        todo.delete()
+        db_delete_reminder(conn, calendar_id, uid)
+        return {"status": "deleted", "uid": uid,
+                "scope": "series" if series else "reminder"}
+
+    if master is None or master_rrule is None:
+        raise ValueError("occurrence given but this reminder does not repeat")
+
+    target = parse_dt(occurrence)
+    if target is None:
+        raise ValueError(f"invalid occurrence value: {occurrence!r}")
+
+    # A reminder's recurrence anchors on DUE (DTSTART when the VTODO carries only
+    # one -- see recur.expand_reminders), so the EXDATE has to mirror THAT
+    # property's form, not DTSTART's.
+    anchor_prop = master.get("DUE")
+    if anchor_prop is None:
+        anchor_prop = master.get("DTSTART")
+    anchor_value = getattr(anchor_prop, "dt", anchor_prop)
+    exdate_value = _occurrence_value(anchor_value, target)
+
+    existing = [d for d in (parse_dt(v) for v in _exdate_values(master)) if d is not None]
+    if any(d.astimezone(timezone.utc) == target.astimezone(timezone.utc) for d in existing):
+        return {"status": "already-excluded", "uid": uid, "occurrence": target.isoformat()}
+
+    master.add("EXDATE", exdate_value)
+    todo.data = comp.to_ical().decode()
+    todo.save()
+
+    # Cache the exclusion in the same call: the panel expands the series from the
+    # cache, so without this the occurrence reappears until the next sync.
+    set_reminder_exdates(conn, calendar_id, uid,
+                         [d.isoformat() for d in existing] + [target.isoformat()])
+    return {"status": "deleted", "scope": "occurrence", "uid": uid,
+            "occurrence": target.isoformat()}
 
 
 def update_reminder(
