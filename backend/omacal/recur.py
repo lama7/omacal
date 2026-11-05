@@ -217,10 +217,11 @@ def expand_reminders(
     """Expand cached reminders into per-occurrence rows for [window_start, window_end).
 
     A reminder's recurrence anchors on DUE (or DTSTART when there is no DUE, as
-    VTODOs sometimes carry only one). Each occurrence's DUE is shifted from the
-    master's DUE by the same offset its DTSTART shifted by, so a task due 2 days
-    after it starts stays due 2 days after the occurrence start. Detached
-    RECURRENCE-ID overrides replace or (when CANCELLED) remove their occurrence.
+    VTODOs sometimes carry only one). Each stepped occurrence IS the anchor, so
+    an occurrence's DUE is that instant; its DTSTART keeps the master's
+    DTSTART->DUE offset, so a task due 2 days after it starts stays due 2 days
+    after each occurrence's start. Detached RECURRENCE-ID overrides replace or
+    (when CANCELLED) remove their occurrence.
     """
     by_key: dict[tuple, dict] = {}
     for ov in overrides:
@@ -244,19 +245,30 @@ def expand_reminders(
         anchor = due_dt or start_dt
         if anchor is None:
             continue
-        # An occurrence's DUE keeps the master's offset from DTSTART (0 for the
-        # common due==start case), so a task due N hours/days after it starts
-        # stays due N hours/days after the occurrence's start.
-        due_delta = (start_dt - due_dt) if (due_dt and start_dt) else None
+        # Each stepped occurrence IS the anchor (the DUE, when the task has one),
+        # and an occurrence's DTSTART keeps the master's offset from DUE: a task
+        # that starts N hours before it is due starts N hours before each
+        # occurrence's due. These two used to be applied the other way round --
+        # the stepped anchor landed in `start` while `due` was shifted BACK by the
+        # start-to-due gap, so every occurrence of a task whose DTSTART != DUE
+        # showed the wrong date, and check_due_alarms fired from that wrong DUE.
+        start_offset = (start_dt - due_dt) if (due_dt is not None and start_dt is not None) else None
+        anchored_on_due = due_dt is not None
 
         duration = timedelta(days=1) if rm.get("all_day") else timedelta(hours=1)
         for occ, _ in occurrences_between(
             rrule, anchor, window_start, window_end, duration, _load_exdates(rm.get("exdates")), tzid
         ):
             row = dict(rm)
-            if start_dt:
+            if anchored_on_due:
+                row["due"] = occ.isoformat()
+                if start_offset is not None:
+                    row["start"] = (occ + start_offset).isoformat()
+            else:
+                # DTSTART-only task: the anchor is the start, and DUE mirrors it
+                # (the panel buckets and displays reminders by DUE).
                 row["start"] = occ.isoformat()
-            row["due"] = (occ + due_delta).isoformat() if due_delta else occ.isoformat()
+                row["due"] = occ.isoformat()
             row["recurrence_id"] = occ.isoformat()
             row["is_recurring"] = 1
 
