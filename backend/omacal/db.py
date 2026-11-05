@@ -797,9 +797,27 @@ def get_reminders_for_window(
 ) -> list[dict[str, Any]]:
     """Rows the API needs to answer a reminders [start, end) query.
 
-    Non-recurring reminders must have a DUE inside the window. Recurring masters
-    are returned regardless (their DUE may be years old) -- the window filter for
+    Non-recurring reminders must be inside the window. Recurring masters are
+    returned regardless (their DUE may be years old) -- the window filter for
     those is applied by expand_reminders, not SQL, exactly like events.
+
+    "Inside" is decided per the row's own kind, because that is how the panel
+    buckets rows for display:
+
+    * all-day reminders are cached at UTC midnight and drawn on the DATE part of
+      that value, so they are compared as dates against the window's local
+      dates (a 00:00Z row still belongs to its local day, hours before the local
+      midnight bound);
+    * timed reminders are real instants and are compared as instants, so a row
+      stored with a UTC offset and one stored with a TZID offset agree.
+
+    Both comparisons run through sqlite's date/datetime() so the stored text and
+    the bound are normalised the same way. Do NOT bind the bounds as datetime
+    objects: the default sqlite3 adapter renders them space-separated
+    ("2026-11-04 12:00:00-05:00") while cached values are `isoformat()`
+    ("2026-11-04T12:00:00-05:00"), and the separator decides same-date
+    comparisons -- that made this window date-granular and silently dropped
+    in-window rows. (The adapter is also deprecated since Python 3.12.)
     """
     placeholders = ",".join("?" for _ in (calendar_ids or []))
     where = f" AND r.calendar_id IN ({placeholders})" if calendar_ids else ""
@@ -808,10 +826,14 @@ def get_reminders_for_window(
         f"""SELECT r.*, c.display_name, c.color
             FROM reminders r
             JOIN calendars c ON c.id = r.calendar_id
-            WHERE (r.due IS NOT NULL AND r.due >= ? AND r.due < ? OR r.rrule IS NOT NULL) AND c.enabled = 1
+            WHERE (r.rrule IS NOT NULL OR (r.due IS NOT NULL AND (
+                     (r.all_day = 1 AND date(r.due) >= date(?) AND date(r.due) < date(?))
+                  OR (r.all_day = 0 AND datetime(r.due) >= datetime(?) AND datetime(r.due) < datetime(?))
+                  ))) AND c.enabled = 1
             {where}
             ORDER BY r.due""",
-        [start, end] + params,
+        [start.date().isoformat(), end.date().isoformat(),
+         start.isoformat(), end.isoformat()] + params,
     )
     return [dict(r) for r in cur.fetchall()]
 

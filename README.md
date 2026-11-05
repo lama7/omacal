@@ -208,6 +208,23 @@ Validate a clone as a plugin folder:
 omarchy plugin validate .
 ```
 
+## Tests
+
+The backend carries a stdlib `unittest` suite — deliberately no new dependency,
+since the install is hash-locked (`backend/requirements.lock`,
+`pip install --require-hashes`), so the suite runs on the very venv the package
+installs:
+
+```bash
+cd backend
+.venv/bin/python3 -m unittest discover -s tests -t . -v
+```
+
+`tests/support.py` builds a throwaway cache DB with the real schema
+(`db.open_db` → `_migrate`) and ships caldav stubs, so a write path can be tested
+end to end — what gets pushed to the server, what lands in the cache — with no
+live server and no test doubles at the SQL layer.
+
 ## Layout
 
 ```
@@ -222,6 +239,7 @@ omacal/
 │   ├── Model.js          #   date math + clock format ring (shared)
 │   └── …                 #   DateEntry, FormLabel, KeypadTextField, …
 ├── backend/              # Python package: sync service + local API
+│   └── tests/            #   unittest suite (window queries, reminder writes)
 ├── systemd/              # omacal.service (backend unit)
 └── install.sh            # backend installer (run from the plugin folder)
 ```
