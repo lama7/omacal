@@ -115,6 +115,11 @@ as events, toggled via the **Event / Reminder** buttons in the form.
   distinctly from filled event dots, in the month grid, day view, and preview
   pane. The bar's clock tooltip also lists today's reminders (prefixed **Due**)
   alongside events.
+- **Deleting** — a repeating reminder deletes exactly like a repeating event:
+  click (or right-click) one occurrence and only that due date is removed, with
+  the task and the rest of the series left alone. The confirm dialog's **Delete
+  whole series** toggle removes the whole task instead. A one-off reminder is
+  deleted outright.
 - **Sync & completion** — reminders sync like events and disappear once marked
   complete or cancelled. A recurring reminder notifies once per occurrence.
 

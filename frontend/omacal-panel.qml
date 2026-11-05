@@ -1437,12 +1437,14 @@ Panel {
         var ev = pendingDeleteEvent
         var removeHref = ev.isReminder ? "/api/reminders" : "/api/events"
         var url = apiBase + removeHref + "?uid=" + encodeURIComponent(ev.uid) + "&calendar_id=" + ev.calendar_id
-        // A repeating event is deleted one occurrence at a time: pass the
-        // occurrence date the user right-clicked so the backend excludes just
-        // that day (EXDATE) instead of removing the series.
+        // A repeating item is deleted one occurrence at a time: pass the
+        // occurrence the user right-clicked so the backend excludes just that one
+        // (EXDATE) instead of removing the series. A reminder has no start/end --
+        // its occurrence is its DUE.
         if (ev.is_recurring) {
             if (deleteWholeSeries) url += "&series=true"
-            else url += "&occurrence=" + encodeURIComponent(ev.recurrence_id || ev.start)
+            else url += "&occurrence=" + encodeURIComponent(
+                ev.recurrence_id || (ev.isReminder ? ev.due : ev.start))
         }
         var xhr = new XMLHttpRequest()
         xhr.open("DELETE", url, true)
@@ -1473,10 +1475,16 @@ Panel {
                 : "Delete the calendar \"" + pendingDeleteCalendar.name + "\"?"
         var ev = pendingDeleteEvent
         if (!ev) return "Delete this event?"
-        if (ev.isReminder) return "Delete the reminder \"" + ev.summary + "\"?"
+        // A reminder's occurrence is its DUE, not a start/end pair.
+        var when = Qt.formatDateTime(new Date(ev.isReminder && ev.due ? ev.due : ev.start), "MMM d")
+        if (ev.isReminder) {
+            if (!ev.is_recurring) return "Delete the reminder \"" + ev.summary + "\"?"
+            if (deleteWholeSeries) return "Delete the whole reminder series \"" + ev.summary + "\"?"
+            return "Delete the reminder \"" + ev.summary + "\" due " + when + "?"
+        }
         if (!ev.is_recurring) return "Delete \"" + ev.summary + "\"?"
         if (deleteWholeSeries) return "Delete the whole series \"" + ev.summary + "\"?"
-        return "Delete \"" + ev.summary + "\" on " + Qt.formatDateTime(new Date(ev.start), "MMM d") + "?"
+        return "Delete \"" + ev.summary + "\" on " + when + "?"
     }
 
     function eventTimeStr(ev) {
@@ -2731,8 +2739,13 @@ Panel {
             confirmText: root.pendingDeleteCalendar && root.pendingDeleteCalendar.subscribed ? "Unsubscribe" : "Delete"
             cancelText: "Cancel"
             selectedIndex: 0
-            showScope: !!(root.pendingDeleteEvent && root.pendingDeleteEvent.is_recurring && !root.pendingDeleteEvent.isReminder)
+            // "Delete whole series" applies to any repeating item -- events and
+            // reminders alike (both backends take occurrence=/series=true).
+            showScope: !!(root.pendingDeleteEvent && root.pendingDeleteEvent.is_recurring)
             scopeChecked: root.deleteWholeSeries
+            scopeDescription: (root.pendingDeleteEvent && root.pendingDeleteEvent.isReminder)
+                ? "Remove every occurrence of this repeating reminder"
+                : "Remove every occurrence of this repeating event"
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
             onCanceled: root.dismissDeleteConfirm()
