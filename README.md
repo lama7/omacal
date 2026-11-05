@@ -118,8 +118,8 @@ as events, toggled via the **Event / Reminder** buttons in the form.
 - **Deleting** — a repeating reminder deletes exactly like a repeating event:
   click (or right-click) one occurrence and only that due date is removed, with
   the task and the rest of the series left alone. The confirm dialog's **Delete
-  whole series** toggle removes the whole task instead. A one-off reminder is
-  deleted outright.
+  whole series** toggle removes the whole task instead (`Tab`/arrows move to the
+  toggle, `Space` or `Enter` flips it). A one-off reminder is deleted outright.
 - **Sync & completion** — reminders sync like events and disappear once marked
   complete or cancelled. A recurring reminder notifies once per occurrence.
 

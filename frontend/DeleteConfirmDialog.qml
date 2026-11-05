@@ -18,13 +18,22 @@ Item {
   // (arrows/Tab in handleKey) — otherwise the first button would be painted
   // with the cursor cue on open. Same rule as the other dialogs.
   property bool cursorEngaged: false
-  onOpenedChanged: if (opened) cursorEngaged = false
+  onOpenedChanged: {
+    if (!opened) return
+    cursorEngaged = false
+    scopeCursor = false
+  }
   property string message: ""
   property string cancelText: "Cancel"
   property string confirmText: "Delete"
   property int selectedIndex: 0
   property bool showScope: false
   property bool scopeChecked: false
+  // The scope ROW is part of the keyboard cycle when it is shown: Tab/arrows move
+  // scope -> Cancel -> Delete, and Space/Return act on the focused slot (so Space
+  // flips the toggle, the natural key for a switch). selectedIndex still defaults
+  // to Cancel, so a stray Enter cannot delete.
+  property bool scopeCursor: false
   property string scopeLabel: "Delete whole series"
   property string scopeDescription: "Remove every occurrence of this repeating event"
   property color background: Color.background
@@ -38,18 +47,48 @@ Item {
   signal confirmed()
   signal scopeToggled(bool checked)
 
+  // Cycle positions: 0 = the scope row (only when it is shown), then the
+  // Cancel/Delete buttons. Kept as two properties because selectedIndex is the
+  // button slot the button row already binds.
+  readonly property int _slotCount: (root.showScope ? 1 : 0) + 2
+
+  function moveCursor(step) {
+    var scopeSlot = root.showScope ? 1 : 0
+    var at = root.scopeCursor ? 0 : root.selectedIndex + scopeSlot
+    at = (at + step + root._slotCount) % root._slotCount
+    if (root.showScope && at === 0) {
+      root.scopeCursor = true
+    } else {
+      root.scopeCursor = false
+      root.selectedIndex = at - scopeSlot
+    }
+    root.cursorEngaged = true
+  }
+
+  function activateCursor() {
+    if (root.scopeCursor) {
+      root.scopeToggled(!root.scopeChecked)
+      return
+    }
+    if (root.selectedIndex === 0) root.canceled()
+    else root.confirmed()
+  }
+
   function handleKey(event) {
     if (!root.opened) return false
     if (event.key === Qt.Key_Escape) {
       root.canceled()
       return true
-    } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Right || event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
-      root.selectedIndex = root.selectedIndex === 0 ? 1 : 0
-      root.cursorEngaged = true
+    } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Backtab) {
+      root.moveCursor(-1)
       return true
-    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-      if (root.selectedIndex === 0) root.canceled()
-      else root.confirmed()
+    } else if (event.key === Qt.Key_Right || event.key === Qt.Key_Tab) {
+      root.moveCursor(1)
+      return true
+    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+      // Space and Return both arrive from PanelKeyCatcher as activateRequested,
+      // so whichever slot the cursor is on decides what they do.
+      root.activateCursor()
       return true
     }
     return false
@@ -99,7 +138,7 @@ Item {
         wrapMode: Text.WordWrap
       }
 
-      Toggle {
+      DialogToggle {
         id: scopeRow
         visible: root.showScope
         width: parent.width
@@ -108,6 +147,9 @@ Item {
         label: root.scopeLabel
         description: root.scopeDescription
         checked: root.scopeChecked
+        // Same cue rule as the dialogs' other cursor rows; the click path is
+        // unchanged (mouse use never lights the keyboard cue).
+        cursorOn: root.scopeCursor
         foreground: root.foreground
         accent: root.selectedText
         fontFamily: root.fontFamily
